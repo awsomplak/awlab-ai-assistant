@@ -3,10 +3,12 @@ Tool registration for awlab-memory server — all memory/knowledge-graph tools.
 
 Creates its own FastMCP("awlab-memory") instance and registers only
 memory-related tools (mem_*, ctx_store, ctx_get_fragment).
-"""
+    """
 
 import json
+from typing import Annotated
 
+from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 from ..helpers.logger import logger
 
@@ -45,14 +47,16 @@ from ..helpers.hybrid_search import re_rank_results
 
 @mcp.tool(name="mem_search")
 async def search_memory(
-    workspace_path: str,
-    query: str,
-    project_id: str | None = None,
-    scope: str = "project",
-    limit: int = 10,
-    use_dense: bool = False,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    query: Annotated[str, Field(description="Search query string")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
+    scope: Annotated[str, Field(description="Scope: project, user, or conversation")] = "project",
+    limit: Annotated[int, Field(description="Max results to return")] = 10,
+    use_dense: Annotated[bool, Field(description="Enable BM25 + dense re-ranking")] = False,
 ) -> str:
-    """Search memory with hybrid BM25+dense ranking."""
+    """
+    Search memory.
+    Search memory with hybrid BM25+dense ranking."""
     if scope not in ("project", "user", "conversation"):
         return _invalid_scope(scope)
     try:
@@ -86,8 +90,10 @@ async def search_memory(
 
 
 @mcp.tool(name="mem_store")
-async def store_memory(workspace_path: str, entity_name: str, observation: str, pattern_type: str = "preference") -> str:
-    """Store an observation (creates entity if needed)."""
+async def store_memory(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], entity_name: Annotated[str, Field(description="Name of the entity")], observation: Annotated[str, Field(description="Observation text to attach")], pattern_type: Annotated[str, Field(description="Pattern type: preference, convention, workflow, anti_pattern")] = "preference") -> str:
+    """
+    Store observation.
+    Store an observation (creates entity if needed)."""
     try:
         existing = _recall_search_nodes(workspace_path=workspace_path, query=entity_name, limit=1)
         entity_exists = bool(existing and len(existing) > 0)
@@ -105,8 +111,10 @@ async def store_memory(workspace_path: str, entity_name: str, observation: str, 
 
 
 @mcp.tool(name="mem_list_patterns")
-async def list_patterns(workspace_path: str) -> str:
-    """List all stored patterns in memory."""
+async def list_patterns(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")]) -> str:
+    """
+    List patterns.
+    List all stored patterns in memory."""
     try:
         result = _recall_search_nodes(workspace_path=workspace_path, query="type: pattern")
         return _ok(patterns=result)
@@ -116,8 +124,10 @@ async def list_patterns(workspace_path: str) -> str:
 
 
 @mcp.tool(name="mem_create_entities")
-async def create_entities(workspace_path: str, entities: list[dict]) -> str:
-    """Create new entities in memory."""
+async def create_entities(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], entities: Annotated[list[dict], Field(description="List of {name, entityType, observations} dicts")]) -> str:
+    """
+    Create entities.
+    Create new entities in memory."""
     try:
         result = _recall_create_entities(workspace_path=workspace_path, entities=entities)
         return _ok(result=result)
@@ -127,8 +137,10 @@ async def create_entities(workspace_path: str, entities: list[dict]) -> str:
 
 
 @mcp.tool(name="mem_tag_entity")
-async def tag_entity(workspace_path: str, observations: list[dict]) -> str:
-    """Tag an entity with additional context labels."""
+async def tag_entity(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], observations: Annotated[list[dict], Field(description="List of {entityName, contents} dicts")]) -> str:
+    """
+    Tag entity with context.
+    Tag an entity with additional context labels."""
     try:
         result = _recall_add_observations(workspace_path=workspace_path, observations=observations)
         return _ok(result=result)
@@ -138,8 +150,10 @@ async def tag_entity(workspace_path: str, observations: list[dict]) -> str:
 
 
 @mcp.tool(name="mem_relate")
-async def relate(workspace_path: str, relations: list[dict]) -> str:
-    """Declare a semantic association between two entities."""
+async def relate(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], relations: Annotated[list[dict], Field(description="List of {from, to, relationType} dicts")]) -> str:
+    """
+    Create semantic relation.
+    Declare a semantic association between two entities."""
     try:
         result = _recall_create_relations(workspace_path=workspace_path, relations=relations)
         return _ok(result=result)
@@ -149,8 +163,10 @@ async def relate(workspace_path: str, relations: list[dict]) -> str:
 
 
 @mcp.tool(name="mem_fetch_node_details")
-async def fetch_node_details(workspace_path: str, names: list[str]) -> str:
-    """Query attributes of specific graph nodes."""
+async def fetch_node_details(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], names: Annotated[list[str], Field(description="List of entity names")]) -> str:
+    """
+    Query node attributes.
+    Query attributes of specific graph nodes."""
     try:
         result = _recall_open_nodes(workspace_path=workspace_path, names=names)
         return _ok(results=result)
@@ -160,8 +176,10 @@ async def fetch_node_details(workspace_path: str, names: list[str]) -> str:
 
 
 @mcp.tool(name="mem_read_graph")
-async def read_graph(workspace_path: str, limit: int = 50) -> str:
-    """Read the knowledge graph."""
+async def read_graph(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], limit: Annotated[int, Field(description="Max results to return")] = 50) -> str:
+    """
+    Read knowledge graph.
+    Read the knowledge graph."""
     try:
         result = _recall_read_graph(workspace_path=workspace_path, limit=limit)
         return _ok(results=result)
@@ -171,8 +189,10 @@ async def read_graph(workspace_path: str, limit: int = 50) -> str:
 
 
 @mcp.tool(name="mem_archive_entities")
-async def archive_entities(workspace_path: str, names: list[str]) -> str:
-    """Move entities to a historical archive state."""
+async def archive_entities(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], names: Annotated[list[str], Field(description="List of entity names")]) -> str:
+    """
+    Archive entities.
+    Move entities to a historical archive state."""
     try:
         result = _recall_delete_entities(workspace_path=workspace_path, names=names)
         return _ok(result=result)
@@ -182,8 +202,10 @@ async def archive_entities(workspace_path: str, names: list[str]) -> str:
 
 
 @mcp.tool(name="mem_delete_observations")
-async def delete_observations(workspace_path: str, deletions: list[dict]) -> str:
-    """Remove specific observations from entities."""
+async def delete_observations(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], deletions: Annotated[list[dict], Field(description="List of {entityName, observations} dicts")]) -> str:
+    """
+    Delete observations.
+    Remove specific observations from entities."""
     try:
         result = _recall_delete_observations(workspace_path=workspace_path, deletions=deletions)
         return _ok(result=result)
@@ -193,8 +215,10 @@ async def delete_observations(workspace_path: str, deletions: list[dict]) -> str
 
 
 @mcp.tool(name="mem_delete_relations")
-async def delete_relations(workspace_path: str, relations: list[dict], cascade: bool = False) -> str:
-    """Remove relations between entities."""
+async def delete_relations(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], relations: Annotated[list[dict], Field(description="List of {from, to, relationType} dicts")], cascade: Annotated[bool, Field(description="Also delete orphaned relations")] = False) -> str:
+    """
+    Delete relations.
+    Remove relations between entities."""
     try:
         result = _recall_delete_relations(workspace_path=workspace_path, relations=relations)
         deleted = result.get("deleted", [])
@@ -240,8 +264,10 @@ async def delete_relations(workspace_path: str, relations: list[dict], cascade: 
 
 
 @mcp.tool(name="ctx_store")
-async def store_context(workspace_path: str, key: str, value: str, scope: str = "project", ttl: int = 3600) -> str:
-    """Store a context fragment with TTL-based expiry."""
+async def store_context(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], key: Annotated[str, Field(description="Context fragment key")], value: Annotated[str, Field(description="Context value to store")], scope: Annotated[str, Field(description="Scope: project, user, or conversation")] = "project", ttl: Annotated[int, Field(description="TTL in seconds (-1 = no expiry)")] = 3600) -> str:
+    """
+    Store context with TTL.
+    Store a context fragment with TTL-based expiry."""
     if scope not in ("project", "user", "conversation"):
         return _invalid_scope(scope)
     result = await _store_context(workspace_path, key, value, scope, ttl)
@@ -249,7 +275,9 @@ async def store_context(workspace_path: str, key: str, value: str, scope: str = 
 
 
 @mcp.tool(name="ctx_get_fragment")
-async def get_context_fragment(workspace_path: str, topic: str) -> str:
-    """Retrieve context for a topic without file reads."""
+async def get_context_fragment(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], topic: Annotated[str, Field(description="Topic to search context for")]) -> str:
+    """
+    Get context fragment.
+    Retrieve context for a topic without file reads."""
     result = await _get_context_fragment(workspace_path, topic)
     return json.dumps(result)

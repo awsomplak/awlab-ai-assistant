@@ -1,8 +1,12 @@
 # Changelog
-
-## [3.0.0] - 2026-06-29
+## [3.0.0] - 2026-07-01
 
 ### Added
+- **Per-Agent Compilation Pipeline**: Rules and skills are now compiled into per-agent profiles via `python scripts/run.py compile-rules`, each with format-optimized output:
+  - **Cline**: Individual `.md` files (HTML comments preserved) → `~/Documents/Cline/Rules/`
+  - **Copilot**: `.instructions.md` with YAML frontmatter + offset headings → `~/.copilot/instructions/`
+  - **Claude Code**: Single `CLAUDE.md` monolith with heading anchors → `~/.claude/`
+  - **Hermes Agent**: Rules as `SKILL.md` with `applyTo` frontmatter + all skills → `~/.hermes/skills/`
 - **MCP Server Split**: Monolithic `agent-memory` server split into 3 separate MCP servers to work around Copilot's per-server tool visibility limit (~15 tools):
   - `awlab-mcp` — Utility & context tools (6 tools)
   - `awlab-plan` — Registry, task, and workflow tools (17 tools)
@@ -10,9 +14,14 @@
 - **3 standalone executables**: `awlab-mcp.exe`, `awlab-plan.exe`, `awlab-memory.exe` built via PyInstaller
 - **Separate FastMCP instances** in `registration_plan.py` and `registration_memory.py` with their own `@mcp.tool()` decorators
 - **`run_server(mcp_instance, server_name)` factory** in `lifecycle.py` for shared server initialization
-- **Scripts**: `test_all_mcp_tools.py`, `check_split.py`, `approve_all_tools.py`, `stop-mcp-servers.ps1`
+- **Link-rewriting utility** (`_rewrite_refs()`): Converts file-based rule references to heading anchors in compiled monoliths
+- **`_strip_html_comments()`** and **`_offset_headings()`** helpers for per-agent content processing
+- **`_copy_skills()`** shared helper to avoid duplication across compile functions
+- **Hermes publish target** in `PUBLISH_MAP`: publishes skills + compiled rules to `~/.hermes/skills/`
 
 ### Changed
+- **`cmd_compile_rules()`**: Refactored into per-agent output functions (`_compile_cline`, `_compile_copilot`, `_compile_claude`, `_compile_hermes`)
+- **`PUBLISH_MAP`**: Each agent has dedicated publish paths — Cline+Copilot share `~/.agents/skills/`, Claude uses `~/.claude/skills/`, Hermes uses `~/.hermes/skills/`
 - **Tool renames** to bypass Copilot's internal safety filter:
   - `util_get_environment` → `util_get_project_meta`
   - `mem_delete_entities` → `mem_archive_entities`
@@ -20,12 +29,17 @@
   - `mem_add_observations` → `mem_tag_entity`
   - `mem_create_relations` → `mem_relate`
 - **All tool descriptions shortened** to single-line to fit within Copilot's prompt token budget
-- **`scripts/run.py`**: Builds 3 binaries instead of 1; updated `MCP_TOOLS` constant with per-server groupings
+- **`scripts/run.py`**: Per-agent compilation pipeline; builds 3 binaries instead of 1
 - **`pyproject.toml`**: Added `awlab-plan` and `awlab-memory` console script entry points
-- **All 12 rule files + 4 skill files** updated to reference correct server names
+- **All rule files + skill files** updated to reference correct server names; skill cross-references changed to heading anchors
+- **Directory copy & uninstall logic**: Updated to recursive `rglob("*")` for nested skill structures
+
+### Removed
+- **`hermes-config.json`**: No longer generated — Hermes uses skills natively
+- **`skills` → `~/.agents/skills/`** shared publish target — replaced by per-agent skills paths
 
 ### Fixed
-- **VS Code batch approval bug**: Added `force_approve_tools.py` and `approve_all_tools.py` scripts to pre-approve MCP tools in VS Code's state database when the approval dialog fails to show
+- **VS Code batch approval bug**: Added scripts to pre-approve MCP tools in VS Code's state database
 
 ## [2.2.0] - 2026-06-29
 

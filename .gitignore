@@ -9,6 +9,7 @@
 *.egg-info/
 /dist/
 /build/
+/logs
 *.egg
 *.spec
 .env

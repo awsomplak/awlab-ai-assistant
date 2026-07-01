@@ -3,10 +3,12 @@ Tool registration for awlab-plan server — plan, registry, task, and workflow t
 
 Creates its own FastMCP("awlab-plan") instance and registers only
 plan/registry/task/workflow-related tools.
-"""
+    """
 
 import json
+from typing import Annotated
 
+from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 from ..helpers.logger import logger
 
@@ -57,20 +59,24 @@ from ..helpers import (
 
 
 @mcp.tool(name="reg_list_registry")
-async def list_registry(workspace_path: str) -> str:
-    """Return Active, Paused, Completed plans as JSON."""
+async def list_registry(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")]) -> str:
+    """
+    List plans.
+    Return Active, Paused, Completed plans as JSON."""
     result = await _list_registry(workspace_path=workspace_path)
     return json.dumps(result)
 
 
 @mcp.tool(name="reg_switch_active_plan")
 async def switch_active_plan(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    plan_uuid: str
+    plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")]
 ) -> str:
-    """Change the active plan in the registry."""
+    """
+    Switch active plan.
+    Change the active plan in the registry."""
     if err := _require_uuid(plan_uuid=plan_uuid):
         return err
     result = await _switch_active_plan(
@@ -83,14 +89,16 @@ async def switch_active_plan(
 
 @mcp.tool(name="task_update_status")
 async def update_task_status(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    plan_uuid: str,
-    task_path: str,
-    new_status: str,
+    plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")],
+    task_path: Annotated[str, Field(description="Task like '1.2' (Phase 1, Task 2)")],
+    new_status: Annotated[str, Field(description="Status: [x], [ ], [!], [x!], [x✓], [—], [⏳]")],
 ) -> str:
-    """Update a task's status marker in a plan."""
+    """
+    Update task status.
+    Update a task's status marker in a plan."""
     if err := _require_uuid(plan_uuid=plan_uuid):
         return err
     if err := _require_status(status=new_status):
@@ -107,13 +115,15 @@ async def update_task_status(
 
 @mcp.tool(name="task_batch_update")
 async def batch_update_tasks(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    plan_uuid: str,
-    updates: list[dict[str, str]],
+    plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")],
+    updates: Annotated[list[dict[str, str]], Field(description="List of {task_path, new_status} dicts for batch update")],
 ) -> str:
-    """Atomically update multiple tasks with rollback on failure."""
+    """
+    Batch update tasks atomically.
+    Atomically update multiple tasks with rollback on failure."""
     if err := _require_uuid(plan_uuid):
         return err
     if not isinstance(updates, list):
@@ -129,13 +139,15 @@ async def batch_update_tasks(
 
 @mcp.tool(name="reg_validate_phase_gate")
 async def validate_phase_gate(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    plan_uuid: str,
-    phase_num: int,
+    plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")],
+    phase_num: Annotated[int, Field(description="Phase number to check")],
 ) -> str:
-    """Check if predecessor phase is complete before allowing next phase."""
+    """
+    Check predecessor phase complete.
+    Check if predecessor phase is complete before allowing next phase."""
     if err := _require_uuid(plan_uuid=plan_uuid):
         return err
     if err := _require_phase_number(phase_number=phase_num):
@@ -151,13 +163,15 @@ async def validate_phase_gate(
 
 @mcp.tool(name="reg_get_next_eligible_task")
 async def get_next_eligible_task(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    plan_uuid: str,
-    phase: int | None = None,
+    plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")],
+    phase: Annotated[int | None, Field(description="Phase number to scan (None = all)")] = None,
 ) -> str:
-    """Find next eligible (non-blocked, non-terminal) task."""
+    """
+    Find next non-blocked task.
+    Find next eligible (non-blocked, non-terminal) task."""
     if err := _require_uuid(plan_uuid=plan_uuid):
         return err
     result = await _get_next_eligible_task(
@@ -171,13 +185,15 @@ async def get_next_eligible_task(
 
 @mcp.tool(name="task_validate_transition")
 async def validate_status_transition(
-    workspace_path: str,
-    project_id: str | None = None,
+    workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")],
+    project_id: Annotated[str | None, Field(description="Optional project ID to scope the query")] = None,
     *,
-    current: str,
-    target: str,
+    current: Annotated[str, Field(description="Current status marker")],
+    target: Annotated[str, Field(description="Desired new status marker")],
 ) -> str:
-    """Check if a status marker transition is legal."""
+    """
+    Validate status transition.
+    Check if a status marker transition is legal."""
     markers = set(VALID_STATUS_MARKERS)
     if current not in markers:
         return _invalid_status_marker(status=current, context="current")
@@ -188,8 +204,10 @@ async def validate_status_transition(
 
 
 @mcp.tool(name="task_read_plan_tasks")
-async def read_plan_tasks(workspace_path: str, plan_uuid: str, format: str = "structured") -> str:
-    """Parse tasks.md into structured, raw, or minimal JSON."""
+async def read_plan_tasks(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")], format: Annotated[str, Field(description="Output format: structured, raw, or minimal")] = "structured") -> str:
+    """
+    Read tasks.md.
+    Parse tasks.md into structured, raw, or minimal JSON."""
     if err := _require_uuid(plan_uuid):
         return err
     if format not in ("structured", "raw", "minimal"):
@@ -199,8 +217,10 @@ async def read_plan_tasks(workspace_path: str, plan_uuid: str, format: str = "st
 
 
 @mcp.tool(name="task_write_plan_tasks")
-async def write_plan_tasks(workspace_path: str, plan_uuid: str, content: str) -> str:
-    """Write markdown content to a plan's tasks.md."""
+async def write_plan_tasks(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")], content: Annotated[str, Field(description="Full markdown to write to tasks.md")]) -> str:
+    """
+    Write tasks.md.
+    Write markdown content to a plan's tasks.md."""
     if err := _require_uuid(plan_uuid):
         return err
     result = await _write_plan_tasks(workspace_path=workspace_path, plan_uuid=plan_uuid, content=content)
@@ -208,8 +228,10 @@ async def write_plan_tasks(workspace_path: str, plan_uuid: str, content: str) ->
 
 
 @mcp.tool(name="reg_mark_phase_complete")
-async def mark_phase_complete(workspace_path: str, plan_uuid: str, phase_number: int) -> str:
-    """Mark all tasks in a phase as completed."""
+async def mark_phase_complete(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")], phase_number: Annotated[int, Field(description="Phase number to mark complete")]) -> str:
+    """
+    Complete all tasks in phase.
+    Mark all tasks in a phase as completed."""
     if err := _require_uuid(plan_uuid):
         return err
     if err := _require_phase_number(phase_number):
@@ -223,8 +245,10 @@ async def mark_phase_complete(workspace_path: str, plan_uuid: str, phase_number:
 
 
 @mcp.tool(name="reg_resolve_deferred_tasks")
-async def resolve_deferred_tasks(workspace_path: str, plan_uuid: str, phase_number: int | None = None) -> str:
-    """Re-evaluate deferred tasks whose deps may now be satisfied."""
+async def resolve_deferred_tasks(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")], phase_number: Annotated[int | None, Field(description="Phase number to scan (None = all)")] = None) -> str:
+    """
+    Re-check deferred tasks.
+    Re-evaluate deferred tasks whose deps may now be satisfied."""
     if err := _require_uuid(plan_uuid):
         return err
     result = await _resolve_deferred_tasks(
@@ -236,8 +260,10 @@ async def resolve_deferred_tasks(workspace_path: str, plan_uuid: str, phase_numb
 
 
 @mcp.tool(name="reg_check_plan_completable")
-async def check_plan_completable(workspace_path: str, plan_uuid: str) -> str:
-    """Check if a plan can be marked as complete."""
+async def check_plan_completable(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")]) -> str:
+    """
+    Check if plan complete.
+    Check if a plan can be marked as complete."""
     if err := _require_uuid(plan_uuid):
         return err
     result = await _check_plan_completable(
@@ -248,8 +274,10 @@ async def check_plan_completable(workspace_path: str, plan_uuid: str) -> str:
 
 
 @mcp.tool(name="wf_execute")
-async def execute_workflow(workspace_path: str, workflow_name: str, params: str | None = None) -> str:
-    """Execute a named workflow from Cline/Workflows/."""
+async def execute_workflow(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], workflow_name: Annotated[str, Field(description="Workflow filename (without .md)")], params: Annotated[str | None, Field(description="Optional JSON string with workflow params")] = None) -> str:
+    """
+    Execute workflow.
+    Execute a named workflow from Cline/Workflows/."""
     parsed_params = json.loads(params) if params else None
     result = await _execute_workflow(
         workspace_path=workspace_path,
@@ -260,15 +288,19 @@ async def execute_workflow(workspace_path: str, workflow_name: str, params: str 
 
 
 @mcp.tool(name="wf_list")
-async def list_workflows(workspace_path: str) -> str:
-    """List available workflow files in Cline/Workflows/."""
+async def list_workflows(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")]) -> str:
+    """
+    List workflows.
+    List available workflow files in Cline/Workflows/."""
     result = await _list_workflows(workspace_path=workspace_path)
     return json.dumps(result)
 
 
 @mcp.tool(name="reg_generate_retrospective")
-async def generate_retrospective_summary(workspace_path: str, plan_uuid: str) -> str:
-    """Generate retrospective summary for a completed plan."""
+async def generate_retrospective_summary(workspace_path: Annotated[str, Field(description="Absolute path to the project workspace root")], plan_uuid: Annotated[str, Field(description="8-char lowercase UUID of the plan")]) -> str:
+    """
+    Generate retrospective.
+    Generate retrospective summary for a completed plan."""
     if err := _require_uuid(plan_uuid):
         return err
     result = await _generate_retrospective_summary(
@@ -284,7 +316,7 @@ async def generate_retrospective_summary(workspace_path: str, plan_uuid: str) ->
 
 
 @mcp.tool(name="util_generate_mermaid")
-async def generate_mermaid(phases: list[str], dependencies: list[dict[str, str]] | None = None) -> str:
+async def generate_mermaid(phases: Annotated[list[str], Field(description="List of phase names")], dependencies: Annotated[list[dict[str, str]] | None, Field(description="List of {from, to} dependency edges")] = None) -> str:
     """Generate a Mermaid flowchart from phases and optional deps."""
     result = await _generate_mermaid(phases, dependencies)
     return json.dumps(result)
@@ -292,11 +324,13 @@ async def generate_mermaid(phases: list[str], dependencies: list[dict[str, str]]
 
 @mcp.tool(name="task_format_markdown")
 async def format_tasks_as_markdown(
-    workspace_path: str | None = None,
-    plan_uuid: str | None = None,
-    phases: list[dict] | None = None,
+    workspace_path: Annotated[str | None, Field(description="Absolute path to the project workspace root")] = None,
+    plan_uuid: Annotated[str | None, Field(description="8-char lowercase UUID of the plan")] = None,
+    phases: Annotated[list[dict[str, str]] | None, Field(description="List of phase dicts with name and status")] = None,
 ) -> str:
-    """Format a task list as markdown."""
+    """
+    Format tasks as markdown.
+    Format a task list as markdown."""
     result = await _format_tasks_as_markdown(
         workspace_path,
         plan_uuid=plan_uuid,

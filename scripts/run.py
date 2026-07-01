@@ -151,17 +151,23 @@ Publish /dist contents to AI assistant locations.
 Use --uninstall to remove previously installed files.
 
 Options:
-  --target=<name>   One of: cline, copilot, claude, hermes, skills, all
+  --target=<name>   One of: cline, copilot, claude, hermes, all
   --skip-build      Fail if /dist doesn't exist instead of building
   --force           Skip confirmation prompts
   --uninstall       Remove installed files instead of installing
 
-Targets:
-  cline     ~/Documents/Cline/Rules/
-  copilot   ~/.copilot/instructions/
-  claude    ~/.claude/
-  hermes    ~/.continue/
-  skills    ~/.agents/skills/
+Target Paths:
+  Skills:
+    cline     ~/.agents/skills/
+    copilot   ~/.agents/skills/ (shared with Cline)
+    claude    ~/.claude/skills/
+    hermes    ~/.hermes/skills/
+
+  Rules:
+    cline     ~/Documents/Cline/Rules/
+    copilot   ~/.copilot/instructions/
+    claude    ~/.claude/CLAUDE.md
+    hermes    ~/.hermes/skills/
 """,
         "test": """\
 Usage: run.py test [<pytest-args>...]
@@ -181,10 +187,11 @@ in assets/profiles/.
 
 Output:
   assets/profiles/
-  ├── .clinerules          (Cline)
-  ├── copilot-instructions.md
-  ├── CLAUDE.md
-  └── hermes-config.json
+  ├── claude/              (global skills and CLAUDE.md monolith)
+  ├── cline/               (global skills and rules for cline)
+  ├── copilot/             (global skills and rules for copilot)
+  ├── hermes/              (global skills and rules for hermes)
+  └── .clinerules          (Cline per project rules ready to copy)
 """,
     }
 
@@ -204,6 +211,7 @@ Output:
 # ══════════════════════════════════════════════════════════════════════════
 
 def _load_rules() -> list[dict]:
+    """Load raw rule content, preserving HTML comments."""
     rules = []
     for name in RULE_ORDER:
         path = RULES_SRC / name
@@ -211,9 +219,20 @@ def _load_rules() -> list[dict]:
             _warn(f"Rule file not found: {name}")
             continue
         raw = path.read_text("utf-8")
-        content = re.sub(r"<!--[\s\S]*?-->", "", raw).strip()
-        rules.append({"filename": name, "content": content})
+        rules.append({"filename": name, "content": raw.strip()})
     return rules
+
+
+def _strip_html_comments(text: str) -> str:
+    """Remove HTML comments (``<!-- ... -->``) from rule content."""
+    return re.sub(r"<!--[\s\S]*?-->", "", text).strip()
+
+
+def _offset_headings(text: str, levels: int = 1) -> str:
+    """Offset all markdown headings by N levels (e.g. ``##`` \u2192 ``####``)."""
+    def _repl(m: re.Match) -> str:
+        return "#" * levels + m.group(0)
+    return re.sub(r"^#+", _repl, text, flags=re.MULTILINE)
 
 
 def _build_unified(rules: list[dict]) -> str:
@@ -235,38 +254,178 @@ def _load_skills() -> list[dict]:
     return skills
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Link Rewriting — heading anchors for compiled outputs
+# ══════════════════════════════════════════════════════════════════════════
+
+def _rewrite_refs(text: str) -> str:
+    """Convert file-based rule references to heading anchors.
+
+    Matches references to rule files (``NN-name.md``) used in ``→ see:``,
+    ``defined in``, ``per``, ``as defined in`` patterns — rewrites them to
+    ``#NN-name`` heading anchors so they work in compiled monoliths.
+
+    Only rewrites references matching the ``\\d{{2}}-<name>.md`` pattern
+    (rule files). Leaves project files (tasks.md, plan.md, registry.md,
+    environment.md, notes.md) and template files untouched.
+    """
+    def _replace(m: re.Match) -> str:
+        full = m.group(0)
+        name = m.group(1)  # captured base name (e.g. "00-meta")
+        # Replace only inside backtick or bold markers
+        head = full[:m.start(1) - 1] if m.start(1) > 0 else ""
+        return f"{head}#{name}"
+
+    # Match `NN-name.md` or **NN-name.md** — only rule-file style names
+    text = re.sub(r"`(\d{2}-[\w-]+)\.md`", r"`#\1`", text)
+    text = re.sub(r"\*\*(\d{2}-[\w-]+)\.md\*\*", r"**#\1**", text)
+    # Also match bare inline references (not in backticks) — but be conservative
+    text = re.sub(r"(?<!\w)(\d{2}-[\w-]+)\.md(?!\w)", r"#\1", text)
+    return text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Per-Agent Compilation Pipeline
+# ══════════════════════════════════════════════════════════════════════════
+
+def _copy_skills(skills: list[dict], dest_dir: Path, label: str) -> None:
+    """Copy all skills into a per-agent skills directory."""
+    skills_dir = dest_dir / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for s in skills:
+        d = skills_dir / s["name"]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(s["content"], "utf-8")
+    _ok(f"{label}  ({len(skills)} skills)")
+
+
+def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """Cline: individual .md files + skills + .clinerules monolith."""
+    cline_dir = profiles_dir / "cline"
+    (cline_dir / "rules").mkdir(parents=True, exist_ok=True)
+    for r in rules:
+        # Individual files keep HTML comments (authority metadata useful for agents)
+        (cline_dir / "rules" / r["filename"]).write_text(r["content"], "utf-8")
+    _ok("cline/rules/  (13 individual files, HTML comments preserved)")
+
+    # Skills for Cline
+    _copy_skills(skills, cline_dir, "cline/skills/")
+
+    # .clinerules monolith (project-level) \u2014 strip HTML comments
+    stripped = [{"filename": r["filename"], "content": _strip_html_comments(r["content"])} for r in rules]
+    unified = _build_unified(stripped)
+    (profiles_dir / ".clinerules").write_text(
+        f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n## Available MCP Tools\n{MCP_TOOLS}\n", "utf-8"
+    )
+    _ok(".clinerules  (monolith, HTML comments stripped)")
+
+
+def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """Copilot: individual .instructions.md with YAML frontmatter, stripped comments, offset headings."""
+    copilot_dir = profiles_dir / "copilot"
+    copilot_dir.mkdir(parents=True, exist_ok=True)
+
+    descriptions = {
+        "00-meta": "Rule priority, conflict resolution, and deep analysis protocol",
+        "01-memory-bank": "Knowledge-graph memory operations via awlab-memory MCP tools",
+        "02-plan-artifacts": "Plan registry, task tracking, phase execution format",
+        "03-token-strategies": "Context optimization, token budgets, file loading discipline",
+        "04-commands": "Session commands and project scanning reference",
+        "05-environment": "Shell detection, PowerShell vs Bash command generation",
+        "06-project-scanner": "Framework-aware scanning protocol and MCP delegation",
+        "07-model-router": "Task complexity classification and model escalation",
+        "08-project-id": "Auto-detection of stable project identifier",
+        "09-user-patterns": "Trigger points for capturing user preferences",
+        "10-pattern-lifecycle": "Pattern storage, conflict resolution, live detection",
+        "11-agent-memory-isolation": "Per-project memory namespaces via AGENT_RECALL_SLUG",
+        "12-agent-mcp-workspace-path": "Workspace_path parameter rules for MCP tools",
+    }
+    for r in rules:
+        base = r["filename"].replace(".md", "")
+        desc = descriptions.get(base, f"AWLab-ID rule: {base}")
+        # Strip HTML comments, offset headings by 1 level (\"##\" \u2192 \"###\")
+        cleaned = _offset_headings(_strip_html_comments(r["content"]), levels=1)
+        frontmatter = f"---\nname: {base}\ndescription: '{desc}'\n---\n\n"
+        (copilot_dir / f"{base}.instructions.md").write_text(frontmatter + cleaned, "utf-8")
+    _ok("copilot/  (13 .instructions.md files, comments stripped, headings offset)")
+
+
+def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """Claude Code: single CLAUDE.md monolith + skills, stripped comments, heading anchors."""
+    claude_dir = profiles_dir / "claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    # Strip HTML comments + rewrite refs before building
+    processed = []
+    for r in rules:
+        cleaned = _strip_html_comments(r["content"])
+        processed.append({"filename": r["filename"], "content": _rewrite_refs(cleaned)})
+    unified = _build_unified(processed)
+
+    (claude_dir / "CLAUDE.md").write_text(
+        f"# Claude Code — AWLab-ID\n\n"
+        f"MCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n", "utf-8"
+    )
+    _ok("claude/CLAUDE.md  (monolith, comments stripped, heading anchors)")
+
+    # Skills for Claude Code
+    _copy_skills(skills, claude_dir, "claude/skills/")
+
+
+def _compile_hermes(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """Hermes: rules as SKILL.md + all skills in ~/.hermes/skills/."""
+    hermes_dir = profiles_dir / "hermes" / "skills"
+    hermes_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Rules as awlab-rules/SKILL.md ──
+    # Strip HTML comments + rewrite refs
+    processed = []
+    for r in rules:
+        cleaned = _strip_html_comments(r["content"])
+        processed.append({"filename": r["filename"], "content": _rewrite_refs(cleaned)})
+    unified = _build_unified(processed)
+
+    rules_skill = hermes_dir / "awlab-rules"
+    rules_skill.mkdir(parents=True, exist_ok=True)
+    (rules_skill / "SKILL.md").write_text(
+        f"---\n"
+        f"name: awlab-rules\n"
+        f"description: AWLab-ID rules for plan management, cross-session memory, "
+        f"project scanning, and AI-assisted development conventions\n"
+        f"applyTo: '**/*'\n"
+        f"---\n"
+        f"\n"
+        f"# AWLab-ID Rules\n\n"
+        f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n", "utf-8"
+    )
+    _ok("hermes/skills/awlab-rules/SKILL.md  (skill-packaged rules, comments stripped, anchors)")
+
+    # ── Copy all existing skills ──
+    for s in skills:
+        d = hermes_dir / s["name"]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(s["content"], "utf-8")
+    _ok(f"hermes/skills/  ({len(skills)} skills copied)")
+
+
 def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
     _header("Compiling Rules & Skills")
     rules = _load_rules()
     skills = _load_skills()
-    unified = _build_unified(rules)
 
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
-    outputs = {
-        ".clinerules": f"# Cline Rules — AWLab-ID\n\n{unified}\n\n## Available MCP Tools\n{MCP_TOOLS}\n",
-        "copilot-instructions.md": (
-            f"# AWLab-ID — Copilot Instructions\n\n"
-            f"MCP Tools:\n{MCP_TOOLS}\n\n## Rules\n\n{unified.replace('## ', '### ')}\n"
-        ),
-        "CLAUDE.md": (
-            f"# Claude Code — AWLab-ID\n\n"
-            f"MCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n"
-        ),
-        "hermes-config.json": json.dumps({
-            "name": "awlab-mcp-server",
-            "rules": [{"slug": "awlab-rules", "name": "AWLab-ID Rules", "content": unified}],
-             "mcpServers": {
-                 "awlab-mcp": {"command": "awlab-mcp"},
-                 "awlab-plan": {"command": "awlab-plan"},
-                 "awlab-memory": {"command": "awlab-memory"},
-             },
-        }, indent=2),
-    }
+    # Clean old profiles before recompiling to avoid stale artifacts
+    for old in list(PROFILES_DIR.glob("*")):
+        if old.is_dir():
+            shutil.rmtree(old)
+        elif old.is_file():
+            old.unlink()
 
-    for name, content in outputs.items():
-        (PROFILES_DIR / name).write_text(content, "utf-8")
-        _ok(name)
+    _compile_cline(rules, skills, PROFILES_DIR)
+    _compile_copilot(rules, skills, PROFILES_DIR)
+    _compile_claude(rules, skills, PROFILES_DIR)
+    _compile_hermes(rules, skills, PROFILES_DIR)
 
     _detail(f"{len(rules)} rules, {len(skills)} skills")
     return rules, skills
@@ -329,23 +488,15 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         vf.write_text(raw, "utf-8")
         _info(f"Tag: {m.group(0).split('=')[1].strip().strip('\"')} → {new}")
 
-    # 2. Compile rules → dist
+    # 2. Compile rules → dist/profiles/{agent}/
     if not no_rules:
         _info("Compiling assets...")
         rules, skills = cmd_compile_rules()
 
-        (DIST / "rules").mkdir(parents=True, exist_ok=True)
-        for r in rules:
-            (DIST / "rules" / r["filename"]).write_text(r["content"], "utf-8")
-
+        # Copy per-agent profiles to dist
         if PROFILES_DIR.exists():
             shutil.copytree(PROFILES_DIR, DIST / "profiles", dirs_exist_ok=True)
-
-        (DIST / "skills").mkdir(parents=True, exist_ok=True)
-        for s in skills:
-            d = DIST / "skills" / s["name"]
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "SKILL.md").write_text(s["content"], "utf-8")
+            _detail("profiles/  (per-agent: cline, copilot, claude, hermes)")
 
         _ok(f"{len(rules)} rules, {len(skills)} skills")
 
@@ -471,20 +622,19 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
 
 PUBLISH_MAP = {
     "cline": ("Cline", [
-        ("rules", "{home}/Documents/Cline/Rules/"),
-        ("profiles/.clinerules", "{home}/Documents/Cline/Rules/.clinerules"),
+        ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
+        ("profiles/cline/skills", "{home}/.agents/skills"),
     ]),
     "copilot": ("Copilot", [
-        ("profiles/copilot-instructions.md", "{home}/.copilot/instructions/awlab-mcp-server.instructions.md"),
+        ("profiles/copilot", "{home}/.copilot/instructions"),
+        ("profiles/cline/skills", "{home}/.agents/skills"),
     ]),
     "claude": ("Claude", [
-        ("profiles/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
+        ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
+        ("profiles/claude/skills", "{home}/.claude/skills"),
     ]),
     "hermes": ("Hermes", [
-        ("profiles/hermes-config.json", "{home}/.continue/config.json"),
-    ]),
-    "skills": ("Skills", [
-        ("skills/{name}/SKILL.md", "{home}/.agents/skills/{name}/SKILL.md"),
+        ("profiles/hermes/skills", "{home}/.hermes/skills"),
     ]),
 }
 
@@ -520,10 +670,14 @@ def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = Fal
                 dest = _resolve_dest(dest_tpl, home)
                 if dest.exists():
                     if dest.is_dir():
-                        for f in dest.glob("*.md"):
+                        for f in dest.rglob("*.md"):
                             f.unlink()
                             _detail(f"{f}")
                             total += 1
+                        # Remove empty subdirectories
+                        for d in sorted(dest.rglob("*"), key=lambda p: str(p), reverse=True):
+                            if d.is_dir() and not any(d.iterdir()):
+                                d.rmdir()
                     else:
                         dest.unlink()
                         _detail(f"{dest}")
@@ -575,10 +729,13 @@ def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = Fal
             dest = _resolve_dest(dest_tpl, home)
             if src.is_dir():
                 dest.mkdir(parents=True, exist_ok=True)
-                for f in src.glob("*.md"):
-                    shutil.copy2(f, dest / f.name)
-                    _detail(f"{dest / f.name}")
-                    total += 1
+                for item in src.rglob("*"):
+                    if item.is_file():
+                        rel = item.relative_to(src)
+                        (dest / rel.parent).mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dest / rel)
+                        _detail(f"{dest / rel}")
+                        total += 1
             elif src.exists():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
