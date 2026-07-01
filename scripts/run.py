@@ -304,20 +304,21 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
     cline_dir = profiles_dir / "cline"
     (cline_dir / "rules").mkdir(parents=True, exist_ok=True)
     for r in rules:
-        # Individual files keep HTML comments (authority metadata useful for agents)
-        (cline_dir / "rules" / r["filename"]).write_text(r["content"], "utf-8")
-    _ok("cline/rules/  (13 individual files, HTML comments preserved)")
+        # Individual files keep HTML comments, rewrite refs to heading anchors
+        content = _rewrite_refs(r["content"])
+        (cline_dir / "rules" / r["filename"]).write_text(content, "utf-8")
+    _ok("cline/rules/  (13 individual files, HTML comments preserved, heading anchors)")
 
     # Skills for Cline
     _copy_skills(skills, cline_dir, "cline/skills/")
 
-    # .clinerules monolith (project-level) \u2014 strip HTML comments
-    stripped = [{"filename": r["filename"], "content": _strip_html_comments(r["content"])} for r in rules]
+    # .clinerules monolith (project-level) \u2014 strip HTML comments + rewrite refs
+    stripped = [{"filename": r["filename"], "content": _rewrite_refs(_strip_html_comments(r["content"]))} for r in rules]
     unified = _build_unified(stripped)
     (profiles_dir / ".clinerules").write_text(
         f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n## Available MCP Tools\n{MCP_TOOLS}\n", "utf-8"
     )
-    _ok(".clinerules  (monolith, HTML comments stripped)")
+    _ok(".clinerules  (monolith, HTML comments stripped, heading anchors)")
 
 
 def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
@@ -343,11 +344,12 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
     for r in rules:
         base = r["filename"].replace(".md", "")
         desc = descriptions.get(base, f"AWLab-ID rule: {base}")
-        # Strip HTML comments, offset headings by 1 level (\"##\" \u2192 \"###\")
+        # Strip HTML comments, offset headings, rewrite refs to heading anchors
         cleaned = _offset_headings(_strip_html_comments(r["content"]), levels=1)
+        cleaned = _rewrite_refs(cleaned)
         frontmatter = f"---\nname: {base}\ndescription: '{desc}'\n---\n\n"
         (copilot_dir / f"{base}.instructions.md").write_text(frontmatter + cleaned, "utf-8")
-    _ok("copilot/  (13 .instructions.md files, comments stripped, headings offset)")
+    _ok("copilot/  (13 .instructions.md files, comments stripped, headings offset, heading anchors)")
 
 
 def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
