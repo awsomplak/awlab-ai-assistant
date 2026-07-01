@@ -19,15 +19,15 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 
 ## Steps
 
-1. **Determine Project Root** — Identify current workspace root (per `02-plan-artifacts.md` Project-Scoped Operations). If multiple workspaces, confirm with user.
+1. **Determine Project Root** — Identify current workspace root (per `#02-plan-artifacts` Project-Scoped Operations). If multiple workspaces, confirm with user.
 
 2. **Detect Environment FIRST**
-    - Run environment detection per **`05-environment.md`** (the single source of truth)
+    - Run environment detection per **`#05-environment`** (the single source of truth)
     - Ensures all subsequent commands use the correct shell syntax (PowerShell vs Bash)
 
 3. **Ensure Structure Exists** — Silent create `./.ai/` and `./.ai/artifacts/` and `registry.md` if missing. Do NOT create `./.ai/memory-bank/`.
 
-4. **Read Project ID** — Read `.ai/project-id` (if missing, run `08-project-id.md` bootstrap first). Store as `$PROJECT_ID` (for informational use only – awlab-memory uses `AGENT_MEMORY_SLUG` automatically).
+4. **Read Project ID** — Read `.ai/project-id` (if missing, run `#08-project-id` bootstrap first). Store as `$PROJECT_ID` (for informational use only – awlab-memory uses `AGENT_MEMORY_SLUG` automatically).
 
 5. **Load user patterns**  
     - Run `search_nodes(query="type: pattern")`.  
@@ -37,7 +37,7 @@ Activate this skill when the user explicitly requests a **new** plan using the t
     - Store the top 5–10 patterns in a variable `$USER_PATTERNS`.
 
 6. **Scan Project & Populate Memory via awlab-memory**
-    - Run the **Fingerprint Protocol** defined in **`06-project-scanner.md`**.
+    - Run the **Fingerprint Protocol** defined in **`#06-project-scanner`**.
     - Use scan results to call awlab-memory tools:
         - **Project architecture**:  
           `create_entities(entities=[{"name": "Project Architecture", "entityType": "concept", "observations": ["Project type: {language} / {framework}. Architecture: {pattern}. Key directories: {list}. Entry point: {file}."}])`
@@ -53,11 +53,11 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 
 7. **Read Registry**
     - Parse `./.ai/artifacts/registry.md` to find existing plans and UUIDs
-    - Do **not** scan the `./.ai/artifacts/` directory (use registry.md only — see `03-token-strategies.md`)
+    - Do **not** scan the `./.ai/artifacts/` directory (use registry.md only — see `#03-token-strategies`)
     - If registry exists but table structure is malformed (missing headers or separator row), rebuild the table header and warn: "⚠️ Registry table was malformed. Headers restored. Verify plan entries."
 
 8. **Generate Plan Identity**
-    - Generate an 8-character randomized lowercase alphanumeric UUID per the format defined in `02-plan-artifacts.md` (UUID Format section).
+    - Generate an 8-character randomized lowercase alphanumeric UUID per the format defined in `#02-plan-artifacts` (UUID Format section).
     - Ask user for a concise one-line summary of the plan.
     - **CRITICAL: STOP HERE AND WAIT FOR THE USER's RESPONSE.** Do NOT proceed to Step 8 until the user has provided the summary.
     - **EXCEPTION**: If the user has already provided a plan summary, a clear feature goal, or specific details in their triggering prompt, bypass the stop-and-wait check entirely.
@@ -74,7 +74,7 @@ Activate this skill when the user explicitly requests a **new** plan using the t
           Include each pattern from `$USER_PATTERNS`, formatted as `- {type}: {value}`.
         - **Approach**
         - **Expected Outcomes**
-    - Write `tasks.md` with phases and ordered checklist per `02-plan-artifacts.md` (Tasks Format and Extended Task Format). Use `→ depends:` and `? if:` markers where appropriate.
+    - Write `tasks.md` with phases and ordered checklist per `#02-plan-artifacts` (Tasks Format and Extended Task Format). Use `→ depends:` and `? if:` markers where appropriate.
     - Write `notes.md` only if technical constraints, risks, or key decisions exist
 
 10. **Update Registry**
@@ -90,4 +90,4 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 
 ## Implementation Instructions
 
-When the user asks to implement this plan, **strictly follow the Phase Execution Rules in `02-plan-artifacts.md`**. Do not use any other phase‑execution instructions.
+When the user asks to implement this plan, **strictly follow the Phase Execution Rules in `#02-plan-artifacts`**. Do not use any other phase‑execution instructions.

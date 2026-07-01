@@ -1,8 +1,14 @@
 # AWLab-ID MCP Server
 
-**Deterministic MCP server providing 40+ tools for plan management, memory operations, registry control, workflow execution, and project scanning — all without AI model invocation.**
+**Deterministic MCP server providing 36 tools across 3 standalone servers for plan management, memory operations, registry control, workflow execution, and project scanning — all without AI model invocation.**
 
 Part of the [cline-ai-assisted-dev](../) system.
+
+| Server | Tools | Entry Point |
+|--------|-------|-------------|
+| `awlab-mcp` | 6 utility & context tools | `server.py` / `__main__.py` |
+| `awlab-plan` | 17 plan, registry, task & workflow tools | `server_plan.py` / `__main_plan__.py` |
+| `awlab-memory` | 13 memory & context store tools | `server_memory.py` / `__main_memory__.py` |
 
 ---
 
@@ -12,15 +18,16 @@ Part of the [cline-ai-assisted-dev](../) system.
 graph TB
   subgraph SERVER["Python Package — mcp_server/"]
     direction LR
-    MAIN["server.py<br/>Main Entry Point"]
+    MCP_MAIN["server.py · server_plan.py · server_memory.py<br/>3 Entry Points"]
     CFG["config.py<br/>Settings"]
-    TOOLS["tools/<br/>plan_tools · memory_tools<br/>utils_tools · file_tools"]
-    HELPERS["helpers/<br/>agent_recall · file_utils<br/>registry_utils"]
-    MODS["server_modules/<br/>lifecycle · registration"]
+    TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
+    HELPERS["helpers/<br/>agent_recall · file_utils · registry_utils<br/>embeddings · hybrid_search · validation"]
+    MODS["modules/<br/>lifecycle · registration<br/>registration_plan · registration_memory"]
   end
 
-  subgraph CLIENTS["MCP Consumer (Cline)"]
+  subgraph CLIENTS["MCP Consumers"]
     CL["Cline Extension"]
+    CP["VS Code Copilot"]
   end
 
   subgraph EXTERNAL["External Systems"]
@@ -28,12 +35,11 @@ graph TB
     AG["agent-recall<br/>Knowledge Graph"]
   end
 
-  CL -->|"stdio protocol"| MAIN
-  MAIN -->|"load"| CFG
-  MAIN -->|"register"| TOOLS
+  CL & CP -->|"stdio protocol"| MCP_MAIN
+  MCP_MAIN -->|"load"| CFG
+  MCP_MAIN -->|"register"| MODS
+  MODS -->|"expose"| TOOLS
   TOOLS -->|"use"| HELPERS
-  TOOLS -->|"delegate"| MODS
-  MODS -->|"config"| CFG
   HELPERS -->|"read/write"| FS
   HELPERS -->|"subprocess"| AG
 
@@ -79,20 +85,42 @@ pip install -e .
 # Now `awlab-mcp` is available as a CLI command
 ```
 
-### Manual (no install required)
+### Build standalone executables
 
 ```bash
-pip install -r mcp_server/requirements.txt
+# Build for current OS (uses PyInstaller via scripts/run.py)
+python scripts/run.py build
+# Build for specific targets
+python scripts/run.py build --target-os=all
+python scripts/run.py build --target-os=linux
 ```
+
+Built binaries at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, `dist/bin/awlab-memory.exe`.
 
 ### Configure in Cline
 
 ```json
 {
   "mcpServers": {
-    "agent-memory": {
+    "awlab-mcp": {
       "type": "stdio",
-      "command": "D:\\Project\\IDE\\cline-ai-assisted-dev\\.venv\\Scripts\\awlab-mcp.exe",
+      "command": "path_to/dist/awlab-mcp.exe",
+      "env": {
+        "LOG_ENABLED": "true",
+        "LOG_LEVEL": "INFO"
+      }
+    },
+    "awlab-plan": {
+      "type": "stdio",
+      "command": "path_to/dist/awlab-plan.exe",
+      "env": {
+        "LOG_ENABLED": "true",
+        "LOG_LEVEL": "INFO"
+      }
+    },
+    "awlab-memory": {
+      "type": "stdio",
+      "command": "path_to/dist/awlab-memory.exe",
       "env": {
         "LOG_ENABLED": "true",
         "LOG_LEVEL": "INFO"
@@ -104,82 +132,88 @@ pip install -r mcp_server/requirements.txt
 
 **Alternative entry points** (use any one):
 
-| Entry Point | `command` | `args` |
-|-------------|-----------|--------|
-| Installed CLI | `.venv\Scripts\awlab-mcp.exe` | *(none)* |
-| Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server.server"]` |
+| Server | Entry Point | `command` | `args` |
+|--------|-------------|-----------|--------|
+| `awlab-mcp` | Installed CLI | `.venv\Scripts\awlab-mcp.exe` | *(none)* |
+| `awlab-mcp` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server"]` |
+| `awlab-plan` | Installed CLI | `.venv\Scripts\awlab-plan.exe` | *(none)* |
+| `awlab-plan` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server.server_plan"]` |
+| `awlab-memory` | Installed CLI | `.venv\Scripts\awlab-memory.exe` | *(none)* |
+| `awlab-memory` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server.server_memory"]` |
 
 ---
 
-## Tools Reference (40+)
+## Tools Reference (36 tools across 3 servers)
 
-### 📋 Plan & Task Management
+### 🔧 awlab-mcp (6 tools — Utility & Context)
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `read_plan_tasks` | Parse a plan's `tasks.md` into structured JSON | `plan_uuid: str`, `workspace_path: str`, `format?` ("structured"/"raw"/"minimal") |
-| `update_task_status` | Update a single task's status marker | `plan_uuid`, `task_path`, `new_status`, `workspace_path` |
-| `batch_update_tasks` | Atomically update multiple tasks with rollback | `plan_uuid`, `updates: str`, `workspace_path` |
-| `validate_phase_gate` | Check if Phase{N-1} is complete before Phase{N} | `plan_uuid`, `phase_num`, `workspace_path` |
-| `get_next_eligible_task` | Find the next non-blocked task respecting dependencies | `plan_uuid`, `workspace_path`, `phase?` |
-| `validate_status_transition` | Check if a status transition is legal | `current`, `target` status markers |
-| `mark_phase_complete` | Complete all tasks in a phase (8-step workflow) | `plan_uuid`, `phase_number`, `workspace_path` |
-| `resolve_deferred_tasks` | Re-evaluate ⏳ tasks whose dependencies are now met | `plan_uuid`, `workspace_path`, `phase_number?` |
-| `check_plan_completable` | Verify all tasks are in terminal states | `plan_uuid`, `workspace_path` |
+| Tool | Description |
+|------|-------------|
+| `util_get_version` | Return MCP server build version & tag |
+| `util_get_project_meta` | Return OS, shell, server version, workspace metadata |
+| `ctx_get_snapshot` | Active plan + patterns + project ID snapshot |
+| `ctx_read_memory_bank` | Read allowed files from `.ai/memory-bank/` |
+| `ctx_scan_project` | Framework-aware project scan (entry points, relationships) |
+| `ctx_suggest_files` | Suggest relevant files for a task description |
 
-### 📂 Registry & Plan Lifecycle
+### 📋 awlab-plan (17 tools — Registry, Tasks & Workflows)
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `list_registry` | Return Active/Paused/Completed tables as JSON | `workspace_path` |
-| `switch_active_plan` | Change the active plan UUID in the registry | `uuid`, `workspace_path` |
-| `generate_retrospective_summary` | Extract patterns from a completed plan | `plan_uuid`, `workspace_path` |
-| `format_tasks_as_markdown` | Convert structured task data to markdown | `plan_uuid?` or `phases?`, `workspace_path?` |
+**Registry Lifecycle**
 
-### 🧠 Memory & Knowledge Graph
+| Tool | Description |
+|------|-------------|
+| `reg_list_registry` | Return Active/Paused/Completed plans as JSON |
+| `reg_switch_active_plan` | Change the active plan UUID in the registry |
+| `reg_validate_phase_gate` | Check if predecessor phase is complete |
+| `reg_get_next_eligible_task` | Find next non-blocked, non-terminal task |
+| `reg_mark_phase_complete` | Mark all tasks in a phase as completed |
+| `reg_resolve_deferred_tasks` | Re-evaluate ⏳ deferred tasks |
+| `reg_check_plan_completable` | Verify all tasks are in terminal states |
+| `reg_generate_retrospective` | Extract patterns from a completed plan |
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `search_nodes` | Hybrid search across project-scoped entities | `query`, `limit?` (default 10) |
-| `create_entities` | Create new entities (people, concepts, patterns) | `entities: list[{name, entityType, observations?}]` |
-| `add_observations` | Attach facts to existing entities | `observations: list[{entityName, contents}]` |
-| `create_relations` | Link two entities with a relation type | `relations: list[{from, to, relationType}]` |
-| `open_nodes` | Retrieve full entity details | `names: list[str]` |
-| `read_graph` | Explore entity neighbourhood | `limit?` (default 50) |
-| `delete_entities` | Remove entities from the knowledge graph | `names: list[str]` |
-| `delete_observations` | Delete specific observations | `deletions: list[{entityName, observations}]` |
-| `delete_relations` | Delete relations between entities | `relations: list[{from, to, relationType}]` |
-| `search_memory` | Legacy hybrid search | `query`, `limit?` (default 10) |
-| `store_memory` | Store observation (auto-creates entity if needed) | `entity_name`, `observation`, `pattern_type?` |
-| `list_patterns` | List all stored patterns | *(none)* |
-| `search_memory_cross` | Cross-scope search (project/user/conversation) | `query`, `scope?` |
-| `store_context` | Store context with TTL-based expiry | `key`, `value`, `scope?`, `ttl?` |
-| `get_context_fragment` | Retrieve topic-specific context | `topic` |
+**Task Management**
 
-### ⚙️ Workflow Execution
+| Tool | Description |
+|------|-------------|
+| `task_read_plan_tasks` | Parse `tasks.md` into structured/raw/minimal JSON |
+| `task_write_plan_tasks` | Write markdown content to `tasks.md` |
+| `task_update_status` | Update a single task's status marker |
+| `task_batch_update` | Atomically update multiple tasks with rollback |
+| `task_validate_transition` | Check if a status marker transition is legal |
+| `task_format_markdown` | Format task list as markdown |
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `list_workflows` | List all workflows with metadata | *(none)* |
-| `execute_workflow` | Execute a named workflow from `Cline/Workflows/` | `workflow_name`, `params?` (JSON string) |
+**Workflows & Utilities**
 
-### 🔍 Project Scanning
+| Tool | Description |
+|------|-------------|
+| `wf_execute` | Execute a named workflow from `Cline/Workflows/` |
+| `wf_list` | List available workflow files |
+| `util_generate_mermaid` | Generate Mermaid flowchart from phases |
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `scan_project` | Framework-aware full project scan | `workspace_path` |
-| `get_project_fingerprint` | Return cached fingerprint (framework, models, routes) | `workspace_path` |
-| `suggest_relevant_files` | Suggest up to 3 files for a task | `task_description`, `workspace_path` |
+### 🧠 awlab-memory (13 tools — Memory & Context Store)
 
-### 🧩 Utility
+**Knowledge Graph**
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `get_environment` | Return OS, shell, server version, workspace path | *(none)* |
-| `get_server_version` | Return MCP server version and compatibility range | *(none)* |
-| `read_memory_bank` | Read allowed files from `.ai/memory-bank/` | `filename`, `workspace_path` |
-| `get_context_snapshot` | Active plan + patterns + project ID snapshot | `workspace_path` |
-| `generate_mermaid` | Generate Mermaid flowchart from phases | `phases`, `dependencies?` |
+| Tool | Description |
+|------|-------------|
+| `mem_search` | Hybrid BM25+dense search (supports scope + project_id) |
+| `mem_store` | Store an observation (auto-creates entity if needed) |
+| `mem_create_entities` | Create new entities (people, concepts, patterns) |
+| `mem_tag_entity` | Attach context labels to an existing entity |
+| `mem_relate` | Declare a semantic association between entities |
+| `mem_fetch_node_details` | Query specific attributes of graph nodes |
+| `mem_read_graph` | Read the knowledge graph neighbourhood |
+| `mem_archive_entities` | Move entities to historical archive state |
+| `mem_delete_observations` | Remove specific observations from entities |
+| `mem_delete_relations` | Remove relations between entities |
+| `mem_list_patterns` | List all stored patterns |
+
+**Context Store (TTL-based)**
+
+| Tool | Description |
+|------|-------------|
+| `ctx_store` | Store context fragments with TTL-based expiry |
+| `ctx_get_fragment` | Retrieve topic-specific context without file reads |
 
 ---
 
@@ -192,10 +226,13 @@ pip install -r mcp_server/requirements.txt
 | `LOG_ENABLED` | Enable/disable logging | `false` |
 | `LOG_LEVEL` | Logging verbosity (`INFO`, `DEBUG`) | `INFO` |
 
-Copy `.env.example` to `.env` in the `mcp_server/` directory to customize:
+Copy `.env` (or `config.json`) in the production config home `~/.awlab-id/agent-memory/` or project root to customize:
 
-```bash
-cp .env.example .env
+```
+AWLAB_ENV=production        # Force production mode
+LOG_ENABLED=true
+LOG_LEVEL=INFO
+DB_PATH=C:\custom\memory     # Override agent-recall DB location
 ```
 
 ---
@@ -205,26 +242,45 @@ cp .env.example .env
 ```
 mcp_server/
 ├── __init__.py
-├── server.py               # Main entry point (stdio server)
-├── config.py               # Settings — no auto-detection, parameter-driven
-├── .env.example            # Environment variables template
-├── requirements.txt        # Python dependencies
+├── _version.py             # Version string (v1.1.0+build.065)
+├── server.py               # FastMCP entry point — awlab-mcp (6 tools)
+├── server_plan.py          # FastMCP entry point — awlab-plan (17 tools)
+├── server_memory.py        # FastMCP entry point — awlab-memory (13 tools)
+├── __main__.py             # Thin CLI entry point (awlab-mcp)
+├── __main_plan__.py        # CLI entry point (awlab-plan)
+├── __main_memory__.py      # CLI entry point (awlab-memory)
+├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/
 │   ├── __init__.py
-│   ├── plan_tools.py       # Plan & task management (9 tools)
-│   ├── memory_tools.py     # Memory operations (10 tools)
-│   ├── utils_tools.py      # Utility functions (5 tools)
-│   └── file_tools.py       # File reading operations
+│   ├── plan_tools.py       # Plan & task management
+│   ├── memory_tools.py     # Memory operations
+│   ├── utils_tools.py      # Utility functions
+│   ├── file_tools.py       # File reading operations
+│   └── context_tools/      # Context, scanning, caching, suggestions
+│       ├── __init__.py
+│       ├── context.py
+│       ├── scanner.py
+│       ├── suggest.py
+│       ├── _cache.py
+│       └── _memory_search.py
 ├── helpers/
-│   ├── __init__.py
+│   ├── __init__.py         # Re-exports all helpers
 │   ├── agent_recall.py     # agent-recall subprocess wrapper
 │   ├── file_utils.py       # File I/O and markdown parsing
-│   └── registry_utils.py   # Registry.md parsing and updating
-└── server_modules/
+│   ├── registry_utils.py   # Registry.md parsing and updating
+│   ├── embeddings.py       # FastEmbed integration (optional)
+│   ├── hybrid_search.py    # BM25 + dense re-ranking
+│   ├── logger.py           # Professional logger with tool scoping
+│   ├── validation.py       # UUID, status, phase validation
+│   ├── response.py         # JSON response helpers
+│   └── workspace.py        # DB path resolution
+└── modules/
     ├── __init__.py
-    ├── lifecycle.py        # Server lifecycle management
-    └── registration.py     # Tool registration utilities
+    ├── lifecycle.py        # Server lifecycle — FastMCP app + run_server()
+    ├── registration.py     # Tool registration — awlab-mcp tools
+    ├── registration_plan.py  # Tool registration — awlab-plan tools
+    └── registration_memory.py # Tool registration — awlab-memory tools
 ```
 
 ---
@@ -242,7 +298,7 @@ Log output goes to **stderr** (not stdout), preventing interference with the MCP
 ## Requirements
 
 - Python 3.10+
-- `mcp>=1.0.0`
-- `pydantic>=2.0`
-- `python-dotenv>=1.0`
+- `mcp>=1.0.0`, `pydantic>=2.0`, `python-dotenv>=1.0`
+- `httpx>=0.28` (for agent-recall subprocess)
+- Optional: `fastembed>=0.5.0` (for BM25+dense hybrid search)
 

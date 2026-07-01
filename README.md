@@ -1,8 +1,14 @@
-# Cline AI-Assisted Development System
+# AWLab-ID — AI-Assisted Development System
 
-**Rules · Workflows · Skills · MCP Server — by AWLab-ID**
+**Rules · Workflows · Skills · MCP Server**
 
-Transforms [Cline](https://github.com/cline/cline) and [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) into project-aware AI development assistants with structured plan management, persistent cross-session memory via knowledge graph, and a deterministic MCP server (30+ tools). Supports both environments with automatically adapted rules and shared skills.
+Transforms:
+- [Cline](https://github.com/cline/cline),
+- [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) (Experimental),
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Experimental), and
+- [Hermes Agent](https://github.com/nousresearch/hermes-agent) (Experimental)
+
+into project-aware AI development assistants with structured plan management, persistent cross-session memory via knowledge graph, and 3 deterministic MCP servers (36 tools).
 
 ---
 
@@ -10,82 +16,18 @@ Transforms [Cline](https://github.com/cline/cline) and [VS Code Copilot](https:/
 
 ```mermaid
 graph TB
-  subgraph IDE["VS Code / JetBrains"]
-    CL["Cline Extension"]
-    CP["VS Code Copilot"]
-  end
+  CL["Cline Extension"]
+  CP["VS Code Copilot"]
+  AM["awlab-mcp (6 tools)"]
+  AP["awlab-plan (17 tools)"]
+  AR["awlab-memory (13 tools)"]
+  ART["artifacts/ registry.md + plans"]
+  AG["agent-recall Knowledge Graph"]
 
-  subgraph RULES["11 Rules / Instructions"]
-    direction LR
-    META["00-meta"]
-    MEM["01-memory-bank"]
-    PLAN["02-plan-artifacts"]
-    TOKEN["03-token-strategies"]
-    CMD["04-commands"]
-    ENV["05-environment"]
-    SCAN["06-project-scanner"]
-    ROUTER["07-model-router"]
-    PID["08-project-id"]
-    UPAT["09-user-patterns"]
-    PLIFE["10-pattern-lifecycle"]
-  end
-
-  subgraph SKILLS["8 Shared Skills (~/.agents/skills/)"]
-    PC["plan-creator"]
-    PS["plan-status"]
-    SW["switch-plan"]
-    RT["retrospective"]
-    TF["test-flow"]
-    EP["extract-patterns"]
-    MM["memory-maintenance"]
-    PM["pattern-manager"]
-  end
-
-  subgraph MCP["3 MCP Servers (36 tools)"]
-    AM["awlab-mcp (6 utility tools)"]
-    AP["awlab-plan (17 plan tools)"]
-    AR["awlab-memory (13 memory tools)"]
-  end
-
-  subgraph DISK[".ai/ Project Filesystem"]
-    ARTIFACTS["artifacts/ registry.md + plans"]
-  end
-
-  CL -->|"follow rules / create plan"| RULES
-  CL -->|"start phase N"| PLAN
-  CL -->|MCP calls| AM & AP & AR
-  CP -->|auto-loads on match| RULES
-  CP -->|"/" slash commands| SKILLS
-  CP -->|MCP calls| AM & AP & AR
-  AP -->|read/write| ARTIFACTS
-  AR -->|wraps| AgentRecall["agent-recall Knowledge Graph"]
-```
-
-## Session Flow
-
-```mermaid
-flowchart LR
-  subgraph SESSION["Cline Session"]
-    A["follow rules"]
-    B["Load registry & plan"]
-    C["Execute tasks"]
-    M["⬆ Per-Task Memory"]
-    D["Phase Complete?"]
-    E["Next Phase?"]
-    F["Plan Complete!"]
-    G["retrospective"]
-  end
-
-  A --> B --> C --> M --> D
-  D -->|Yes| E -->|Yes| C
-  D -->|No| C
-  E -->|No| F --> G
-
-  subgraph COPILOT["Copilot"]
-    CP1["Agent auto-loads<br/>.instructions.md"]
-    CP2["/ slash commands<br/>for skills"]
-    CP3["MCP tools for<br/>plan execution"]
-  end
+  CL --> AM & AP & AR
+  CP --> AM & AP & AR
+  AP --> ART
+  AR --> AG
 ```
 
 ---
@@ -93,174 +35,86 @@ flowchart LR
 ## Quick Start
 
 ```bash
-# Clone & install
-git clone https://github.com/awsomplak/cline-ai-assisted-dev.git
-cd cline-ai-assisted-dev
-chmod +x install.sh && ./install.sh          # macOS/Linux
-.\install.ps1                                 # Windows
-
-# Install MCP server
 pip install -e .
-
-# Build standalone executable (default: current OS)
-python scripts/run.py build
-python scripts/run.py build --target-os=all  # All OSes (specs for non-host)
-python scripts/run.py build --target-os=linux  # Specific OS
+python scripts/run.py compile-rules
+python scripts/run.py publish --target=all
 ```
 
-The built executables are at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, and `dist/bin/awlab-memory.exe` — fully standalone, no Python or source files needed.
-
-**Cline**: `follow rules` → `create plan` → `start phase 1` → `/plan-status`
-
-**Copilot**: Instructions auto-load; invoke skills via `/create plan`, `/plan-status`, `/retrospective`, `/test-flow`
+See [Installation & CLI Reference](docs/INSTALL.md) for full instructions.
 
 ---
 
-## Components
+## Documentation
 
-### MCP Servers (36 tools across 3 servers)
-
-Split across 3 servers to work around Copilot's per-server tool visibility limit (~15 tools/server):
-
-#### 🔧 awlab-mcp (6 tools — Utility & Context)
-
-| Server | Tool | Purpose |
-|--------|------|---------|
-| `awlab-mcp` | `util_get_version` | Return MCP server build version |
-| `awlab-mcp` | `util_get_project_meta` | Return local project build metadata |
-| `awlab-mcp` | `ctx_get_snapshot` | Active plan + patterns + project ID snapshot |
-| `awlab-mcp` | `ctx_read_memory_bank` | Read allowed files from `.ai/memory-bank/` |
-| `awlab-mcp` | `ctx_scan_project` | Detect framework, entry points, relationships |
-| `awlab-mcp` | `ctx_suggest_files` | Suggest files relevant to a task description |
-
-#### 📋 awlab-plan (17 tools — Registry, Tasks & Workflows)
-
-| Server | Tool | Purpose |
-|--------|------|---------|
-| `awlab-plan` | `reg_list_registry` | Return Active/Paused/Completed plans as JSON |
-| `awlab-plan` | `reg_switch_active_plan` | Change the active plan in the registry |
-| `awlab-plan` | `reg_validate_phase_gate` | Check if predecessor phase is complete |
-| `awlab-plan` | `reg_get_next_eligible_task` | Find next non-blocked, non-terminal task |
-| `awlab-plan` | `reg_mark_phase_complete` | Mark all tasks in a phase as completed |
-| `awlab-plan` | `reg_resolve_deferred_tasks` | Re-evaluate deferred ⏳ tasks |
-| `awlab-plan` | `reg_check_plan_completable` | Verify all tasks are terminal |
-| `awlab-plan` | `reg_generate_retrospective` | Extract patterns from completed plan |
-| `awlab-plan` | `task_update_status` | Update a task's status marker |
-| `awlab-plan` | `task_batch_update` | Atomically update multiple tasks |
-| `awlab-plan` | `task_validate_transition` | Check if a status transition is legal |
-| `awlab-plan` | `task_read_plan_tasks` | Parse tasks.md into structured/raw/minimal |
-| `awlab-plan` | `task_write_plan_tasks` | Write markdown to tasks.md |
-| `awlab-plan` | `task_format_markdown` | Format task list as markdown |
-| `awlab-plan` | `wf_execute` | Execute a named workflow |
-| `awlab-plan` | `wf_list` | List available workflow files |
-| `awlab-plan` | `util_generate_mermaid` | Generate Mermaid flowcharts |
-
-#### 🧠 awlab-memory (13 tools — Memory & Context Store)
-
-| Server | Tool | Purpose |
-|--------|------|---------|
-| `awlab-memory` | `mem_search` | Search memory with hybrid BM25+dense ranking |
-| `awlab-memory` | `mem_store` | Store an observation (creates entity if needed) |
-| `awlab-memory` | `mem_list_patterns` | List all stored patterns |
-| `awlab-memory` | `mem_create_entities` | Create new entities in memory |
-| `awlab-memory` | `mem_tag_entity` | Tag an entity with context labels |
-| `awlab-memory` | `mem_relate` | Declare a semantic association |
-| `awlab-memory` | `mem_fetch_node_details` | Query attributes of graph nodes |
-| `awlab-memory` | `mem_read_graph` | Read the knowledge graph |
-| `awlab-memory` | `mem_archive_entities` | Move entities to archive state |
-| `awlab-memory` | `mem_delete_observations` | Remove observations from entities |
-| `awlab-memory` | `mem_delete_relations` | Remove relations between entities |
-| `awlab-memory` | `ctx_store` | Store context fragments with TTL |
-| `awlab-memory` | `ctx_get_fragment` | Retrieve context without file reads |
-
-### MCP Servers (3 binaries)
-
-3 standalone MCP servers, each built via PyInstaller, serving different tool domains:
-
-| Binary | Server Name | Tools | Entry Point |
-|--------|-------------|-------|-------------|
-| `awlab-mcp.exe` | `awlab-mcp` | 6 utility & context tools | `src/mcp_server/__main__.py` |
-| `awlab-plan.exe` | `awlab-plan` | 17 plan/registry/task/workflow tools | `src/mcp_server/__main_plan__.py` |
-| `awlab-memory.exe` | `awlab-memory` | 13 memory & context store tools | `src/mcp_server/__main_memory__.py` |
-
-```mermaid
-graph TB
-  subgraph CODEBASE["src/mcp_server/"]
-    SHARED["helpers/ (shared)"]
-    TOOLS["tools/ (plan_tools, context_tools, etc.)"]
-  end
-
-  subgraph SERVERS["3 Server Binaries"]
-    MCP["awlab-mcp.exe<br/>6 tools"]
-    PLAN["awlab-plan.exe<br/>17 tools"]
-    MEM["awlab-memory.exe<br/>13 tools"]
-  end
-
-  CODEBASE --> MCP & PLAN & MEM
-```
-
-**Workspace resolution**: Parameter-driven — agent passes `workspace_path` explicitly. DB path resolves via 4-level fallback (`DB_PATH` env → `.ai/project-id` file → `~/.awlab-id/agent-memory/memory/`).
+| Document | Description |
+|----------|-------------|
+| [Installation & CLI Reference](docs/INSTALL.md) | Requirements, install, build, publish, CLI commands |
+| [Available MCP Tools](docs/AVAILABLE_TOOLS.md) | All 36 tools across 3 servers with descriptions |
+| [Project Structure](#project-structure) | Repository layout |
+| [User-Level Deployment](#user-level-deployment) | Per-agent file paths |
+| [CHANGELOG](CHANGELOG.md) | Version history |
 
 ---
 
-## Portability
+## Per-Agent Compilation Pipeline
 
-| Environment | Rules | Skills | Invocation |
-|-------------|-------|--------|------------|
-| **Cline** | `~/Documents/Cline/Rules/*.md` | `~/.agents/skills/` | `follow rules`, `create plan`, `/plan-status` |
-| **Copilot** | `~/.copilot/instructions/*.instructions.md` | `~/.agents/skills/` | Auto-loads on keyword match, `/` slash commands |
-| **Cursor** | `Cline/portability/cursor-adapter.md` | — | Adapter guide |
-| **Windsurf** | `Cline/portability/windsurf-adapter.md` | — | Adapter guide |
+Rules (`assets/rules/`) and skills (`assets/skills/`) are compiled into per-agent profiles via `python scripts/run.py compile-rules`:
 
-Skills are shared at `~/.agents/skills/`. Environment-aware skills (`plan-creator`, `extract-patterns`) auto-detect Cline vs Copilot via `$ENV` to adjust file extensions, paths, and behaviors.
+| Agent | Rules | Skills |
+|-------|-------|--------|
+| **Cline** | Individual `.md` files → `~/Documents/Cline/Rules/` | `SKILL.md` → `~/.agents/skills/` |
+| **Copilot** | `.instructions.md` with YAML frontmatter → `~/.copilot/instructions/` | `SKILL.md` → `~/.agents/skills/` (shared) |
+| **Claude Code** | `CLAUDE.md` monolith (heading anchors) → `~/.claude/` | `SKILL.md` → `~/.claude/skills/` |
+| **Hermes Agent** | Packaged as `awlab-rules/SKILL.md` | `SKILL.md` → `~/.hermes/skills/` |
 
 ---
 
 ## Project Structure
 
 ```
-cline-ai-assisted-dev/
-├── Cline/Rules/           # 11 rule files (00-meta → 10-pattern-lifecycle)
-├── Cline/Skills/          # plan-creator + 6 templates
-├── Cline/Workflows/       # plan-status, switch-plan, retrospective, test-flow
-├── Cline/portability/     # Cursor, Windsurf adapters
-├── src/mcp_server/        # Python MCP server (36 tools across 3 binaries)
-│   ├── server.py          # FastMCP entry point (awlab-mcp)
-│   ├── server_plan.py     # Entry point (awlab-plan)
-│   ├── server_memory.py   # Entry point (awlab-memory)
-│   ├── config.py          # Settings + workspace resolver
-│   ├── helpers/           # agent_recall wrapper, file_utils, etc.
-│   ├── tools/             # plan_tools, memory_tools, context_tools/
-│   └── modules/           # lifecycle, registration, registration_plan, registration_memory
+project-root/
+├── assets/
+│   ├── rules/                   # 13 rule files (source)
+│   ├── skills/                  # 4 skill sources
+│   └── profiles/                # Per-agent compiled output (generated by compile-rules)
+├── src/mcp_server/              # Python MCP server (36 tools, 3 binaries)
 ├── scripts/
-│   ├── run.py             # Build & dev script
-│   ├── test_all_mcp_tools.py  # MCP protocol test
-│   ├── check_split.py     # Verifies no tool overlap between servers
-│   ├── approve_all_tools.py   # Pre-approve tools in VS Code state DB
-│   └── stop-mcp-servers.ps1  # Stop all awlab-* processes
-├── tests/                 # Pytest suite
-├── assets/                # Profiles, rules, skills
-├── install.sh / .ps1      # Installers
-├── docs/mcp-server-split-report.md  # Full split analysis
-└── pyproject.toml         # Package definition
+│   ├── run.py                   # Build & dev CLI
+│   └── stop-mcp-servers.ps1     # Helper executeable to force stop all running `awlab-*` mcp server (Windows powershell only)
+├── tests/                       # Pytest suite
+├── docs/                        # Documentation
+├── CHANGELOG.md
+└── pyproject.toml
 ```
 
 ### User-Level Deployment
 
 ```
-~/.copilot/instructions/   # 11 .instructions.md files
-~/.agents/skills/          # 8 shared skills (plan-creator, plan-status, switch-plan,
-                           #   retrospective, test-flow, extract-patterns,
-                           #   memory-maintenance, pattern-manager)
+# Cline
+~/Documents/Cline/Rules/     # 13 .md rule files
+~/.agents/skills/            # 4 skills + awlab-rules (shared with Copilot)
+.clinerules                  # Compiled rules to single .clinerules for per-project without global rules
+
+# Copilot
+~/.copilot/instructions/     # 13 .instructions.md files
+~/.agents/skills/            # 4 skills + awlab-rules (shared with Cline)
+
+# Claude Code
+~/.claude/CLAUDE.md          # Compiled rule monolith
+~/.claude/skills/            # 4 skills + awlab-rules
+
+# Hermes
+~/.hermes/skills/            # 4 skills + awlab-rules
 ```
 
 ### Per-Project `.ai/` Structure
 
 ```
 {project-root}/.ai/
-├── project-id             # Auto-generated stable identifier
-├── artifacts/registry.md  # Plan registry (single source of truth)
-└── artifacts/{uuid}/      # plan.md, tasks.md, notes.md
+├── project-id             # Stable project identifier
+├── artifacts/registry.md  # Plan registry
+├── artifacts/{uuid}/      # plan.md, tasks.md, notes.md
+└── memory-bank/           # Knowledge graph via agent-recall
 ```
 
 ---
@@ -269,11 +123,7 @@ cline-ai-assisted-dev/
 
 - **Cline** (VS Code/JetBrains) or **VS Code Copilot**
 - **Python 3.10+** (for MCP server)
-- **AI model** with tool-calling support
-- Model pairing: 🟢 Simple → Local 1.5B–3B · 🟡 Medium → Local 14B–32B · 🔴 Complex → Frontier (Claude, GPT)
-
----
-
+- **agent-recall** (knowledge graph backend)
 ## License
 
 MIT — Use, modify, and share freely.

@@ -18,13 +18,13 @@ User says "learn from this session", "remember my patterns", or automatically af
    - Repeated command sequences (from terminal output, if available in logs).
    - Corrections made by the user (e.g., "No, use `yarn` instead of `npm`").
 
-3. **For each candidate**, follow the conflict resolution defined in `10-pattern-lifecycle.md`:
+3. **For each candidate**, follow the conflict resolution defined in `#10-pattern-lifecycle`:
    - Determine `pattern_type` (preference, convention, workflow, anti_pattern).
    - Extract `value` (the core rule).
    - Set `source` to `explicit` if user stated it clearly, otherwise `inferred`.
    - Set `confidence` accordingly (0.9 for explicit, 0.4 for inferred, 0.9 for corrections).
    - Check for existing similar patterns using `search_memory(query="type: {pattern_type}")`.
-- Resolve conflicts (replace via `delete_entities(names=[...])` + `mem_store`, or ask user first as per `10-pattern-lifecycle.md`).
+- Resolve conflicts (replace via `delete_entities(names=[...])` + `mem_store`, or ask user first as per `#10-pattern-lifecycle`).
 
 4. **Report** – "Added X new patterns: … (and resolved Y conflicts)."
 
