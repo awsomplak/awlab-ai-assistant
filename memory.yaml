@@ -1,0 +1,5 @@
+# Agent-recall database path (overrides all other resolution)
+# db_path: /path/to/custom/db/
+
+# Cache directory for scan results and context store
+# cache_dir: /path/to/custom/cache/

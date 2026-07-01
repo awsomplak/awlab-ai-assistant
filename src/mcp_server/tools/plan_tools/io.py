@@ -1,0 +1,235 @@
+"""
+File I/O, registry operations, pending queue, and agent-recall sync helpers.
+
+Extracted from the original monolithic plan_tools.py. Provides all low-level
+file, registry, and memory-sync operations used by the higher-level modules.
+"""
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from ...config import settings
+from ...helpers import (
+    fail_obj,
+    logger,
+    read_utf8,
+    write_utf8,
+    add_observations,
+    create_entities,
+    parse_registry,
+    rebuild_registry_content,
+    compute_tasks_summary,
+    validate_workspace_path,
+)
+
+
+# ── Pending Queue (Failed DB sync fallback) ────────────────────────────────
+
+
+def append_pending(workspace_path: str | Path, entry: dict[str, Any]) -> bool:
+    """Append a failed DB sync entry to pending.jsonl for later retry."""
+    try:
+        pending_path = settings.get_memory_bank_dir(workspace_path) / "pending.jsonl"
+        pending_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(pending_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+# ── Registry Helpers ───────────────────────────────────────────────────────
+
+
+def get_phase_summary_from_registry(
+    workspace_path: str | Path,
+    plan_uuid: str,
+) -> dict[str, Any]:
+    """
+    Extract phase summary info from a plan's tasks.md for registry update.
+
+    Args:
+        workspace_path: Project root path. If empty, falls back to CWD.
+        plan_uuid: The plan UUID.
+
+    Returns:
+        {tasks_complete: int, tasks_total: int}
+    """
+    tasks_path = settings.get_plan_tasks_path(workspace_path=workspace_path, plan_uuid=plan_uuid)
+    content = read_utf8(path=tasks_path)
+    if content is None:
+        return {"tasks_complete": 0, "tasks_total": 0}
+
+    summary = compute_tasks_summary(content)
+    return {
+        "tasks_complete": summary["terminal"],
+        "tasks_total": summary["total"],
+    }
+
+
+def update_registry_phase_count(
+    workspace_path: str | Path,
+    plan_uuid: str
+) -> bool:
+    """
+    Update the registry with latest phase completion counts.
+    Rewrites the summary field to include completion counts.
+
+    Args:
+        workspace_path: Optional project root. Falls back to CWD.
+        plan_uuid: The plan UUID to update.
+    """
+    try:
+        root = Path(workspace_path) if workspace_path else Path.cwd()
+        registry = parse_registry(root)
+        if not registry.get("success", False):
+            return False
+
+        summary_data = get_phase_summary_from_registry(
+            plan_uuid=plan_uuid,
+            workspace_path=workspace_path
+        )
+        new_summary_suffix = (
+            f" (Phase complete: {summary_data['tasks_complete']}/"
+            f"{summary_data['tasks_total']} tasks)"
+        )
+
+        found = False
+        for table_name in ("active", "paused", "completed"):
+            for entry in registry.get(table_name, []):
+                if entry["uuid"] == plan_uuid:
+                    base = entry["summary"].split(" (Phase complete:")[0]
+                    entry["summary"] = base + new_summary_suffix
+                    found = True
+                    break
+            if found:
+                break
+
+        if not found:
+            return False
+
+        new_content = rebuild_registry_content(
+            registry.get("active", []),
+            registry.get("paused", []),
+            registry.get("completed", []),
+        )
+        return write_utf8(
+            root / ".ai" / "artifacts" / "registry.md",
+            new_content,
+        )
+    except Exception:
+        logger.error(f"Error to update registry phase count.")
+        return False
+
+
+# ── Agent-Recall Sync ─────────────────────────────────────────────────────
+
+
+def sync_to_agent_recall(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    plan_uuid: str = "",
+    updates: list[dict[str, str]] | None = None,
+) -> bool:
+    """Sync task updates to agent-recall DB. Returns True if successful."""
+    # Validate inputs
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        logger.error(f"sync_to_agent_recall: {err}")
+        return False
+
+    try:
+        if not updates:
+            logger.error("sync_to_agent_recall: updates is empty")
+            return False
+        obs_contents = [
+            f"Batch update: {u['task_path']} \u2192 {u['new_status']}"
+            for u in updates
+        ]
+        obs = [{
+            "entityName": f"plan_{plan_uuid}",
+            "contents": obs_contents,
+        }]
+        add_observations(
+            workspace_path=workspace_path,
+            observations=obs,
+            project_id=project_id
+        )
+        return True
+    except Exception:
+        logger.error(f"Error sync to agent recall.")
+        return False
+
+
+def store_memory_checkpoint(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    plan_uuid: str = "",
+    phase_num: int = 0,
+    message: str = "",
+) -> dict[str, Any]:
+    """Store a memory checkpoint via agent-recall add_observations."""
+    # Validate inputs
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        obs_contents = [
+            f"Checkpoint: Phase {phase_num} completed at {timestamp}",
+            f"Message: {message}",
+        ]
+        obs = [{
+            "entityName": f"plan_{plan_uuid}",
+            "contents": obs_contents,
+        }]
+        add_observations(
+            workspace_path=workspace_path,
+            observations=obs,
+            project_id=project_id
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Error to store memory checkpoint.")
+        return fail_obj(error=str(e))
+
+
+def store_pattern_entity(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    name: str = "",
+    observation: str = "",
+    pattern_type: str = "",
+) -> dict[str, Any]:
+    """Store a pattern entity via agent-recall."""
+    # Validate inputs
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+
+    try:
+        create_entities(
+            workspace_path=workspace_path,
+            entities=[{"name": name, "entityType": "pattern"}],
+            project_id=project_id
+        )
+        add_observations(
+            workspace_path=workspace_path,
+            observations=[{
+                "entityName": name,
+                "contents": [
+                    f"type: {pattern_type}",
+                    f"value: {observation}",
+                    "confidence: 0.9",
+                    "source: retrospective",
+                    f"timestamp: {datetime.now(timezone.utc).isoformat()}",
+                ],
+            }],
+            project_id=project_id
+        )
+        return {"success": True, "entity_name": name}
+    except Exception as e:
+        logger.error(f"Error to store pattern entity.")
+        return fail_obj(error=str(e))

@@ -1,390 +1,279 @@
-# Cline Rules, Workflows, and Skills - AI-Assisted Development System by AWLab-ID
+# Cline AI-Assisted Development System
 
-A comprehensive rules, workflows, and skills system for Cline that provides structured plan management, persistent project memory, and phase-by-phase implementation control without extra tools or plugins.
+**Rules · Workflows · Skills · MCP Server — by AWLab-ID**
 
-## Overview
+Transforms [Cline](https://github.com/cline/cline) and [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) into project-aware AI development assistants with structured plan management, persistent cross-session memory via knowledge graph, and a deterministic MCP server (30+ tools). Supports both environments with automatically adapted rules and shared skills.
 
-This system transforms Cline into a project-aware development assistant that:
-- Remembers your project architecture across sessions via a Memory Bank
-- Plans work in structured, 8-char UUID-tracked artifacts before writing code
-- Executes implementations one phase at a time with explicit user confirmation
-- Saves tokens through lazy loading, registry-based discovery, and minimal file operations
+---
 
-## Directory Structure
+## Architecture
 
-### Repository Layout
+```mermaid
+graph TB
+  subgraph IDE["VS Code / JetBrains"]
+    CL["Cline Extension"]
+    CP["VS Code Copilot"]
+  end
 
-```markdown
-cline-ai-assisted-dev/
-├── Cline/
-│   ├── Rules/
-│   │   ├── 00-meta.md
-│   │   ├── 01-memory-bank.md
-│   │   ├── 02-plan-artifacts.md
-│   │   ├── 03-token-strategies.md
-│   │   ├── 04-commands.md
-│   │   ├── 05-environment.md
-│   │   ├── 06-project-scanner.md
-│   │   └── 07-model-router.md
-│   ├── Skills/
-│   │   └── plan-creator/
-│   │       ├── SKILL.md
-│   │       └── templates/
-│   │           ├── feature-crud.md
-│   │           ├── auth-flow.md
-│   │           ├── migration.md
-│   │           ├── refactor.md
-│   │           ├── bugfix.md
-│   │           └── integration.md
-│   ├── Workflows/
-│   │   ├── plan-status.md
-│   │   ├── retrospective.md
-│   │   ├── switch-plan.md
-│   │   └── update-memory.md
-│   └── portability/
-│       ├── cursor-adapter.md
-│       ├── windsurf-adapter.md
-│       └── copilot-adapter.md
-├── CHANGELOG.md
-├── LICENSE
-├── README.md
-├── install.sh
-└── install.ps1
+  subgraph RULES["11 Rules / Instructions"]
+    direction LR
+    META["00-meta"]
+    MEM["01-memory-bank"]
+    PLAN["02-plan-artifacts"]
+    TOKEN["03-token-strategies"]
+    CMD["04-commands"]
+    ENV["05-environment"]
+    SCAN["06-project-scanner"]
+    ROUTER["07-model-router"]
+    PID["08-project-id"]
+    UPAT["09-user-patterns"]
+    PLIFE["10-pattern-lifecycle"]
+  end
+
+  subgraph SKILLS["8 Shared Skills (~/.agents/skills/)"]
+    PC["plan-creator"]
+    PS["plan-status"]
+    SW["switch-plan"]
+    RT["retrospective"]
+    TF["test-flow"]
+    EP["extract-patterns"]
+    MM["memory-maintenance"]
+    PM["pattern-manager"]
+  end
+
+  subgraph MCP["3 MCP Servers (36 tools)"]
+    AM["awlab-mcp (6 utility tools)"]
+    AP["awlab-plan (17 plan tools)"]
+    AR["awlab-memory (13 memory tools)"]
+  end
+
+  subgraph DISK[".ai/ Project Filesystem"]
+    ARTIFACTS["artifacts/ registry.md + plans"]
+  end
+
+  CL -->|"follow rules / create plan"| RULES
+  CL -->|"start phase N"| PLAN
+  CL -->|MCP calls| AM & AP & AR
+  CP -->|auto-loads on match| RULES
+  CP -->|"/" slash commands| SKILLS
+  CP -->|MCP calls| AM & AP & AR
+  AP -->|read/write| ARTIFACTS
+  AR -->|wraps| AgentRecall["agent-recall Knowledge Graph"]
 ```
 
-### Installed Paths (per-machine)
+## Session Flow
 
-**Global Rules:**
+```mermaid
+flowchart LR
+  subgraph SESSION["Cline Session"]
+    A["follow rules"]
+    B["Load registry & plan"]
+    C["Execute tasks"]
+    M["⬆ Per-Task Memory"]
+    D["Phase Complete?"]
+    E["Next Phase?"]
+    F["Plan Complete!"]
+    G["retrospective"]
+  end
 
-```markdown
-~/Documents/Cline/Rules/
-├── 00-meta.md
-├── 01-memory-bank.md
-├── 02-plan-artifacts.md
-├── 03-token-strategies.md
-├── 04-commands.md
-├── 05-environment.md
-├── 06-project-scanner.md
-└── 07-model-router.md
+  A --> B --> C --> M --> D
+  D -->|Yes| E -->|Yes| C
+  D -->|No| C
+  E -->|No| F --> G
+
+  subgraph COPILOT["Copilot"]
+    CP1["Agent auto-loads<br/>.instructions.md"]
+    CP2["/ slash commands<br/>for skills"]
+    CP3["MCP tools for<br/>plan execution"]
+  end
 ```
 
-**Global Workflows:**
+---
 
-```markdown
-~/Documents/Cline/Workflows/
-├── plan-status.md
-├── retrospective.md
-├── switch-plan.md
-└── update-memory.md
-```
+## Quick Start
 
-**Global Skills:**
-
-```markdown
-~/.agents/skills/plan-creator/
-├── SKILL.md
-└── templates/
-    ├── feature-crud.md
-    ├── auth-flow.md
-    ├── migration.md
-    ├── refactor.md
-    ├── bugfix.md
-    └── integration.md
-```
-
-### Per-Project Generated Structure
-
-```markdown
-{project-root}/.ai/
-├── memory-bank/
-│   ├── environment.md
-│   ├── brief.md
-│   ├── context.md
-│   ├── decisions.md
-│   ├── patterns.md
-│   └── progress.md
-└── artifacts/
-    ├── registry.md
-    └── {8-char-uuid}/
-        ├── plan.md
-        ├── tasks.md
-        └── notes.md
-```
-
-## Installation
-
-### Quick Install (Recommended)
-
-Use the included install scripts — they handle directory creation, file copying, and safe re-runs (existing files are replaced, directories preserved).
-
-**macOS/Linux**:
 ```bash
-chmod +x install.sh
-./install.sh
+# Clone & install
+git clone https://github.com/awsomplak/cline-ai-assisted-dev.git
+cd cline-ai-assisted-dev
+chmod +x install.sh && ./install.sh          # macOS/Linux
+.\install.ps1                                 # Windows
+
+# Install MCP server
+pip install -e .
+
+# Build standalone executable (default: current OS)
+python scripts/run.py build
+python scripts/run.py build --target-os=all  # All OSes (specs for non-host)
+python scripts/run.py build --target-os=linux  # Specific OS
 ```
 
-**Windows** (PowerShell):
-```powershell
-.\install.ps1
+The built executables are at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, and `dist/bin/awlab-memory.exe` — fully standalone, no Python or source files needed.
+
+**Cline**: `follow rules` → `create plan` → `start phase 1` → `/plan-status`
+
+**Copilot**: Instructions auto-load; invoke skills via `/create plan`, `/plan-status`, `/retrospective`, `/test-flow`
+
+---
+
+## Components
+
+### MCP Servers (36 tools across 3 servers)
+
+Split across 3 servers to work around Copilot's per-server tool visibility limit (~15 tools/server):
+
+#### 🔧 awlab-mcp (6 tools — Utility & Context)
+
+| Server | Tool | Purpose |
+|--------|------|---------|
+| `awlab-mcp` | `util_get_version` | Return MCP server build version |
+| `awlab-mcp` | `util_get_project_meta` | Return local project build metadata |
+| `awlab-mcp` | `ctx_get_snapshot` | Active plan + patterns + project ID snapshot |
+| `awlab-mcp` | `ctx_read_memory_bank` | Read allowed files from `.ai/memory-bank/` |
+| `awlab-mcp` | `ctx_scan_project` | Detect framework, entry points, relationships |
+| `awlab-mcp` | `ctx_suggest_files` | Suggest files relevant to a task description |
+
+#### 📋 awlab-plan (17 tools — Registry, Tasks & Workflows)
+
+| Server | Tool | Purpose |
+|--------|------|---------|
+| `awlab-plan` | `reg_list_registry` | Return Active/Paused/Completed plans as JSON |
+| `awlab-plan` | `reg_switch_active_plan` | Change the active plan in the registry |
+| `awlab-plan` | `reg_validate_phase_gate` | Check if predecessor phase is complete |
+| `awlab-plan` | `reg_get_next_eligible_task` | Find next non-blocked, non-terminal task |
+| `awlab-plan` | `reg_mark_phase_complete` | Mark all tasks in a phase as completed |
+| `awlab-plan` | `reg_resolve_deferred_tasks` | Re-evaluate deferred ⏳ tasks |
+| `awlab-plan` | `reg_check_plan_completable` | Verify all tasks are terminal |
+| `awlab-plan` | `reg_generate_retrospective` | Extract patterns from completed plan |
+| `awlab-plan` | `task_update_status` | Update a task's status marker |
+| `awlab-plan` | `task_batch_update` | Atomically update multiple tasks |
+| `awlab-plan` | `task_validate_transition` | Check if a status transition is legal |
+| `awlab-plan` | `task_read_plan_tasks` | Parse tasks.md into structured/raw/minimal |
+| `awlab-plan` | `task_write_plan_tasks` | Write markdown to tasks.md |
+| `awlab-plan` | `task_format_markdown` | Format task list as markdown |
+| `awlab-plan` | `wf_execute` | Execute a named workflow |
+| `awlab-plan` | `wf_list` | List available workflow files |
+| `awlab-plan` | `util_generate_mermaid` | Generate Mermaid flowcharts |
+
+#### 🧠 awlab-memory (13 tools — Memory & Context Store)
+
+| Server | Tool | Purpose |
+|--------|------|---------|
+| `awlab-memory` | `mem_search` | Search memory with hybrid BM25+dense ranking |
+| `awlab-memory` | `mem_store` | Store an observation (creates entity if needed) |
+| `awlab-memory` | `mem_list_patterns` | List all stored patterns |
+| `awlab-memory` | `mem_create_entities` | Create new entities in memory |
+| `awlab-memory` | `mem_tag_entity` | Tag an entity with context labels |
+| `awlab-memory` | `mem_relate` | Declare a semantic association |
+| `awlab-memory` | `mem_fetch_node_details` | Query attributes of graph nodes |
+| `awlab-memory` | `mem_read_graph` | Read the knowledge graph |
+| `awlab-memory` | `mem_archive_entities` | Move entities to archive state |
+| `awlab-memory` | `mem_delete_observations` | Remove observations from entities |
+| `awlab-memory` | `mem_delete_relations` | Remove relations between entities |
+| `awlab-memory` | `ctx_store` | Store context fragments with TTL |
+| `awlab-memory` | `ctx_get_fragment` | Retrieve context without file reads |
+
+### MCP Servers (3 binaries)
+
+3 standalone MCP servers, each built via PyInstaller, serving different tool domains:
+
+| Binary | Server Name | Tools | Entry Point |
+|--------|-------------|-------|-------------|
+| `awlab-mcp.exe` | `awlab-mcp` | 6 utility & context tools | `src/mcp_server/__main__.py` |
+| `awlab-plan.exe` | `awlab-plan` | 17 plan/registry/task/workflow tools | `src/mcp_server/__main_plan__.py` |
+| `awlab-memory.exe` | `awlab-memory` | 13 memory & context store tools | `src/mcp_server/__main_memory__.py` |
+
+```mermaid
+graph TB
+  subgraph CODEBASE["src/mcp_server/"]
+    SHARED["helpers/ (shared)"]
+    TOOLS["tools/ (plan_tools, context_tools, etc.)"]
+  end
+
+  subgraph SERVERS["3 Server Binaries"]
+    MCP["awlab-mcp.exe<br/>6 tools"]
+    PLAN["awlab-plan.exe<br/>17 tools"]
+    MEM["awlab-memory.exe<br/>13 tools"]
+  end
+
+  CODEBASE --> MCP & PLAN & MEM
 ```
 
-To uninstall:
-```bash
-# macOS/Linux
-./install.sh --uninstall
-```
-```powershell
-# Windows
-.\install.ps1 -Uninstall
-```
+**Workspace resolution**: Parameter-driven — agent passes `workspace_path` explicitly. DB path resolves via 4-level fallback (`DB_PATH` env → `.ai/project-id` file → `~/.awlab-id/agent-memory/memory/`).
 
-### Manual Install
-
-<details>
-<summary>Click to expand manual commands</summary>
-
-**macOS/Linux**:
-```bash
-# Skill + Templates
-mkdir -p ~/.agents/skills/plan-creator
-cp Cline/Skills/plan-creator/SKILL.md ~/.agents/skills/plan-creator/
-cp -r Cline/Skills/plan-creator/templates ~/.agents/skills/plan-creator/
-
-# Rules
-mkdir -p ~/Documents/Cline/Rules
-cp Cline/Rules/*.md ~/Documents/Cline/Rules/
-
-# Workflows
-mkdir -p ~/Documents/Cline/Workflows
-cp Cline/Workflows/*.md ~/Documents/Cline/Workflows/
-```
-
-**Windows**:
-```powershell
-# Skill + Templates
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills\plan-creator"
-Copy-Item -Path "Cline\Skills\plan-creator\SKILL.md" -Destination "$env:USERPROFILE\.agents\skills\plan-creator\"
-Copy-Item -Path "Cline\Skills\plan-creator\templates" -Destination "$env:USERPROFILE\.agents\skills\plan-creator\templates" -Recurse -Force
-
-# Rules
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Documents\Cline\Rules"
-Copy-Item -Path "Cline\Rules\*.md" -Destination "$env:USERPROFILE\Documents\Cline\Rules\"
-
-# Workflows
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Documents\Cline\Workflows"
-Copy-Item -Path "Cline\Workflows\*.md" -Destination "$env:USERPROFILE\Documents\Cline\Workflows\"
-```
-
-</details>
-
-### 2. Verify in Cline
-
-- Open Cline in IDE (VS Code, JetBrains, etc.)
-- Click the **Rules** icon (near the chat input) to confirm all 8 rule files (00–07) appear and are toggled **ON**
-- Workflows are automatically recognized when placed in the correct directory
-- The `plan-creator` skill loads automatically when its trigger phrases are detected
-
-## Usage
-
-### Starting a Session
-
-```text
-follow rules
-```
-
-Loads the active plan from the current project's registry and (only) the active plan’s tasks.md. Memory bank files are loaded on-demand as needed.
-
-### Creating a Plan
-
-Use the natural language command (triggers the plan-creator skill):
-```text
-create a plan for {your feature}
-```
-
-Or simply say create plan. This will:
-1. Create `.ai/` directory structure if missing
-2. Detect your environment (OS, shell) automatically
-3. Scan your project using the **Fingerprint Protocol** (`06-project-scanner.md`) and auto-populate memory-bank files
-4. Match your request against **plan templates** (CRUD, auth, migration, refactor, bugfix, integration) for smarter generation
-5. Generate a plan with 8-char randomized lowercase alphanumeric UUID and phase-organized tasks
-6. Open all generated files in your editor
-7. Stop - no code is executed
-
-> **Note:** There is no separate `/create-plan` workflow file. The plan creation is handled entirely by the skill (`plan-creator`), following the rules in `02-plan-artifacts.md`.
-
-### Plan Templates
-
-To streamline plan generation and reduce input token overhead by **30-50%**, the `plan-creator` skill automatically matches your natural language request against six built-in plan templates:
-
-*   📦 **Feature CRUD** (`feature-crud.md`): Used for database models, migrations, RESTful APIs/controllers, UI forms, list pagination, and basic resource management.
-*   🔒 **Authentication Flow** (`auth-flow.md`): Used for registration/login controllers, password hashing, session/cookie handling, token-based verification, UI login screens, and secure route middleware.
-*   🗄️ **Database Migration** (`migration.md`): Used for schema modifications, table creations, indices, foreign keys, rollback seeds, data integrity checks, and dry-run tests.
-*   🛠️ **Code Refactor** (`refactor.md`): Used for addressing technical debt, improving code readability, modularization, applying design patterns, performance optimizations, and regression testing.
-*   🐛 **Bug Fix** (`bugfix.md`): Used for diagnostics, reproducing errors, writing failing test assertions, resolving the root cause, and regression testing.
-*   🔌 **Third-Party Integration** (`integration.md`): Used for external API integrations, SDK connections, webhook processing, mock service adapters, and secure credential handling.
-
-The skill scans keywords in your prompt (e.g., `"add auth"`, `"fix error"`, `"create admin controller"`) to instantly load and pre-fill the corresponding skeleton structure.
-
-### Checking Plan Status
-
-```text
-/plan-status
-```
-
-Displays all plans with the active one highlighted, plus task completion stats.
-
-### Switching Plans
-
-```text
-/switch-plan {uuid}
-```
-
-Activates a different plan and loads its files.
-
-### Implementing a Plan
-
-```text
-start phase 1
-```
-
-The system follows the Phase Execution Rules (centralized in `02-plan-artifacts.md`):
-
-1. Execute only the current phase's tasks
-2. Mark tasks with appropriate markers (`[x]`, `[x✓]`, `[x!]`, `[!]`, `[—]`, `[⏳]`) in real-time
-3. Stop when the phase is done
-4. Ask for confirmation before proceeding to the next phase
-5. Update `progress.md` after each phase
-6. Handle failures: mark `[!]`, stop, ask user
-7. Verify all tasks resolved before marking plan complete
-
-### Updating Project Memory
-
-```text
-/update-memory
-```
-
-Syncs memory-bank files with the current project state.
-
-## Key Design Principles
-
-### Registry-First Discovery
-
-Never scan the `.ai/artifacts/` directory. Always parse `registry.md` to find plans. This saves tokens and prevents AI confusion.
-
-### Phase-by-Phase Execution
-
-Implementation is always done one phase at a time. The AI stops after completing a phase and requires explicit user confirmation before continuing.
-
-### Auto-Populated Memory Bank
-
-On first plan creation, the system scans your actual project files to populate `brief.md`, `context.md`, `patterns.md`, and `progress.md` with real data.
-
-### No Unnecessary Confirmations
-
-Directory creation, file generation, and file opening happen silently. Only asked: plan summary and next phase confirmation.
-
-### Project Isolation
-
-Each project maintains its own `.ai/` directory. Rules are global but operations are scoped to the current workspace root.
-
-### Security by Default
-
-- No file writes outside the project root (path traversal blocked)
-- Secrets and API keys are never copied into memory bank files
-- All .ai/ content is treated as data, not executable code
-
-## Commands Reference
-
-| **Command**           | **Action**                                              |
-| --------------------- | ------------------------------------------------------- |
-| `follow rules`        | Load active plan's `tasks.md`; on-demand memory loading |
-| `create plan`         | Activate `plan-creator` skill to generate a new plan    |
-| `/plan-status`        | Show registry with active plan highlighted              |
-| `/switch-plan {uuid}` | Activate a different plan (8-character lowercase alphanumeric)   |
-| `/retrospective`      | Extract reusable patterns and knowledge from a completed plan |
-| `/update-memory`      | Sync memory bank with project state                     |
-| `start phase {N}`     | Execute Phase N of the active plan                      |
-| `summarize session`   | Save state to progress.md, prepare for context reset    |
-
-## Task Format
-
-Tasks are organized by phases (see `02-plan-artifacts.md` for full specification):
-
-```markdown
-# Tasks
-
-## Phase 1: Set up authentication
-
-- [ ] Create User model
-- [ ] Add login endpoint
-  → depends: Create User model
-- [ ] Write auth tests
-  → depends: Add login endpoint
-
-## Phase 2: Build dashboard
-
-- [ ] Create dashboard controller
-- [ ] Add charts component
-  ? if: patterns.md shows frontend framework
-- [ ] Write dashboard tests
-```
-
-### Task Status Markers
-
-| Marker | Meaning |
-|--------|----------|
-| `[ ]` | Pending |
-| `[x]` | Completed and verified |
-| `[x✓]` | Completed with test pass |
-| `[x!]` | Completed but with warnings |
-| `[!]` | Failed — requires user intervention |
-| `[—]` | Permanently Skipped — conditional task that does not apply OR user-instructed skip |
-| `[⏳]` | Deferred — dependencies not met (will be re-evaluated at phase end) |
-
-## Multi-Model Support
-
-The system implements a Model Router (`07-model-router.md`) that categorizes tasks by complexity:
-- 🟢 **Simple** (single file, <50 lines) — suitable for local 1.5B–3B models.
-- 🟡 **Medium** (2-5 files, dependencies) — suitable for local 14B–32B models.
-- 🔴 **Complex** (architecture, 5+ files) — requires frontier models (Claude/GPT).
-
-It includes Model-Adaptive Loading Modes (Compact, Standard, Full) based on context limits, preventing token overflow for smaller models.
-
-## Token Saving Strategies
-
-- **Lazy loading:** Memory files loaded on-demand, not at startup
-- **Registry parsing:** Table-based discovery instead of directory scanning
-- **Smart scanning:** Framework-aware `06-project-scanner.md` scans only relevant directories
-- **Plan templates:** Pre-built skeletons save 30-50% of plan generation tokens
-- **Context budget:** Turn-counting proxy (15/25/30 checkpoints) with automatic session management
-- **File-size caps:** Memory files have max line limits to prevent bloat
-- **Short filenames:** `brief.md` over `projectBrief.md`
-- **Compact formats:** Markdown tables over verbose lists
-- **No optional files unless needed:** `notes.md` created only when constraints/risks exist
-- **Single source of truth:** Phase execution rules defined once in `02-plan-artifacts.md`, referenced elsewhere
+---
 
 ## Portability
 
-While designed for Cline, this system can be adapted for other AI coding tools:
+| Environment | Rules | Skills | Invocation |
+|-------------|-------|--------|------------|
+| **Cline** | `~/Documents/Cline/Rules/*.md` | `~/.agents/skills/` | `follow rules`, `create plan`, `/plan-status` |
+| **Copilot** | `~/.copilot/instructions/*.instructions.md` | `~/.agents/skills/` | Auto-loads on keyword match, `/` slash commands |
+| **Cursor** | `Cline/portability/cursor-adapter.md` | — | Adapter guide |
+| **Windsurf** | `Cline/portability/windsurf-adapter.md` | — | Adapter guide |
 
-| Tool | Adapter Guide |
-|------|---------------|
-| Cursor | `Cline/portability/cursor-adapter.md` |
-| Windsurf | `Cline/portability/windsurf-adapter.md` |
-| GitHub Copilot | `Cline/portability/copilot-adapter.md` |
+Skills are shared at `~/.agents/skills/`. Environment-aware skills (`plan-creator`, `extract-patterns`) auto-detect Cline vs Copilot via `$ENV` to adjust file extensions, paths, and behaviors.
 
-> **Note:** Portability guides are reference documentation only — they stay in this repository and are **not** installed. Read the relevant guide when you want to migrate your rules to another tool.
+---
 
-The `.ai/` directory structure is tool-agnostic and works with any AI assistant that can read/write files.
+## Project Structure
+
+```
+cline-ai-assisted-dev/
+├── Cline/Rules/           # 11 rule files (00-meta → 10-pattern-lifecycle)
+├── Cline/Skills/          # plan-creator + 6 templates
+├── Cline/Workflows/       # plan-status, switch-plan, retrospective, test-flow
+├── Cline/portability/     # Cursor, Windsurf adapters
+├── src/mcp_server/        # Python MCP server (36 tools across 3 binaries)
+│   ├── server.py          # FastMCP entry point (awlab-mcp)
+│   ├── server_plan.py     # Entry point (awlab-plan)
+│   ├── server_memory.py   # Entry point (awlab-memory)
+│   ├── config.py          # Settings + workspace resolver
+│   ├── helpers/           # agent_recall wrapper, file_utils, etc.
+│   ├── tools/             # plan_tools, memory_tools, context_tools/
+│   └── modules/           # lifecycle, registration, registration_plan, registration_memory
+├── scripts/
+│   ├── run.py             # Build & dev script
+│   ├── test_all_mcp_tools.py  # MCP protocol test
+│   ├── check_split.py     # Verifies no tool overlap between servers
+│   ├── approve_all_tools.py   # Pre-approve tools in VS Code state DB
+│   └── stop-mcp-servers.ps1  # Stop all awlab-* processes
+├── tests/                 # Pytest suite
+├── assets/                # Profiles, rules, skills
+├── install.sh / .ps1      # Installers
+├── docs/mcp-server-split-report.md  # Full split analysis
+└── pyproject.toml         # Package definition
+```
+
+### User-Level Deployment
+
+```
+~/.copilot/instructions/   # 11 .instructions.md files
+~/.agents/skills/          # 8 shared skills (plan-creator, plan-status, switch-plan,
+                           #   retrospective, test-flow, extract-patterns,
+                           #   memory-maintenance, pattern-manager)
+```
+
+### Per-Project `.ai/` Structure
+
+```
+{project-root}/.ai/
+├── project-id             # Auto-generated stable identifier
+├── artifacts/registry.md  # Plan registry (single source of truth)
+└── artifacts/{uuid}/      # plan.md, tasks.md, notes.md
+```
+
+---
 
 ## Requirements
 
-- Cline extension (VS Code or Jetbrains)
-- Compatible AI model with tool-calling support. Recommended pairings:
-  - 🟢 Simple Tasks: Local models (e.g., qwen2.5-coder:3b)
-  - 🟡 Medium Tasks: Local models (e.g., qwen2.5-coder:14b)
-  - 🔴 Complex Tasks/Planning: Frontier models (Claude 3.5 Sonnet, GPT-4o)
+- **Cline** (VS Code/JetBrains) or **VS Code Copilot**
+- **Python 3.10+** (for MCP server)
+- **AI model** with tool-calling support
+- Model pairing: 🟢 Simple → Local 1.5B–3B · 🟡 Medium → Local 14B–32B · 🔴 Complex → Frontier (Claude, GPT)
+
+---
 
 ## License
 
-MIT - Use, modify, and share freely.
+MIT — Use, modify, and share freely.
