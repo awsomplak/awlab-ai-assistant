@@ -9,8 +9,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from .response import fail_obj
 
+from .response import fail_obj
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
@@ -138,10 +138,7 @@ def validate_status_transition(current: str, target: str) -> dict[str, Any]:
         valid_list = sorted(valid_targets) if valid_targets else ["(none)"]
         return {
             "valid": False,
-            "reason": (
-                f"Cannot transition from '{current}' to '{target}'. "
-                f"Valid targets: {', '.join(valid_list)}"
-            ),
+            "reason": (f"Cannot transition from '{current}' to '{target}'. Valid targets: {', '.join(valid_list)}"),
             "valid_targets": valid_list,
         }
     return {"valid": True, "reason": "", "valid_targets": sorted(valid_targets)}
@@ -167,7 +164,7 @@ def require_phase_number(phase_number: int) -> str | None:
 
 def invalid_uuid() -> str:
     """Return the standard invalid UUID error payload."""
-    return ("Invalid plan_uuid format. Must be 8 lowercase alphanumeric characters.")
+    return "Invalid plan_uuid format. Must be 8 lowercase alphanumeric characters."
 
 
 def invalid_status(status: str) -> str:
@@ -183,7 +180,7 @@ def invalid_phase_number(phase_number: int) -> str:
 
 def invalid_format(field: str, value: str, valid: set[str] | tuple[str, ...]) -> str:
     """Return the standard invalid format error payload."""
-    return (f"Invalid {field} '{value}'. Must be one of: {', '.join(sorted(valid))}")
+    return f"Invalid {field} '{value}'. Must be one of: {', '.join(sorted(valid))}"
 
 
 def invalid_scope(scope: str) -> str:
@@ -200,4 +197,3 @@ def invalid_status_marker(status: str, context: str) -> str:
             "valid_targets": sorted(VALID_STATUS_MARKERS),
         }
     )
-

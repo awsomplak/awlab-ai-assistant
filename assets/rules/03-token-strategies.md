@@ -20,17 +20,17 @@
 
 ### Context Retrieval
 
-- awlab-memory MCP tools inject relevant memories on demand. Do not load memory files manually.
-- Use `mem_search` (awlab-memory) before starting tasks to retrieve context.
-- The only file that may be read is `./.ai/memory-bank/environment.md` (for shell detection).
+- `awlab-mcp` memory actions inject relevant memories on demand. Do not load memory files manually.
+- Use `action_call(action="mem_search", ...)` before starting tasks to retrieve context.
+- The only files that may be read are `./.ai/memory-bank/environment.md` (shell detection) and `./.ai/memory-bank/context.md` (read via `ctx_info mode="context"`).
 
 ### Context Budget
 
 Different AI agents have wildly different context window capacities (ranging from 8k to 1M+ tokens). Do **not** attempt to "mentally track" an arbitrary point score across turns. Instead, use natural heuristics and physical checkpoints:
 
 - **Heuristic Tracking**: Monitor your own performance. If you find yourself repeatedly searching the same files, looping over previous decisions, or forgetting instructions from earlier in the session, your context is overwhelmed.
-- **Session Checkpoints**: If you detect context decay, explicitly recommend: "⚠️ Session context appears saturated. Use `mem_tag_entity` to save state, then start a fresh session."
-- **Hard Limit**: If you are repeatedly failing a complex task, STOP and force a checkpoint: "🛑 Context limit reached. Saving state via `mem_tag_entity`. Start a new session."
+- **Session Checkpoints**: If you detect context decay, explicitly recommend: "⚠️ Session context appears saturated. Use `mem_write` to save state, then start a fresh session."
+- **Hard Limit**: If you are repeatedly failing a complex task, STOP and force a checkpoint: "🛑 Context limit reached. Saving state via `mem_write`. Start a new session."
 
 ### Proactive Cognitive Cache Protocol
 

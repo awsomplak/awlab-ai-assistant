@@ -12,7 +12,6 @@ from typing import Any
 from ...helpers.agent_recall import search_nodes as _search_nodes
 from .scanner import scan_project
 
-
 # ── Scoring Helpers ──────────────────────────────────────────────────────────
 
 
@@ -33,15 +32,17 @@ def _score_entry_points(
             ext = Path(filepath).suffix.lower()
             if ext in {".py", ".js", ".ts", ".jsx", ".tsx", ".php", ".rb"}:
                 score += 0.1
-            candidates.append({
-                "path": filepath,
-                "reason": (
-                    f"Part of {target_dir} target directory"
-                    if len(matched) == 0
-                    else f"Matches task keywords: {', '.join(matched)}"
-                ),
-                "score": round(min(1.0, score), 2),
-            })
+            candidates.append(
+                {
+                    "path": filepath,
+                    "reason": (
+                        f"Part of {target_dir} target directory"
+                        if len(matched) == 0
+                        else f"Matches task keywords: {', '.join(matched)}"
+                    ),
+                    "score": round(min(1.0, score), 2),
+                }
+            )
     return candidates
 
 
@@ -55,11 +56,13 @@ def _score_relationships(
         rel_file = rel.get("file", "")
         for imp in rel.get("imports", []):
             if any(word in imp.lower() for word in task_words):
-                candidates.append({
-                    "path": rel_file,
-                    "reason": f"Imports module related to task: {imp}",
-                    "score": 0.5,
-                })
+                candidates.append(
+                    {
+                        "path": rel_file,
+                        "reason": f"Imports module related to task: {imp}",
+                        "score": 0.5,
+                    }
+                )
     return candidates
 
 
@@ -80,11 +83,13 @@ def _score_memory_results(
             observations = [observations]
         for obs in observations[:2]:
             if isinstance(obs, str) and any(word in obs.lower() for word in task_words):
-                candidates.append({
-                    "path": f"memory:{name}",
-                    "reason": obs[:100],
-                    "score": 0.4,
-                })
+                candidates.append(
+                    {
+                        "path": f"memory:{name}",
+                        "reason": obs[:100],
+                        "score": 0.4,
+                    }
+                )
     return candidates
 
 

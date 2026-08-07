@@ -12,7 +12,7 @@ Pattern storage and lifecycle are defined in `10-pattern-lifecycle.md`. This rul
 
 ## Minimum Information Required
 
-Before calling `mem_create_entities` and `mem_tag_entity`, ensure you have:
+Before calling `mem_write`, ensure you have:
 - `pattern_type`
 - `value`
 - `source` (explicit/inferred/corrected)
@@ -27,19 +27,12 @@ Confidence defaults:
 
 1. User says "I prefer to use `pnpm`."
 2. Agent follows `10-pattern-lifecycle.md` conflict resolution and stores via:
-   ```xml
-   <use_mcp_tool>
-   <server_name>awlab-memory</server_name>
-   <tool_name>mem_create_entities</tool_name>
-   <arguments>
-   {"entities":[{"name":"pattern_preference_pnpm","entityType":"pattern","observations":[]}]}
-   </arguments>
-   </use_mcp_tool>
-   <use_mcp_tool>
-   <server_name>awlab-memory</server_name>
-   <tool_name>mem_tag_entity</tool_name>
-   <arguments>
-   {"observations":[{"entityName":"pattern_preference_pnpm","contents":["type: preference","value: use pnpm for package management","confidence: 0.9","timestamp: 2026-06-05T10:00:00Z","source: explicit"]}]}
-   </arguments>
-   </use_mcp_tool>
+   ```
+   action_call(action="mem_write", params={
+     "entities": [{"name": "pattern_preference_pnpm", "entityType": "pattern", "observations": []}],
+     "observations": [{"entityName": "pattern_preference_pnpm", "contents": [
+       "type: preference", "value: use pnpm for package management",
+       "confidence: 0.9", "timestamp: 2026-06-05T10:00:00Z", "source: explicit"
+     ]}]
+   })
    ```

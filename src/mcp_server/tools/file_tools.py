@@ -15,7 +15,8 @@ async def read_memory_bank(
     """
     Safely read an allowed file from the .ai/memory-bank/ directory.
 
-    Only 'environment.md' is allowed.
+    Allowed files: environment.md (static env config), context.md (orchestration
+    state).
 
     Args:
         workspace_path: Absolute path to the project workspace root.
@@ -24,7 +25,7 @@ async def read_memory_bank(
     Returns:
         { success: bool, content: str } or { success: false, error: str }
     """
-    allowed = {"environment.md"}
+    allowed = {"environment.md", "context.md"}
     if filename not in allowed:
         return {"success": False, "error": f"File '{filename}' is not allowed. Allowed: {', '.join(sorted(allowed))}"}
 

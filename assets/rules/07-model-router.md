@@ -17,7 +17,7 @@ Optimize token usage and success rates by matching the complexity of a task to t
 The current task is **🟢 Simple** if **ALL** of the following are true:
 - Affects only one file
 - Changes fewer than 50 lines of code
-- Follows an existing pattern in the codebase (use `mem_search` with tag "pattern")
+- Follows an existing pattern in the codebase (use `action_call(action="mem_search", params={"entity_type": "pattern"})`)
 - No new external dependencies (packages, libraries)
 - No database schema changes
 
@@ -35,7 +35,7 @@ All other tasks are **🟡 Medium**.
 If you encounter repeated failures, output format errors, circular dependencies, or context issues:
 1. STOP and warn the user: *"⚠️ Model router escalation: task complexity may exceed current model capabilities."*
 2. Recommend switching to a more capable model or breaking down the task.
-3. If the user insists on continuing, proceed but log warnings via memory (use `mem_tag_entity` as defined in `01-memory-bank.md`).
+3. If the user insists on continuing, proceed but log warnings via memory (use `mem_write` as defined in `01-memory-bank.md`).
 
 ## Universal Model Awareness
 
@@ -49,40 +49,30 @@ To prevent `Invalid API Response` (empty or unparsable response) errors:
 3. **Never Empty**: Never return a completely empty response. Always include a brief thought process before executing a tool.
 4. **Valid JSON**: Ensure string escapes and JSON structures are flawlessly formatted.
 
-### Anti‑Malformed Tool Call Rules (MANDATORY)
+### Anti‑Malformed Action Call Rules (MANDATORY)
 
-To prevent `Invalid API Response` or `Connection closed` errors, you MUST follow these rules for **every** tool call:
+To prevent `Invalid API Response` or `Connection closed` errors, you MUST follow these rules for **every** `action_call`:
 
-1. **Never wrap tool arguments in markdown code blocks**  
+1. **Never wrap action params in markdown code blocks**  
    - ❌ WRONG: `` `json { "key": "value" } ` ``  
-   - ✅ CORRECT: Raw JSON string inside `<arguments>` tag.
+   - ✅ CORRECT: Raw JSON object in the `params` argument of `action_call`.
 
-2. **Always include both opening and closing tags**  
-   - For any tool call, the XML structure must be complete:  
-     `<tool_name>`  
-     `<param1>value1</param1>`  
-     ...  
-     `</tool_name>`  
-   - For `use_mcp_tool`, the `<arguments>` tag MUST have a matching `</arguments>`.
+2. **Always provide `action` and well-formed `params`**  
+   - The `action` name must match a REGISTRY action exactly (or a valid alias).
+   - `params` must be a valid JSON object — every open brace has a matching close brace, strings are properly escaped.
 
-3. **Use exact parameter names** as defined in the tool schema.  
-   - Example: `mem_create_entities` expects parameter `entities` (not `entitiesList` or `entity`). Dict keys inside must also match: e.g., `entityType` not `entity_type`.
+3. **Use exact parameter names** as defined in the REGISTRY schema.  
+   - Example: `mem_write` expects parameter `entities` (not `entitiesList` or `entity`). Dict keys inside must also match: e.g., `entityType` not `entity_type`.  
+   - Use `action_help(action="...")` to confirm the exact params.
 
-4. **Do not add extra text before or after the tool call** – the entire response should contain only the valid XML.
+4. **Do not add extra text before or after the action call** – keep the response focused on the single action.
 
-5. **If a tool call fails due to malformed XML, do not retry the same format**. Ask the user for help or use a different approach.
+5. **If an action call fails due to malformed params, do not retry the same format**. Ask the user for help or use `action_help` to check the schema.
 
-6. **When using `task_progress`, place it as the last inner element** – never before or after the closing tag of the tool call.  
+6. **When using `task_progress`, place it as the last inner element** – never before or after the closing of the action call.  
    Example:
-   ```xml
-   <use_mcp_tool>
-   <server_name>awlab-memory</server_name>
-   <tool_name>mem_create_entities</tool_name>
-   <arguments>
-   {"entities": [{"name": "Test", "type": "example"}]}
-   </arguments>
-   <task_progress>- [x] Step done</task_progress>
-   </use_mcp_tool>
+   ```
+   action_call(action="mem_write", params={"entities": [{"name": "Test", "entityType": "example"}]})
    ```
 
 ### Native Tool Priority (REPL Hallucination Prevention)

@@ -8,6 +8,7 @@ Covers:
 """
 
 from pathlib import Path
+
 from mcp_server.helpers.registry_utils import parse_registry, switch_active_plan
 
 
@@ -101,10 +102,6 @@ class TestSwitchActivePlan:
         result = switch_active_plan(temp_project_dir, "a1b2c3d4")
         assert result["success"] is True
         assert result["new_active_uuid"] == "a1b2c3d4"
-
-        registry = parse_registry(temp_project_dir)
-        registry_path = Path(temp_project_dir) / ".ai" / "artifacts" / "registry.md"
-        original_content = registry_path.read_text(encoding="utf-8")
 
         # Re-read and confirm it's the same
         registry2 = parse_registry(temp_project_dir)

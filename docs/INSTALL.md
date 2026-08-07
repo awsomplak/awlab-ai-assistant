@@ -41,13 +41,14 @@ python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all     # Specs for non-host OSes
 ```
 
-Built binaries at `dist/bin/`:
+Built binary at `dist/bin/`:
 
-| Binary | Server | Tools |
-|--------|--------|-------|
-| `awlab-mcp.exe` | `awlab-mcp` | 6 utility & context |
-| `awlab-plan.exe` | `awlab-plan` | 17 plan/registry/task/workflow |
-| `awlab-memory.exe` | `awlab-memory` | 13 memory & context store |
+| Binary | Server | Exposed Tools |
+|--------|--------|---------------|
+| `awlab-mcp.exe` | `awlab-mcp` | `action_call` (dispatcher), `action_help` |
+
+One consolidated executable — the `action_call` dispatcher routes to all operations
+(plan, task, memory, graph, context, util, workflow).
 
 Binaries are fully standalone — no Python or source files needed.
 
@@ -82,6 +83,42 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ---
 
+## Environment Variables & Configuration
+
+Runtime settings resolve in this order: **environment variable → `config.json` → default**.
+
+- **Development** (run from source): `.env` + `config.json` are read from the project root (CWD).
+- **Production** (standalone exe): `.env` + `config.json` are read from the config home
+  `~/.awlab-id/agent-memory/`. Logs are written to `~/.awlab-id/agent-memory/logs/`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWLAB_ENV` | auto | Mode override. `production`/`prod` or `development`/`dev`. When unset, mode is auto-detected (PyInstaller exe → production, otherwise development). |
+| `LOG_ENABLED` | `true` | File logging on/off (`true`/`1`/`yes` enables, anything else disables). |
+| `LOG_LEVEL` | `info` | Log level for file logging (e.g. `info`, `debug`). |
+| `DB_PATH` | (unset) | Optional override for the agent-recall database path. |
+| `GRAPH_PARALLEL` | `false` | Opt-in parallel graph extraction (`true`/`1`/`yes`). See below. |
+
+Set these in the config home (production) or project `.env` (development), or pass them
+as real environment variables when launching the server.
+
+### `GRAPH_PARALLEL` — when to use it
+
+Graph extraction (`graph_build`) is **sequential by default**, which is the correct
+choice for most projects:
+
+- **Sequential is proven faster** at realistic project scale — the parallelizable
+  per-file pass is small, while the single-threaded cross-file resolution dominates,
+  so process-spawn overhead (especially on Windows) exceeds any parallel gain.
+- Parallel extraction uses a `ProcessPoolExecutor`, which **hangs in the frozen
+  onefile exe**. Never enable it in production builds.
+
+Only consider `GRAPH_PARALLEL=1` for a **very large source corpus** where the per-file
+pass dominates and you are running from **source** (`.venv`), not the exe. When in
+doubt, leave it off.
+
+---
+
 ## CLI Reference
 
 ```bash
@@ -90,7 +127,7 @@ python scripts/run.py <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `compile-rules` | Compile rules + skills into per-agent profiles under `assets/profiles/` |
+| `compile-rules` | Compile rules + skills into per-agent profiles under `dist/profiles/` |
 | `build` | Compile profiles + build Python package + standalone binaries → `dist/` |
 | `publish` | Publish `dist/` contents to AI assistant locations |
 | `test` | Run the pytest test suite |
@@ -103,10 +140,10 @@ python scripts/run.py <command> [options]
 python scripts/run.py compile-rules
 ```
 
-Compiles `assets/rules/` (13 rule files) and `assets/skills/` (4 skills) into per-agent profiles:
+Compiles `assets/rules/` (14 rule files) and `assets/skills/` (5 skills) into per-agent profiles:
 
 ```
-assets/profiles/
+dist/profiles/
 ├── cline/             # Individual .md files + skills
 ├── copilot/           # .instructions.md with YAML frontmatter + skills
 ├── claude/            # CLAUDE.md monolith + skills

@@ -1,4 +1,28 @@
 # Changelog
+## [3.0.1] - 2026-08-01
+
+### Added
+- **Code knowledge graph (graph)**: per-project structural graph via `graphifyy` (AST-only, no LLM) — `graph_build`, `graph_status`, `graph_query`, `graph_path`, `graph_explain` under a single `graph` action group. The graph html will genereted at `{project_root}/.ai/codegraph/graph.html`.
+- **Incremental graph rebuild**: `graph_build` re-extracts only changed source files (unchanged corpus passed as resolution context) and merges into the prior graph — ~40x faster than a full rebuild, with output identical to a full rebuild at the same source state. Auto-refresh via the `graph_fresh` precondition is now cheap.
+- **Scratch/temp file hygiene rule** (`13-file-hygiene.md`): strict temp-file placement in `.ai/temp/` (gitignored) — no scratch files in the project root.
+- **Background non-blocking graph rebuild**: heavy stale/first builds run in a background thread so reads never block; small incremental rebuilds stay synchronous for accuracy.
+- **Graph freshness contract**: every graph read (`graph_query`/`graph_path`/`graph_explain`) returns `graph_fresh`, `graph_exists`, `graph_rebuilding`, `graph_built_at`; explicit `graph_build` coalesces with an in-flight background rebuild.
+- **Environment-variable documentation** (`docs/INSTALL.md`): `AWLAB_ENV`, `LOG_ENABLED`, `LOG_LEVEL`, `DB_PATH`, `GRAPH_PARALLEL` with resolution order (env → config.json → default).
+
+### Changed
+- **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **16 actions** via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-mcp.exe`; legacy 3-server files removed.
+- **Agentic orchestration**: `ctx_info mode="context"` assembles plan + next task + code + memory in one server-owned call and atomically regenerates `.ai/memory-bank/context.md`; `graph_query`/`graph_explain` return `related_memory` (code ↔ memory correlation).
+- **Consolidated `task_update`**: multi-level dotted paths, transition validation with `valid_targets`, auto-create, atomic rollback, and executed/skipped/created trace.
+- **Strict plan/task numbering**: phases and task paths are sequential positive integers only (no decimals/letters) — parsing depends on it.
+- **`GRAPH_PARALLEL` config** (default off): sequential extraction is proven faster at realistic project scale and avoids the frozen-exe pool hang; opt in for very large corpora via `GRAPH_PARALLEL=1`.
+- **Profiles compiled directly to `dist/profiles/`** (dropped the `assets/profiles/` intermediate).
+- **Frozen-exe graph extraction** runs single-process sequential (`ProcessPoolExecutor` hangs in the onefile exe).
+
+### Fixed
+- **Frozen exe graph-build deadlock**: `to_json` no longer shells out to `git` (pure file read of `.git/HEAD`/refs) — the subprocess deadlock that hung the onefile exe is gone.
+- **Path node resolution**: `any`/`path` global placeholders remapped to module-scoped `_py_any`/`_py_path`; dangling edges cleaned on merge.
+- **`_find_node_id` ambiguity**: exact-match pass on function names (strip `()`).
+
 ## [3.0.0] - 2026-07-01
 
 ### Added

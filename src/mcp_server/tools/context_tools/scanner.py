@@ -191,19 +191,35 @@ async def scan_project(
                 # Read up to 3 entry points (top 20 lines for import detection)
                 for f in files[:3]:
                     full_path = root / f
-                    if full_path.exists() and full_path.suffix in {".py", ".js", ".ts", ".jsx", ".tsx", ".php", ".rb", ".go", ".rs", ".java"}:
+                    if full_path.exists() and full_path.suffix in {
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".jsx",
+                        ".tsx",
+                        ".php",
+                        ".rb",
+                        ".go",
+                        ".rs",
+                        ".java",
+                    }:
                         content = read_utf8(str(full_path))
                         if content:
                             lines = content.splitlines()[:20]
                             imports = [
-                                l.strip() for l in lines
-                                if l.strip().startswith(("import ", "from ", "use ", "require(", "#include", "use ", "package "))
+                                line.strip()
+                                for line in lines
+                                if line.strip().startswith(
+                                    ("import ", "from ", "use ", "require(", "#include", "use ", "package ")
+                                )
                             ]
                             if imports:
-                                relationships.append({
-                                    "file": f,
-                                    "imports": imports[:10],
-                                })
+                                relationships.append(
+                                    {
+                                        "file": f,
+                                        "imports": imports[:10],
+                                    }
+                                )
             except (PermissionError, OSError):
                 pass
 

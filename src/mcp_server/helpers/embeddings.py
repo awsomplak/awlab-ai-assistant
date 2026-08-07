@@ -10,7 +10,6 @@ Provides:
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
@@ -30,7 +29,8 @@ log = _logger.tool("embeddings")
 _HAS_FASTEMBED: bool | None = None
 
 try:
-    from fastembed import TextEmbedding  # type: ignore[import-untyped]
+    from fastembed import TextEmbedding  # type: ignore[import-untyped]  # noqa: F401 — intentional availability probe
+
     _HAS_FASTEMBED = True
 except ImportError:
     _HAS_FASTEMBED = False
@@ -42,6 +42,7 @@ def has_fastembed() -> bool:
     if _HAS_FASTEMBED is None:
         try:
             from fastembed import TextEmbedding  # type: ignore[import-untyped]  # noqa: F401
+
             _HAS_FASTEMBED = True
         except ImportError:
             _HAS_FASTEMBED = False
@@ -51,6 +52,7 @@ def has_fastembed() -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 #  Paths
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def _models_dir() -> Path:
     """Return the model storage directory (created if needed)."""
@@ -94,6 +96,7 @@ def ensure_model_downloaded() -> bool:
     log.info(f"Downloading model {_MODEL_NAME}…")
     try:
         from fastembed import TextEmbedding as _TE  # type: ignore[import-untyped]
+
         _TE(model_name=_MODEL_NAME, cache_dir=str(cache_dir), download_only=True)
         log.info("Model downloaded successfully")
         return True
@@ -141,6 +144,7 @@ class EmbeddingService:
         cache_dir = str(_models_dir())
         try:
             from fastembed import TextEmbedding as _TE  # type: ignore[import-untyped]  # noqa: F811
+
             log.info(f"Loading model {_MODEL_NAME} (cache: {cache_dir})…")
             self._model = _TE(
                 model_name=_MODEL_NAME,
@@ -165,9 +169,7 @@ class EmbeddingService:
         Raises ``RuntimeError`` if fastembed is not available.
         """
         if not has_fastembed():
-            raise RuntimeError(
-                "fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]"
-            )
+            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
@@ -179,18 +181,13 @@ class EmbeddingService:
     def compute_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Return embedding vectors for a batch of texts."""
         if not has_fastembed():
-            raise RuntimeError(
-                "fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]"
-            )
+            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
 
         vecs = list(self._model.embed(texts))
-        return [
-            v.tolist() if hasattr(v, "tolist") else list(v)
-            for v in vecs
-        ]
+        return [v.tolist() if hasattr(v, "tolist") else list(v) for v in vecs]
 
 
 def re_rank_results(
@@ -235,6 +232,7 @@ def re_rank_results(
 #  Hybrid Search (BM25 + Dense RRF)
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class BM25Scorer:
     """Lightweight BM25-OKAPI scorer using standard library only.
 
@@ -259,7 +257,7 @@ class BM25Scorer:
         self.N = len(corpus)
         self.avgdl: float = 0.0
         self.doc_freqs: list[Counter] = []
-        self.df: Counter = Counter()          # document frequency per term
+        self.df: Counter = Counter()  # document frequency per term
         doc_lengths: list[int] = []
 
         for doc in corpus:
@@ -337,7 +335,7 @@ def reciprocal_rank_fusion(
 
     fused = [0.0] * n
     for i in range(n):
-        r_bm25 = bm25_ranks[i] + 1   # 1-based
+        r_bm25 = bm25_ranks[i] + 1  # 1-based
         r_dense = dense_ranks[i] + 1
         fused[i] = weight_bm25 * (1.0 / (k + r_bm25)) + weight_dense * (1.0 / (k + r_dense))
 
@@ -390,9 +388,7 @@ def hybrid_search(
         try:
             query_vec = svc.compute_embedding(query)
             doc_vecs = svc.compute_embeddings_batch(documents)
-            dense_scores = [
-                _cosine_similarity(query_vec, dv) for dv in doc_vecs
-            ]
+            dense_scores = [_cosine_similarity(query_vec, dv) for dv in doc_vecs]
         except RuntimeError:
             dense_available = False
 
@@ -402,13 +398,15 @@ def hybrid_search(
     # Build results
     results = []
     for i, text in enumerate(documents):
-        results.append({
-            "id": document_ids[i],
-            "text": text,
-            "score": fused[i],
-            "bm25_score": bm25_scores[i],
-            "dense_score": dense_scores[i] if dense_scores else None,
-        })
+        results.append(
+            {
+                "id": document_ids[i],
+                "text": text,
+                "score": fused[i],
+                "bm25_score": bm25_scores[i],
+                "dense_score": dense_scores[i] if dense_scores else None,
+            }
+        )
 
     results.sort(key=lambda x: -x["score"])
     return results

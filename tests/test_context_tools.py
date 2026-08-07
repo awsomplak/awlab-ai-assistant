@@ -4,41 +4,27 @@ Tests for tools/context_tools.py
 Covers:
 - get_context_snapshot: active plan, no plan, patterns
 - search_memory_cross: search with results, empty results
-- store_context: basic store, dedup, TTL expiry
-- get_context_fragment: topic search across context store + memory + registry
 - scan_project: framework detection, entry points, relationships
 - get_project_fingerprint: cached vs fresh scan
 - suggest_relevant_files: file suggestions based on task description
 """
 
 from pathlib import Path
+
 import pytest
 
 from mcp_server.config import settings
+from mcp_server.helpers.file_utils import compute_tasks_summary as _get_task_summary
 from mcp_server.tools.context_tools import (
-    get_context_snapshot,
-    store_context,
-    get_context_fragment,
-    get_context_path,
-    get_cache_path,
-    scan_project,
-    suggest_relevant_files,
-    _parse_registry,
     _detect_framework,
     _load_cache,
+    _parse_registry,
     _save_cache,
+    get_cache_path,
+    get_context_snapshot,
+    scan_project,
+    suggest_relevant_files,
 )
-from mcp_server.helpers.file_utils import compute_tasks_summary as _get_task_summary
-
-
-# ── Fixture helpers ──────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def context_store_path(temp_project_dir: str) -> str:
-    """Return the path to the context store JSON file."""
-    return get_context_path(workspace_path=temp_project_dir)
-
 
 # ── _get_task_summary ────────────────────────────────────────────────────────
 
@@ -153,7 +139,7 @@ class TestGetContextSnapshot:
         setup_env_md: str,
         setup_registry_md: str,
         setup_plan_md: str,
-        setup_tasks_md: str
+        setup_tasks_md: str,
     ):
         """Should return active plan details and tasks summary."""
         result = await get_context_snapshot(workspace_path=temp_project_dir)
@@ -188,127 +174,11 @@ class TestGetContextSnapshot:
         setup_env_md: str,
         setup_registry_md: str,
         setup_plan_md: str,
-        setup_tasks_md: str
+        setup_tasks_md: str,
     ):
         """Should include patterns from agent-recall."""
         result = await get_context_snapshot(workspace_path=temp_project_dir)
         assert "patterns" in result
-
-
-# ── store_context ────────────────────────────────────────────────────────────
-
-
-class TestStoreContext:
-    @pytest.mark.asyncio
-    async def test_basic_store(
-        self,
-        temp_project_dir: str,
-        plan_uuid: str,
-        setup_project_id: str,
-        setup_env_md: str,
-        setup_registry_md: str,
-        setup_plan_md: str,
-        setup_tasks_md: str
-    ):
-        """Should store a key-value entry."""
-        result = await store_context(key="test_key", value="test_value", scope="project", ttl=3600, workspace_path=temp_project_dir)
-        assert result["success"] is True
-        assert result["key"] == "test_key"
-        assert result["scope"] == "project"
-        assert result["deduplicated"] is False
-        assert result["expires_at"] is not None
-
-    @pytest.mark.asyncio
-    async def test_dedup(
-        self,
-        temp_project_dir: str,
-        plan_uuid: str,
-        setup_project_id: str,
-        setup_env_md: str,
-        setup_registry_md: str,
-        setup_plan_md: str,
-        setup_tasks_md: str
-    ):
-        """Should detect duplicate entries."""
-        await store_context(key="dup_key", value="first", scope="project", workspace_path=temp_project_dir)
-        result = await store_context(key="dup_key", value="second", scope="project", workspace_path=temp_project_dir)
-        assert result["deduplicated"] is True
-
-    @pytest.mark.asyncio
-    async def test_no_expiry(
-        self,
-        temp_project_dir: str,
-        plan_uuid: str,
-        setup_project_id: str,
-        setup_env_md: str,
-        setup_registry_md: str,
-        setup_plan_md: str,
-        setup_tasks_md: str
-    ):
-        """Should handle TTL=0 (no expiry)."""
-        result = await store_context(key="permanent", value="forever", ttl=0, workspace_path=temp_project_dir)
-        assert result["expires_at"] is None
-
-    @pytest.mark.asyncio
-    async def test_persistence(
-        self,
-        temp_project_dir: str,
-        plan_uuid: str,
-        setup_project_id: str,
-        setup_env_md: str,
-        setup_registry_md: str,
-        setup_plan_md: str,
-        setup_tasks_md: str
-    ):
-        """Stored entries should persist across calls."""
-        await store_context(key="persist", value="data", scope="project", workspace_path=temp_project_dir)
-        result = await store_context(key="persist", value="data", scope="project", workspace_path=temp_project_dir)
-        assert result["deduplicated"] is True
-
-
-# ── get_context_fragment ─────────────────────────────────────────────────────
-
-
-class TestGetContextFragment:
-    @pytest.mark.asyncio
-    async def test_returns_topic(
-        self,
-        temp_project_dir: str,
-        plan_uuid: str,
-        setup_project_id: str,
-        setup_env_md: str,
-        setup_registry_md: str,
-        setup_plan_md: str,
-        setup_tasks_md: str
-    ):
-        """Should return the topic field in response."""
-        await store_context(key="database", value="postgresql://localhost", scope="project", ttl=3600, workspace_path=temp_project_dir)
-        result = await get_context_fragment(topic="database", workspace_path=temp_project_dir)
-        assert result["success"] is True
-        assert result["topic"] == "database"
-
-    @pytest.mark.asyncio
-    async def test_context_store_match(self, temp_project_dir: str, setup_registry_md: str):
-        """Should find matching entries in context store."""
-        await store_context(key="db_config", value="postgresql://localhost", scope="project", workspace_path=temp_project_dir)
-        result = await get_context_fragment(topic="db_config", workspace_path=temp_project_dir)
-        assert result["entry_count"] >= 1
-        assert "db_config =" in result["fragment"]
-
-    @pytest.mark.asyncio
-    async def test_registry_match(self, temp_project_dir: str, setup_registry_md: str):
-        """Should find matching entries in registry."""
-        await store_context(key="authentication", value="user, password", scope="project", workspace_path=temp_project_dir)
-        result = await get_context_fragment(topic="authentication", workspace_path=temp_project_dir)
-        assert result["entry_count"] >= 1
-
-    @pytest.mark.asyncio
-    async def test_no_match(self, temp_project_dir: str):
-        """Should handle no matches gracefully."""
-        await store_context(key="db_config", value="postgresql://localhost", scope="project", workspace_path=temp_project_dir)
-        result = await get_context_fragment(topic="xyz_nonexistent_topic_abc", workspace_path=temp_project_dir)
-        assert result["entry_count"] == 0
-        assert "No context found" in result["fragment"]
 
 
 # ── scan_project ─────────────────────────────────────────────────────────────
@@ -391,7 +261,6 @@ class TestScanProjectCached:
     @pytest.mark.asyncio
     async def test_force_refresh_bypasses_cache(self, temp_project_dir: str):
         """force_refresh=True should skip cache."""
-        r1 = await scan_project(workspace_path=temp_project_dir)
         r2 = await scan_project(workspace_path=temp_project_dir, force_refresh=True)
         assert r2.get("cached") is False
 
@@ -414,14 +283,12 @@ class TestSuggestRelevantFiles:
         # Create a Python project with relevant files
         Path(temp_project_dir, "requirements.txt").write_text("pytest\n", encoding="utf-8")
         Path(temp_project_dir, "src").mkdir(parents=True, exist_ok=True)
-        Path(temp_project_dir, "src", "database.py").write_text(
-            "# Database setup module\n", encoding="utf-8"
-        )
-        Path(temp_project_dir, "src", "main.py").write_text(
-            "import sys\n", encoding="utf-8"
-        )
+        Path(temp_project_dir, "src", "database.py").write_text("# Database setup module\n", encoding="utf-8")
+        Path(temp_project_dir, "src", "main.py").write_text("import sys\n", encoding="utf-8")
 
-        result = await suggest_relevant_files(task_description="setup database connection", workspace_path=temp_project_dir)
+        result = await suggest_relevant_files(
+            task_description="setup database connection", workspace_path=temp_project_dir
+        )
         assert result["success"] is True
         # Should find database-related files
         suggestions = result["suggestions"]

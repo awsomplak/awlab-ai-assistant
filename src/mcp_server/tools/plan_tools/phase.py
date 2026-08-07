@@ -11,13 +11,12 @@ from typing import Any
 from ...config import settings
 from ...helpers import (
     fail_obj,
-    read_utf8,
     parse_tasks_md,
-    validate_workspace_path,
+    read_utf8,
     validate_uuid,
+    validate_workspace_path,
 )
-from .io import update_registry_phase_count, store_memory_checkpoint
-
+from .io import store_memory_checkpoint, update_registry_phase_count
 
 # ── Phase Gate Validation ──────────────────────────────────────────────────
 
@@ -35,12 +34,14 @@ def _get_blocking_tasks(phase: dict[str, Any], phase_num: int) -> list[dict[str,
     blocking: list[dict[str, Any]] = []
     for idx, task in enumerate(phase["tasks"], start=1):
         if task["indent"] == 0 and task["status"] in {"[ ]", "[⏳]", "[!]"}:
-            blocking.append({
-                "index": idx,
-                "task_path": f"{phase_num}.{idx}",
-                "description": task["description"],
-                "status": task["status"],
-            })
+            blocking.append(
+                {
+                    "index": idx,
+                    "task_path": f"{phase_num}.{idx}",
+                    "description": task["description"],
+                    "status": task["status"],
+                }
+            )
     return blocking
 
 
@@ -93,7 +94,7 @@ async def validate_phase_gate(
 
     try:
         tasks_path = settings.get_plan_tasks_path(workspace_path, plan_uuid)
-    except Exception as e:
+    except Exception:
         return fail_obj(error="Invalid workspace path.")
 
     content = read_utf8(tasks_path)
@@ -125,11 +126,7 @@ async def validate_phase_gate(
         "pass": phase_complete,
         "blocking_tasks": blocking,
         "phase_complete": phase_complete,
-        "reasons": (
-            []
-            if phase_complete
-            else [f"Phase {previous_phase_num} has {len(blocking)} incomplete task(s)."]
-        ),
+        "reasons": ([] if phase_complete else [f"Phase {previous_phase_num} has {len(blocking)} incomplete task(s)."]),
     }
 
 
@@ -161,7 +158,7 @@ async def list_plan_phases(
 
     try:
         tasks_path = settings.get_plan_tasks_path(workspace_path, plan_uuid)
-    except Exception as e:
+    except Exception:
         return fail_obj(error="Invalid workspace path.")
 
     content = read_utf8(tasks_path)
@@ -176,13 +173,15 @@ async def list_plan_phases(
             top_tasks = [t for t in phase["tasks"] if t["indent"] == 0]
             total = len(top_tasks)
             terminal = sum(1 for t in top_tasks if t["status"] in {"[x]", "[x✓]", "[x!]", "[—]"})
-            phases.append({
-                "phase_number": phase["phase_number"],
-                "title": phase["title"],
-                "total_tasks": total,
-                "completed_tasks": terminal,
-                "all_complete": total > 0 and terminal == total,
-            })
+            phases.append(
+                {
+                    "phase_number": phase["phase_number"],
+                    "title": phase["title"],
+                    "total_tasks": total,
+                    "completed_tasks": terminal,
+                    "all_complete": total > 0 and terminal == total,
+                }
+            )
         return {"success": True, "plan_uuid": plan_uuid, "phases": phases}
     except Exception as e:
         return fail_obj(error=f"Failed to parse tasks.md: {e}")

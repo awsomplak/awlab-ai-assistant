@@ -10,8 +10,8 @@ Covers:
 
 from mcp_server.helpers.hybrid_search import (
     BM25Scorer,
-    reciprocal_rank_fusion,
     hybrid_search,
+    reciprocal_rank_fusion,
 )
 
 
@@ -65,8 +65,8 @@ class TestReciprocalRankFusion:
         """When dense_scores is None, returns normalised BM25 scores."""
         scores = reciprocal_rank_fusion([2.0, 4.0, 1.0], dense_scores=None)
         assert len(scores) == 3
-        assert scores[0] == 0.5   # 2/4
-        assert scores[1] == 1.0   # 4/4
+        assert scores[0] == 0.5  # 2/4
+        assert scores[1] == 1.0  # 4/4
         assert scores[2] == 0.25  # 1/4
 
     def test_rrf_fusion(self):
@@ -130,12 +130,21 @@ class TestReRankResults:
         from mcp_server.helpers.hybrid_search import re_rank_results
 
         entities = [
-            {"name": "auth-service", "entityType": "service",
-             "observations": ["Handles user authentication with JWT tokens"]},
-            {"name": "payment-service", "entityType": "service",
-             "observations": ["Processes credit card payments via Stripe"]},
-            {"name": "logging-service", "entityType": "service",
-             "observations": ["Centralized logging with Elasticsearch"]},
+            {
+                "name": "auth-service",
+                "entityType": "service",
+                "observations": ["Handles user authentication with JWT tokens"],
+            },
+            {
+                "name": "payment-service",
+                "entityType": "service",
+                "observations": ["Processes credit card payments via Stripe"],
+            },
+            {
+                "name": "logging-service",
+                "entityType": "service",
+                "observations": ["Centralized logging with Elasticsearch"],
+            },
         ]
         texts = [
             "auth-service Handles user authentication with JWT tokens",
@@ -205,27 +214,39 @@ class TestReRankResults:
 
         # Simulate knowledge graph entities an agent would search
         entities = [
-            {"name": "project-conventions", "entityType": "pattern",
-             "observations": [
-                 "Use pytest for all testing",
-                 "Prefer FastAPI over Flask for new services",
-                 "Code style: black + isort + ruff",
-             ]},
-            {"name": "deploy-pipeline", "entityType": "workflow",
-             "observations": [
-                 "Deploy via GitHub Actions to staging",
-                 "Production deploy requires 2 approvals",
-             ]},
-            {"name": "db-schema", "entityType": "decision",
-             "observations": [
-                 "PostgreSQL 16 with pgvector for embeddings",
-                 "Use Alembic for migrations",
-             ]},
-            {"name": "frontend-stack", "entityType": "decision",
-             "observations": [
-                 "React 18 with TypeScript",
-                 "Tailwind CSS for styling",
-             ]},
+            {
+                "name": "project-conventions",
+                "entityType": "pattern",
+                "observations": [
+                    "Use pytest for all testing",
+                    "Prefer FastAPI over Flask for new services",
+                    "Code style: black + isort + ruff",
+                ],
+            },
+            {
+                "name": "deploy-pipeline",
+                "entityType": "workflow",
+                "observations": [
+                    "Deploy via GitHub Actions to staging",
+                    "Production deploy requires 2 approvals",
+                ],
+            },
+            {
+                "name": "db-schema",
+                "entityType": "decision",
+                "observations": [
+                    "PostgreSQL 16 with pgvector for embeddings",
+                    "Use Alembic for migrations",
+                ],
+            },
+            {
+                "name": "frontend-stack",
+                "entityType": "decision",
+                "observations": [
+                    "React 18 with TypeScript",
+                    "Tailwind CSS for styling",
+                ],
+            },
         ]
         texts = [
             "project-conventions Use pytest for all testing Prefer FastAPI over Flask ...",

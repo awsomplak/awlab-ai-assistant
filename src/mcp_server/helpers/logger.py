@@ -26,10 +26,10 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-
 # ══════════════════════════════════════════════════════════════════════════
 #  Tool context helper
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class _ToolLog:
     """Lightweight logger scoped to a specific tool call."""
@@ -55,6 +55,7 @@ class _ToolLog:
 # ══════════════════════════════════════════════════════════════════════════
 #  Logger
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class Logger:
     """Daily-rotating logger with tool-level tracing, auto-prune, and stderr fallback."""
@@ -108,7 +109,7 @@ class Logger:
             return []
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-        return [l.rstrip("\n") for l in lines[-n:]]
+        return [line.rstrip("\n") for line in lines[-n:]]
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -145,12 +146,14 @@ class Logger:
         # 1: settings.log_dir (production: ~/.awlab-id/agent-memory/logs/)
         try:
             from ..config import settings
+
             return settings.log_dir
         except Exception:
             pass
 
         # 2: System temp (last resort)
         import tempfile
+
         return Path(tempfile.gettempdir()) / "awlab-id" / "logs"
 
     def _prune_old_logs(self, max_days: int = 30) -> None:

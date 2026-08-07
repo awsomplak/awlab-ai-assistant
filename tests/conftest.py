@@ -5,20 +5,20 @@ Creates temporary plan artifacts and registry files for testing.
 """
 
 import asyncio
+
+# Ensure mcp package is importable
+import sys
 from pathlib import Path
 
 import pytest
 
-# Ensure mcp package is importable
-import sys
-
 xpath = str(Path(__file__).resolve().parent.parent)
-print(f"Trying to import xpath: {xpath}")
 sys.path.insert(0, xpath)
 
-from mcp_server.config import settings
+from mcp_server.config import settings  # noqa: E402
 
 # ── Fixtures: Temporary Project Structure ──────────────────────────────────
+
 
 @pytest.fixture
 def temp_project_dir(tmp_path_factory: pytest.TempPathFactory):
@@ -45,10 +45,7 @@ def plan_uuid() -> str:
 @pytest.fixture
 def plan_dir(temp_project_dir: Path, plan_uuid: str) -> Path:
     """Create a plan directory with tasks.md and plan.md."""
-    pdir = settings.get_plan_dir(
-        workspace_path=temp_project_dir,
-        plan_uuid=plan_uuid
-    )
+    pdir = settings.get_plan_dir(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
     pdir.mkdir(parents=True, exist_ok=True)
     return pdir
 
@@ -119,11 +116,13 @@ def setup_project_id(temp_project_dir: Path) -> str:
     path.write_text("test-project", encoding="utf-8")
     return str(path)
 
+
 @pytest.fixture
 def project_id(setup_project_id: str) -> str:
     """Return a valid project-id"""
     path = Path(setup_project_id)
     return path.read_text(encoding="utf-8")
+
 
 @pytest.fixture
 def setup_env_md(temp_project_dir: Path) -> str:
@@ -199,6 +198,7 @@ def mock_agent_recall_success(monkeypatch):
     Mock agent_recall module functions so that DB sync calls
     succeed silently without requiring an actual agent-recall database.
     """
+
     def _fake_create_entities(workspace_path, entities, project_id=None):
         return {"created": len(entities)}
 
@@ -214,12 +214,13 @@ def mock_agent_recall_success(monkeypatch):
                     "type: preference",
                     "value: use pnpm for package management",
                     "confidence: 0.9",
-                    "source: explicit"
-                ]
+                    "source: explicit",
+                ],
             }
         ]
 
     import mcp_server.helpers.agent_recall as ar_mod
+
     monkeypatch.setattr(ar_mod, "create_entities", _fake_create_entities)
     monkeypatch.setattr(ar_mod, "add_observations", _fake_add_observations)
     monkeypatch.setattr(ar_mod, "search_nodes", _fake_search_nodes)

@@ -16,6 +16,7 @@ This approach:
 import os
 import re
 from pathlib import Path
+
 from ..config import settings
 
 
@@ -25,13 +26,13 @@ def resolve_db_path(workspace_path: str | Path | None = None, project_id: str | 
     Resolution order:
         1. ``DB_PATH`` env var — overrides everything. The database file
         ``memory.db`` is created inside the specified directory.
-        
+
         2. ``project_id`` parameter — project-isolated DB at
         ``<workspace_path>/.ai/memory-bank/memory/memory_{sanitized}.db``.
-        
+
         3. Project-id file exists — same as #2, using the project-id value
         read from ``<workspace_path>/.ai/project-id`` as sanitized.
-        
+
         4. Fallback — ``~/.awlab-id/agent-memory/memory/memory.db``
         (user-wide directory, shared across all projects when no project-id
         isolation is configured).
@@ -75,6 +76,7 @@ def resolve_db_path(workspace_path: str | Path | None = None, project_id: str | 
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
 
 def _sanitize_project_id(project_id: str) -> str:
     """

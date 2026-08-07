@@ -20,22 +20,15 @@ Each pattern is a separate entity with the following structure:
   source: explicit | inferred | corrected
   ```
 
-Patterns are stored using `mem_create_entities` + `mem_tag_entity`:
-```xml
-<use_mcp_tool>
-<server_name>awlab-memory</server_name>
-<tool_name>mem_create_entities</tool_name>
-<arguments>
-{"entities":[{"name":"pattern_preference_pnpm","entityType":"pattern","observations":[]}]}
-</arguments>
-</use_mcp_tool>
-<use_mcp_tool>
-<server_name>awlab-memory</server_name>
-<tool_name>mem_tag_entity</tool_name>
-<arguments>
-{"observations":[{"entityName":"pattern_preference_pnpm","contents":["type: preference","value: use pnpm for package management","confidence: 0.9","timestamp: 2026-06-05T10:00:00Z","source: explicit"]}]}
-</arguments>
-</use_mcp_tool>
+Patterns are stored using `mem_write` (entities + observations in one call):
+```
+action_call(action="mem_write", params={
+  "entities": [{"name": "pattern_preference_pnpm", "entityType": "pattern", "observations": []}],
+  "observations": [{"entityName": "pattern_preference_pnpm", "contents": [
+    "type: preference", "value: use pnpm for package management",
+    "confidence: 0.9", "timestamp: 2026-06-05T10:00:00Z", "source: explicit"
+  ]}]
+})
 ```
 
 ## Conflict Detection & Resolution
@@ -43,14 +36,8 @@ Patterns are stored using `mem_create_entities` + `mem_tag_entity`:
 When a **new pattern** is about to be stored:
 
 1. Search for existing patterns using:
-   ```xml
-   <use_mcp_tool>
-<server_name>awlab-memory</server_name>
-<tool_name>mem_search</tool_name>
-<arguments>
-{"query":"type: preference"}
-   </arguments>
-   </use_mcp_tool>
+   ```
+   action_call(action="mem_search", params={"query": "type: preference"})
    ```
 2. If found:
    - Compare `timestamp` – new wins if newer.
@@ -58,16 +45,10 @@ When a **new pattern** is about to be stored:
    - If both are explicit and close in time → **ask user** via `ask_followup_question`:
      > "I already have a pattern 'use npm' from yesterday. You just said 'use pnpm'. Which one should I keep? (npm/pnpm/both)"
 3. If conflict resolved by replacement:
-   - ```xml
-     <use_mcp_tool>
-<server_name>awlab-memory</server_name>
-<tool_name>mem_archive_entities</tool_name>
-     <arguments>
-     {"entityNames":["pattern_old"]}
-     </arguments>
-     </use_mcp_tool>
+   - ```
+     action_call(action="mem_remove", params={"names": ["pattern_old"]})
      ```
-   - Create new pattern entity via `mem_create_entities` + `mem_tag_entity` (as shown above).
+   - Create new pattern entity via `mem_write` (as shown above).
 4. If no conflict, create new pattern.
 
 ## Live Detection (Workflow Patterns)
@@ -96,16 +77,10 @@ User: "I prefer to use `yarn` now, not `npm`."
 
 Agent:
 1. Lists patterns via:
-   ```xml
-   <use_mcp_tool>
-   <server_name>awlab-memory</server_name>
-   <tool_name>mem_search</tool_name>
-   <arguments>
-   {"query":"pattern_preference_npm"}
-   </arguments>
-   </use_mcp_tool>
+   ```
+   action_call(action="mem_search", params={"query": "pattern_preference_npm"})
    ```
 2. Finds existing `pattern_preference_npm` (confidence 0.9, timestamp yesterday).
 3. Asks: "You previously preferred npm. Should I replace it with yarn?"
 4. User: "Yes."
-5. Agent: Archives old entity with `mem_archive_entities`, stores new preference via `mem_create_entities` + `mem_tag_entity`.
+5. Agent: Archives old entity with `mem_remove`, stores new preference via `mem_write`.

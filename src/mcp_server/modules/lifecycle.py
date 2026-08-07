@@ -10,10 +10,11 @@ Contains:
 import json
 
 from mcp.server.fastmcp import FastMCP
+
+from .._version import VERSION_STRING
 from ..config import settings
 from ..helpers import logger as logger  # module-level singleton (used by _wrap)
 from ..helpers.logger import Logger
-from .._version import VERSION_STRING
 
 # ── App Instance ─────────────────────────────────────────────────────────────
 
@@ -54,12 +55,15 @@ def run_server(mcp_instance: FastMCP, server_name: str = "agent-memory") -> None
     # Pre-download embedding model at startup in background (fastembed only)
     try:
         import threading
+
         def _dl():
             try:
                 from ..helpers.embeddings import ensure_model_downloaded
+
                 ensure_model_downloaded()
             except Exception:
                 pass
+
         t = threading.Thread(target=_dl, daemon=True)
         t.start()
     except Exception:

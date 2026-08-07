@@ -1,79 +1,103 @@
 """MCP helpers: file utilities, registry parsing, agent-recall bridge, and logging."""
 
-from .logger import Logger, logger
-from .workspace import resolve_db_path
 from .agent_recall import (
-    create_bridge,
-    search_nodes,
-    open_nodes,
-    read_graph,
-    create_entities,
     add_observations,
+    create_bridge,
+    create_entities,
     create_relations,
     delete_entities,
-    delete_relations,
     delete_observations,
+    delete_relations,
+    open_nodes,
+    read_graph,
+    search_nodes,
 )
-from .registry_utils import (
-    load_registry,
-    parse_registry,
-    rebuild_registry_content,
-    list_active_plans,
-    list_paused_plans,
-    list_completed_plans,
-    switch_active_plan,
+from .context_builder import (
+    build_context_md,
+    context_as_json,
+    context_path,
+    materialize_context,
+    read_context_md,
+    write_context_md_atomic,
 )
+from .embeddings import re_rank_results
 from .file_utils import (
-    read_file_safe as read_utf8,
-    write_file_safe as write_utf8,
-    read_registry_md,
-    read_plan_md,
-    read_tasks_md,
-    parse_tasks_md,
-    update_task_status_in_md,
+    compute_tasks_summary,
+    create_task_in_md,
+    detect_indent_step,
+    get_next_eligible_task,
     get_task_status,
     get_tasks_in_phase,
     has_incomplete_tasks_in_phase,
-    get_next_eligible_task,
-    compute_tasks_summary,
+    parse_notes_md,
+    parse_plan_md,
+    parse_tasks_md,
     read_memory_bank_file,
+    read_notes_md,
+    read_plan_md,
+    read_registry_md,
+    read_tasks_md,
+    resolve_dep_status,
+    update_task_status_in_md,
 )
-from .validation import (
-    validate_project_root,
-    validate_workspace_path,
-    validate_project_id,
-    validate_uuid,
-    validate_status,
-    validate_status_transition,
-    invalid_uuid,
-    invalid_status,
-    invalid_phase_number,
-    require_uuid,
-    require_status,
-    require_phase_number,
-    invalid_format,
-    invalid_scope,
-    invalid_status_marker,
-    VALID_STATUS_MARKERS,
+from .file_utils import (
+    read_file_safe as read_utf8,
+)
+from .file_utils import (
+    write_file_safe as write_utf8,
+)
+from .logger import Logger, logger
+from .registry_utils import (
+    list_active_plans,
+    list_completed_plans,
+    list_paused_plans,
+    load_registry,
+    parse_registry,
+    rebuild_registry_content,
+    switch_active_plan,
 )
 from .response import (
-    resp_obj,
-    resp_json,
-    ok_obj,
-    ok_json,
-    fail_obj,
     fail_json,
+    fail_obj,
+    ok_json,
+    ok_obj,
+    resp_json,
+    resp_obj,
     validate_resp,
 )
+from .validation import (
+    VALID_STATUS_MARKERS,
+    invalid_format,
+    invalid_phase_number,
+    invalid_scope,
+    invalid_status,
+    invalid_status_marker,
+    invalid_uuid,
+    require_phase_number,
+    require_status,
+    require_uuid,
+    validate_project_id,
+    validate_project_root,
+    validate_status,
+    validate_status_transition,
+    validate_uuid,
+    validate_workspace_path,
+)
+from .workspace import resolve_db_path
 
 __all__ = [
     # Logger
     "Logger",
     "logger",
-
     # Workspace
     "resolve_db_path",
-
+    # Context builder
+    "build_context_md",
+    "write_context_md_atomic",
+    "materialize_context",
+    "read_context_md",
+    "context_as_json",
+    "context_path",
     # Agent-recall
     "create_bridge",
     "search_nodes",
@@ -85,7 +109,8 @@ __all__ = [
     "delete_entities",
     "delete_relations",
     "delete_observations",
-
+    # Embeddings / hybrid search
+    "re_rank_results",
     # Registry
     "load_registry",
     "parse_registry",
@@ -94,22 +119,26 @@ __all__ = [
     "list_paused_plans",
     "list_completed_plans",
     "switch_active_plan",
-
     # File utils
     "write_utf8",
     "read_utf8",
     "read_registry_md",
     "read_plan_md",
     "read_tasks_md",
+    "read_notes_md",
     "read_memory_bank_file",
     "parse_tasks_md",
+    "parse_plan_md",
+    "parse_notes_md",
     "get_task_status",
     "get_tasks_in_phase",
     "get_next_eligible_task",
+    "resolve_dep_status",
     "update_task_status_in_md",
+    "create_task_in_md",
+    "detect_indent_step",
     "has_incomplete_tasks_in_phase",
     "compute_tasks_summary",
-
     # Response
     "resp_obj",
     "resp_json",
@@ -117,7 +146,6 @@ __all__ = [
     "ok_json",
     "fail_obj",
     "fail_json",
-
     # Validation
     "validate_project_root",
     "validate_workspace_path",
@@ -126,12 +154,10 @@ __all__ = [
     "validate_status",
     "validate_status_transition",
     "validate_resp",
-
     # Require fallback
     "require_uuid",
     "require_status",
     "require_phase_number",
-
     # Invalid fallback
     "invalid_uuid",
     "invalid_status",
@@ -139,7 +165,6 @@ __all__ = [
     "invalid_format",
     "invalid_scope",
     "invalid_status_marker",
-
     # Constants
     "VALID_STATUS_MARKERS",
 ]
