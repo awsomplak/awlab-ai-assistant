@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,13 +27,63 @@ from typing import Any
 
 from .response import fail_obj, ok_obj
 
-# graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. The frozen
-# exe supports this via ``multiprocessing.freeze_support()`` in ``__main__.py``
-# (worker children re-execute the binary and route into the pool bootstrap), so
-# parallelism is always enabled: full rebuilds extract across cores, and
-# incremental rebuilds stay single-pass anyway (few files, below graphify's
-# parallel threshold).
-_PARALLEL_EXTRACT = True
+# graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. That works
+# under the venv, but inside the PyInstaller-frozen onefile exe the pool workers
+# still hang on a full-corpus extract (even with ``multiprocessing.freeze_support``
+# + the entry guard in ``__main__.py``). Since incremental rebuilds — the hot path
+# — extract only a few files (below graphify's parallel threshold) and never
+# benefit from parallelism, fall back to single-process extraction when frozen.
+# Full cold rebuilds stay single-process (~13s), which is rare and acceptable.
+_PARALLEL_EXTRACT = not getattr(sys, "frozen", False)
+
+
+# A stale graph whose rebuild would be heavy (first build or many changed files)
+# runs in a background thread so the MCP request returns immediately; the current
+# graph.json stays readable thanks to graphify's atomic writes. Small incremental
+# rebuilds stay synchronous so a read right after an edit returns accurate data.
+_BACKGROUND_THRESHOLD = 20  # changed files at/above which rebuild runs in background
+
+# Per-project serialization: one build at a time per workspace (sync or
+# background); different projects use separate locks and build concurrently.
+_BUILD_LOCKS: dict[str, threading.RLock] = {}
+_BUILD_LOCKS_GUARD = threading.Lock()
+_BACKGROUND_THREADS: dict[str, threading.Thread] = {}
+
+
+def _build_lock(root: Path) -> threading.RLock:
+    """Return the per-project reentrant lock (one per resolved workspace root)."""
+    key = str(Path(root).resolve())
+    with _BUILD_LOCKS_GUARD:
+        return _BUILD_LOCKS.setdefault(key, threading.RLock())
+
+
+def _background_rebuild(workspace_path: str | Path, root: Path) -> bool:
+    """Start a background rebuild for the project (single-flight per workspace).
+
+    Returns True if a new background thread was started, False if one is already
+    in flight for this project. The thread runs ``build_graph`` (which takes the
+    per-project lock) and never raises — a failed background build must not take
+    the server down; the next read will simply retry.
+    """
+    key = str(Path(root).resolve())
+    with _BUILD_LOCKS_GUARD:
+        existing = _BACKGROUND_THREADS.get(key)
+        if existing is not None and existing.is_alive():
+            return False
+
+        def _run() -> None:
+            try:
+                build_graph(workspace_path, root)
+            except Exception:  # noqa: BLE001 — background, never crash the server
+                pass
+            finally:
+                with _BUILD_LOCKS_GUARD:
+                    _BACKGROUND_THREADS.pop(key, None)
+
+        t = threading.Thread(target=_run, name=f"graph-rebuild-{key[-24:]}", daemon=True)
+        _BACKGROUND_THREADS[key] = t
+        t.start()
+        return True
 
 
 # Directories never indexed as source (mirrors graphify's own noise exclusions).
@@ -350,6 +402,25 @@ def build_graph(
     directed: bool = False,
     project_id: str | None = None,
 ) -> dict[str, Any]:
+    """Build the code knowledge graph (serialized per project).
+
+    Thin lock wrapper around :func:`_build_graph_impl`: builds for the same
+    project are serialized so a synchronous ``graph_build`` and a background
+    auto-rebuild can never race on ``graph.json``; different projects use
+    separate locks and build concurrently.
+    """
+    root = Path(root or workspace_path).resolve()
+    with _build_lock(root):
+        return _build_graph_impl(workspace_path, root, include_html, directed, project_id)
+
+
+def _build_graph_impl(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    include_html: bool = True,
+    directed: bool = False,
+    project_id: str | None = None,
+) -> dict[str, Any]:
     """Build the code knowledge graph into ``<root>/.ai/codegraph/`` (AST-only, no LLM).
 
     **Incremental**: when a previous graph + manifest exist, only files whose
@@ -551,14 +622,34 @@ def graph_status(workspace_path: str | Path, root: str | Path | None = None) -> 
     )
 
 
-def ensure_fresh(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any]:
+def ensure_fresh(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    *,
+    background: bool = False,
+) -> dict[str, Any]:
     """Idempotent freshness guarantee: rebuild only when missing or stale.
 
     Returns ``{success, fresh, updated}`` where ``updated`` is 1 if a rebuild ran.
+
+    With ``background=True``, a stale-but-existing graph defers a HEAVY rebuild
+    (first build, or >= ``_BACKGROUND_THRESHOLD`` changed files) to a background
+    thread and returns immediately with ``{fresh: False, background: True}`` —
+    the current graph.json stays readable (atomic writes) and the next read sees
+    fresh data. Small incremental rebuilds stay synchronous so a read right after
+    an edit returns accurate results. A first build (no graph yet) is always
+    synchronous because there is nothing to read otherwise.
     """
     st = graph_status(workspace_path, root)
     if st.get("fresh"):
         return ok_obj(fresh=True, updated=0, exists=st.get("exists"))
+    if background and st.get("exists"):
+        r = Path(root or workspace_path).resolve()
+        prev_manifest = _load_manifest(_codegraph_dir(r))
+        changed = _changed_files(prev_manifest, _source_manifest(r)) if prev_manifest else []
+        if prev_manifest is None or len(changed) >= _BACKGROUND_THRESHOLD:
+            started = _background_rebuild(workspace_path, r)
+            return ok_obj(fresh=False, background=True, started=started, updated=0, exists=True)
     result = build_graph(workspace_path, root)
     result["fresh"] = True
     result["updated"] = 1 if result.get("success") else 0

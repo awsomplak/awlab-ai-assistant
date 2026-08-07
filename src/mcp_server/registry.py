@@ -835,8 +835,14 @@ async def _pre_graph_dir_ready(workspace_path: str, params: dict, state: dict) -
 
 
 async def _pre_graph_fresh(workspace_path: str, params: dict, state: dict) -> tuple[bool, str, dict, bool]:
-    result = _graph_ensure_fresh(workspace_path)
+    # background=True: a heavy stale rebuild runs in a background thread so the
+    # graph read returns immediately (small incremental rebuilds stay sync).
+    result = _graph_ensure_fresh(workspace_path, background=True)
     ok = bool(result.get("success"))
+    if not ok:
+        return ok, result.get("error", "graph_fresh failed"), {"graph_fresh": result}, False
+    if result.get("background"):
+        return True, "graph stale — rebuilding in background", {"graph_fresh": result}, False
     updated = int(result.get("updated", 0) or 0)
     note = f"graph fresh ({updated} update)" if ok else result.get("error", "graph_fresh failed")
     return ok, note, {"graph_fresh": result}, updated > 0

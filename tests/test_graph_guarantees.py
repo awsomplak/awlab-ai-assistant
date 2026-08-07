@@ -12,7 +12,9 @@ Locks in:
 Uses the same direct-tool-call pattern as test_dispatcher_surface.py.
 """
 
+import asyncio
 import json
+import time
 from pathlib import Path
 
 from mcp_server.modules import registration
@@ -243,4 +245,47 @@ async def test_scratch_dir_excluded_from_graph(tmp_path: Path):
     assert not any("scratch" in i or i.endswith("_scratch_only") for i in ids)  # scratch excluded
     # No node may carry a source_file under .ai/temp
     assert not any((n.get("source_file") or "").startswith(".ai/temp") for n in g["nodes"])
+
+
+# ── Task 5: heavy stale rebuilds run in the background (non-blocking) ───────
+
+
+async def test_heavy_stale_rebuild_runs_in_background(tmp_path: Path):
+    """A stale graph with >= threshold changed files rebuilds in the background.
+
+    The graph read returns immediately (no blocking rebuild); the graph becomes
+    fresh once the background thread finishes.
+    """
+    proj = tmp_path / "bg_proj"
+    proj.mkdir()
+    n = 24  # >= _BACKGROUND_THRESHOLD (20)
+    for i in range(n):
+        (proj / f"m{i:02d}.py").write_text(f"def m{i:02d}():\n    return {i}\n", encoding="utf-8")
+    ws = str(proj)
+
+    # First build is synchronous (no graph exists yet).
+    r1 = await action_call("graph_build", {"workspace_path": ws})
+    assert r1["success"] is True
+
+    # Touch ALL files → the next read sees a heavy stale state.
+    for i in range(n):
+        (proj / f"m{i:02d}.py").write_text(f"def m{i:02d}():\n    return {i + 100}\n", encoding="utf-8")
+
+    t0 = time.perf_counter()
+    r2 = await action_call("graph_query", {"workspace_path": ws, "query": "m00"})
+    elapsed = time.perf_counter() - t0
+    assert r2["success"] is True
+    assert elapsed < 10, f"graph read blocked on a full rebuild: {elapsed:.1f}s"
+
+    # The background rebuild eventually completes → graph becomes fresh.
+    deadline = time.perf_counter() + 60
+    fresh = False
+    while time.perf_counter() < deadline:
+        st = await action_call("graph_status", {"workspace_path": ws})
+        if st["result"].get("fresh"):
+            fresh = True
+            break
+        await asyncio.sleep(0.5)
+    assert fresh, "background rebuild never completed"
+
 
