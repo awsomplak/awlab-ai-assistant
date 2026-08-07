@@ -201,7 +201,7 @@ GRAPH_PARALLEL=false        # Sequential extraction (default, recommended)
 ```
 mcp_server/
 ├── __init__.py
-├── _version.py             # Version string (v1.1.0+build.093)
+├── _version.py             # Version string (v3.0.1+build.093)
 ├── server.py               # Dev console entry (awlab-mcp)
 ├── __main__.py             # PyInstaller entry — single executable
 ├── registry.py             # REGISTRY — 16 actions, single source of truth
