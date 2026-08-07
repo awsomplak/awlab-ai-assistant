@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from mcp_server.config import settings
+from mcp_server.helpers.validation import validate_status_transition
 from mcp_server.tools.plan_tools import (
     batch_update_tasks,
     check_plan_completable,
@@ -26,14 +27,12 @@ from mcp_server.tools.plan_tools import (
     list_registry,
     list_workflows,
     mark_phase_complete,
-    switch_active_plan,
     read_plan_tasks,
     resolve_deferred_tasks,
+    switch_active_plan,
     update_task_status,
     validate_phase_gate,
 )
-from mcp_server.helpers.validation import validate_status_transition
-
 
 # ── Fixtures for extended test scenarios ────────────────────────────────────────
 
@@ -91,7 +90,8 @@ def full_complete_tasks_md(plan_dir: str, temp_project_dir: Path):
     # Also write registry.md so update_registry_phase_count succeeds
     registry_path = temp_project_dir / ".ai" / "artifacts" / "registry.md"
     registry_path.parent.mkdir(parents=True, exist_ok=True)
-    registry_path.write_text("""# Active Registry Plan
+    registry_path.write_text(
+        """# Active Registry Plan
 
 | UUID | Status | Date | Summary |
 |------|--------|------|---------|
@@ -108,7 +108,9 @@ def full_complete_tasks_md(plan_dir: str, temp_project_dir: Path):
 | UUID | Status | Date | Summary |
 |------|--------|------|---------|
 | i9j0k1l2 | ✅ | 2026-06-04 09:00 | Initial project setup |
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     return str(content)
 
@@ -203,12 +205,7 @@ class TestReadPlanTasks:
 
 class TestUpdateTaskStatus:
     async def test_update_toplevel_task(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should update a top-level task status."""
         result = await update_task_status(
@@ -216,7 +213,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is True
         assert result.get("old_status") == "[ ]"
@@ -229,12 +226,7 @@ class TestUpdateTaskStatus:
         assert check["phases"][0]["tasks"][0]["status"] == "[x]"
 
     async def test_update_task_returns_old_status(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should return old_status metadata."""
         result = await update_task_status(
@@ -242,18 +234,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["old_status"] == "[ ]"
         assert result["new_status"] == "[x]"
 
     async def test_update_task_returns_pre_mutation_state(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should return pre_mutation_state snapshot."""
         result = await update_task_status(
@@ -261,18 +248,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert "pre_mutation_state" in result
         assert "Implement JWT authentication" in result["pre_mutation_state"]
 
     async def test_update_phase2_task(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should update a task in Phase 2."""
         result = await update_task_status(
@@ -280,7 +262,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="2.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is True
         assert result["old_status"] == "[ ]"
@@ -289,12 +271,7 @@ class TestUpdateTaskStatus:
         assert check["phases"][1]["tasks"][0]["status"] == "[x]"
 
     async def test_update_from_x_to_xcheck(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should transition from [x] to [x✓]."""
         # First set to [x]
@@ -303,26 +280,21 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.2",
-            new_status="[x]"
+            new_status="[x]",
         )
         result = await update_task_status(
             workspace_path=temp_project_dir,
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.2",
-            new_status="[x✓]"
+            new_status="[x✓]",
         )
         assert result["success"] is True
         assert result["old_status"] == "[x]"
         assert result["new_status"] == "[x✓]"
 
     async def test_update_from_x_to_blank(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should reject un-checking a completed task back to pending (illegal transition)."""
         result = await update_task_status(
@@ -330,7 +302,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.2",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
@@ -338,11 +310,7 @@ class TestUpdateTaskStatus:
         assert result["old_status"] == "[x]"
 
     async def test_update_invalid_path(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str
     ):
         """Should return error for out-of-range task path."""
         result = await update_task_status(
@@ -350,17 +318,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.99",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
 
     async def test_update_invalid_status(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str
     ):
         """Should reject invalid status marker."""
         result = await update_task_status(
@@ -368,7 +332,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[invalid]"
+            new_status="[invalid]",
         )
         assert result["success"] is False
         assert "error" in result
@@ -384,17 +348,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid="ffffffff",
             task_path="1.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
 
     async def test_update_malformed_path(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str
     ):
         """Should reject malformed task paths."""
         result = await update_task_status(
@@ -402,17 +362,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="abc.def",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
 
     async def test_update_wrong_phase(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str
     ):
         """Should return error for out-of-range phase."""
         result = await update_task_status(
@@ -420,18 +376,13 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="99.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
 
     async def test_update_illegal_transition(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should reject illegal status transitions like [—] → [x]."""
         # First set to [—] (skipped)
@@ -440,7 +391,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[—]"
+            new_status="[—]",
         )
         assert result["success"] is True
 
@@ -450,7 +401,7 @@ class TestUpdateTaskStatus:
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.1",
-            new_status="[x]"
+            new_status="[x]",
         )
         assert result["success"] is False
         assert "error" in result
@@ -459,28 +410,26 @@ class TestUpdateTaskStatus:
         assert result["old_status"] == "[—]"
 
     async def test_update_deferred_unmet_dependency(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        plan_dir: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, plan_dir: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should allow setting a task to [⏳] (deferred)."""
         tasks = settings.get_plan_tasks_path(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
-        tasks.write_text("""# Tasks
+        tasks.write_text(
+            """# Tasks
 
 ## Phase 1: Setup
 - [ ] Task 1: Do something
 - [ ] Task 2: Do another thing → depends: Task 1
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         result = await update_task_status(
             workspace_path=temp_project_dir,
             project_id=project_id,
             plan_uuid=plan_uuid,
             task_path="1.2",
-            new_status="[⏳]"
+            new_status="[⏳]",
         )
         assert result["success"] is True
         assert result["new_status"] == "[⏳]"
@@ -491,12 +440,7 @@ class TestUpdateTaskStatus:
 
 class TestBatchUpdateTasks:
     async def test_batch_successful_update(
-        self,
-        temp_project_dir: str,
-        project_id: str,
-        setup_tasks_md: str,
-        plan_uuid: str,
-        mock_agent_recall_success
+        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should atomically update multiple tasks."""
         updates = [
@@ -504,10 +448,7 @@ class TestBatchUpdateTasks:
             {"task_path": "2.1", "new_status": "[x]"},
         ]
         result = await batch_update_tasks(
-            workspace_path=temp_project_dir,
-            project_id=project_id,
-            plan_uuid=plan_uuid,
-            updates=updates
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
         )
         assert result["success"] is True
         assert len(result["successful"]) == 2
@@ -518,20 +459,21 @@ class TestBatchUpdateTasks:
         assert result["db_synced"] is True
 
         # Verify persistence
-        check = await read_plan_tasks(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid
-        )
+        check = await read_plan_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
         assert check["phases"][0]["tasks"][0]["status"] == "[x]"
         assert check["phases"][1]["tasks"][0]["status"] == "[x]"
 
-    async def test_batch_rollback_on_invalid_status(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str):
+    async def test_batch_rollback_on_invalid_status(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str
+    ):
         """Should rollback ALL changes when one update has invalid status."""
         updates = [
             {"task_path": "1.1", "new_status": "[x]"},
             {"task_path": "1.2", "new_status": "[INVALID]"},
         ]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
+        )
         assert result["success"] is False
         assert result["rolled_back"] is True
         assert len(result["successful"]) == 0
@@ -542,13 +484,17 @@ class TestBatchUpdateTasks:
         check = await read_plan_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
         assert check["phases"][0]["tasks"][0]["status"] == "[ ]"
 
-    async def test_batch_rollback_on_nonexistent_task(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str):
+    async def test_batch_rollback_on_nonexistent_task(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str
+    ):
         """Should rollback ALL changes when a task path doesn't exist."""
         updates = [
             {"task_path": "1.1", "new_status": "[x]"},
             {"task_path": "1.99", "new_status": "[x✓]"},
         ]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
+        )
         assert result["success"] is False
         assert result["rolled_back"] is True
         assert len(result["successful"]) == 0
@@ -561,32 +507,46 @@ class TestBatchUpdateTasks:
     async def test_batch_nonexistent_plan(self, temp_project_dir: str, project_id: str):
         """Should error when plan doesn't exist."""
         updates = [{"task_path": "1.1", "new_status": "[x]"}]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid="ffffffff", updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid="ffffffff", updates=updates
+        )
         assert result["success"] is False
         assert "error" in result
 
-    async def test_batch_single_update(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str):
+    async def test_batch_single_update(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str
+    ):
         """Should handle a single update correctly."""
         updates = [{"task_path": "1.1", "new_status": "[x]"}]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
+        )
         assert result["success"] is True
         assert len(result["successful"]) == 1
         assert result["successful"][0]["old_status"] == "[ ]"
 
-    async def test_batch_returns_pre_mutation_state(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str):
+    async def test_batch_returns_pre_mutation_state(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str
+    ):
         """Should include pre_mutation_state in response."""
         updates = [{"task_path": "1.1", "new_status": "[x]"}]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
+        )
         assert "pre_mutation_state" in result
         assert "Implement JWT authentication" in result["pre_mutation_state"]
 
-    async def test_batch_mixed_transitions(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str):
+    async def test_batch_mixed_transitions(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, project_id: str
+    ):
         """Should handle various valid status transitions in one batch."""
         updates = [
             {"task_path": "1.1", "new_status": "[x]"},
             {"task_path": "1.2", "new_status": "[x✓]"},
         ]
-        result = await batch_update_tasks(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates)
+        result = await batch_update_tasks(
+            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, updates=updates
+        )
         assert result["success"] is True
         assert len(result["successful"]) == 2
 
@@ -601,85 +561,57 @@ class TestBatchUpdateTasks:
 class TestValidatePhaseGate:
     async def test_phase_1_always_passes(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Phase 1 has no predecessor, so gate always passes."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=1
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=1)
         assert result["pass"] is True
         assert result["phase_complete"] is True
         assert "no predecessor" in result["reasons"][0]
 
     async def test_phase_2_blocked_by_phase_1(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Phase 2 should be blocked if Phase 1 has incomplete tasks."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=2
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=2)
         assert result["pass"] is False
         assert result["phase_complete"] is False
         assert len(result["blocking_tasks"]) > 0
 
-    async def test_phase_2_passes_when_phase_1_complete(self, temp_project_dir: str, full_complete_tasks_md: str, plan_uuid: str):
+    async def test_phase_2_passes_when_phase_1_complete(
+        self, temp_project_dir: str, full_complete_tasks_md: str, plan_uuid: str
+    ):
         """Phase 2 should pass when Phase 1 has all tasks terminal."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=2
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=2)
         assert result["pass"] is True
         assert result["phase_complete"] is True
         assert len(result["blocking_tasks"]) == 0
 
     async def test_gate_missing_plan(self, temp_project_dir: str):
         """Should fail gracefully for missing plan."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid="ffffffff",
-            phase_num=2
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid="ffffffff", phase_num=2)
         assert result["pass"] is False
         assert not result["phase_complete"]
         assert len(result["reasons"]) > 0
 
     async def test_gate_phase_0(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Phase 0 or less should pass like Phase 1 (no predecessor)."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=0
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=0)
         assert result["pass"] is True
 
     async def test_gate_negative_phase(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Negative phase should also pass (no predecessor gate logic)."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=-1
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=-1)
         assert result["pass"] is True
 
     async def test_blocking_tasks_details(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Blocking tasks should include index, description, and status."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=2
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=2)
         for bt in result["blocking_tasks"]:
             assert "index" in bt
             assert "description" in bt
             assert "status" in bt
 
-    async def test_blocking_task_identifies_unfinished_tasks(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
+    async def test_blocking_task_identifies_unfinished_tasks(
+        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str
+    ):
         """Blocking tasks list should contain only incomplete tasks."""
-        result = await validate_phase_gate(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase_num=2
-        )
+        result = await validate_phase_gate(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=2)
         descriptions = [t["description"] for t in result["blocking_tasks"]]
         # Task 1 is pending [ ], it should be in blocking
         assert any("Implement JWT authentication" in d for d in descriptions)
@@ -693,33 +625,21 @@ class TestValidatePhaseGate:
 class TestGetNextEligibleTask:
     async def test_find_first_eligible(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Should find the first pending task in Phase 1."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=1
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=1)
         assert result["success"] is True
         assert result["next_task"] is not None
         assert result["next_task"]["description"] == "Task 1: Implement JWT authentication"
 
     async def test_skip_completed_tasks(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Should skip completed tasks and find next pending."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=2
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=2)
         assert result["success"] is True
         assert result["next_task"] is not None
         assert result["next_task"]["description"] == "Task 3: Login page"
 
     async def test_all_terminal_in_phase(self, temp_project_dir: str, full_complete_tasks_md: str, plan_uuid: str):
         """Should return all_terminal=True when no pending tasks in phase."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=1
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=1)
         assert result["success"] is True
         assert result["all_terminal"] is True
         assert result["next_task"] is None
@@ -747,33 +667,24 @@ class TestGetNextEligibleTask:
 
     async def test_missing_plan(self, temp_project_dir: str):
         """Should error when plan doesn't exist."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid="ffffffff"
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid="ffffffff")
         assert result["success"] is False
         assert "error" in result
 
     async def test_nonexistent_phase(self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str):
         """Should return all_terminal for non-existent phase number."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=99
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=99)
         assert result["success"] is True
         assert result["next_task"] is None
         assert result["all_terminal"] is True
 
-    async def test_deferred_task_reevaluation(self, temp_project_dir: str, deferred_scenario_tasks_md: str, plan_uuid: str):
+    async def test_deferred_task_reevaluation(
+        self, temp_project_dir: str, deferred_scenario_tasks_md: str, plan_uuid: str
+    ):
         """Should re-evaluate deferred tasks when dependencies become met."""
         # Phase 1 has: Task 1 [x✓], Task 2 [⏳] (depends: Task 3), Task 3 [ ], Task 4 [—]
         # Task 2 is deferred because Task 3 is pending
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=1
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=1)
         assert result["success"] is True
         # Task 3 has no dependencies, should be next
         assert result["next_task"]["description"] == "Task 3: Setup environment variables"
@@ -781,30 +692,27 @@ class TestGetNextEligibleTask:
     async def test_cascade_failure(self, temp_project_dir: str, plan_dir: str, plan_uuid: str):
         """Should detect cascade failure when all tasks are blocked or terminal."""
         tasks = settings.get_plan_tasks_path(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
-        tasks.write_text("""# Tasks
+        tasks.write_text(
+            """# Tasks
 
 ## Phase 1: Setup
 - [ ] Task 1: Do something → depends: Task 3
 - [⏳] Task 2: Do another → depends: Task 1
 - [ ] Task 3: Do final → depends: Task 2
-""", encoding="utf-8")
-
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=1
+""",
+            encoding="utf-8",
         )
+
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=1)
         assert result["success"] is True
         assert result["cascade_failure"] is True
         assert result["next_task"] is None
 
-    async def test_skipped_task_not_blocking(self, temp_project_dir: str, deferred_scenario_tasks_md: str, plan_uuid: str):
+    async def test_skipped_task_not_blocking(
+        self, temp_project_dir: str, deferred_scenario_tasks_md: str, plan_uuid: str
+    ):
         """Skipped [—] tasks should not block other tasks."""
-        result = await get_next_eligible_task(
-            workspace_path=temp_project_dir,
-            plan_uuid=plan_uuid,
-            phase=1
-        )
+        result = await get_next_eligible_task(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase=1)
         assert result["success"] is True
         assert result["next_task"] is not None
         # Task 4 is skipped, should not appear as next_task or in deferred
@@ -1014,13 +922,12 @@ description: Test workflow for unit tests
 
 
 @pytest.mark.asyncio
-async def test_mark_phase_complete_success(temp_project_dir, plan_uuid, project_id, full_complete_tasks_md, mock_agent_recall_success):
+async def test_mark_phase_complete_success(
+    temp_project_dir, plan_uuid, project_id, full_complete_tasks_md, mock_agent_recall_success
+):
     """Mark Phase 1 as complete — all tasks already terminal in the fixture."""
     result = await mark_phase_complete(
-        workspace_path=temp_project_dir,
-        plan_uuid=plan_uuid,
-        phase_num=1,
-        project_id=project_id
+        workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=1, project_id=project_id
     )
 
     assert result["success"] is True
@@ -1038,10 +945,7 @@ async def test_mark_phase_complete_success(temp_project_dir, plan_uuid, project_
 async def test_mark_phase_complete_invalid_uuid(temp_project_dir, plan_uuid, project_id):
     """Invalid UUID should return error."""
     result = await mark_phase_complete(
-        workspace_path=temp_project_dir,
-        plan_uuid="invalid!!!",
-        phase_num=1,
-        project_id=project_id
+        workspace_path=temp_project_dir, plan_uuid="invalid!!!", phase_num=1, project_id=project_id
     )
     assert result["success"] is False
     assert "Invalid" in result.get("error", "")
@@ -1051,10 +955,7 @@ async def test_mark_phase_complete_invalid_uuid(temp_project_dir, plan_uuid, pro
 async def test_mark_phase_complete_invalid_phase(temp_project_dir, plan_uuid, project_id):
     """Phase number less than 1 should return error."""
     result = await mark_phase_complete(
-        workspace_path=temp_project_dir,
-        plan_uuid=plan_uuid,
-        phase_num=0,
-        project_id=project_id
+        workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=0, project_id=project_id
     )
     assert result["success"] is False
     assert "phase_number" in result.get("error", "")
@@ -1064,10 +965,7 @@ async def test_mark_phase_complete_invalid_phase(temp_project_dir, plan_uuid, pr
 async def test_mark_phase_complete_no_tasks_file(temp_project_dir, plan_uuid, project_id):
     """Missing tasks.md should return error."""
     result = await mark_phase_complete(
-        workspace_path=temp_project_dir,
-        plan_uuid=plan_uuid,
-        phase_num=1,
-        project_id=project_id
+        workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_num=1, project_id=project_id
     )
     assert result["success"] is False
 
@@ -1100,11 +998,7 @@ async def test_resolve_deferred_tasks_specific_phase(temp_project_dir, plan_uuid
     tasks.parent.mkdir(parents=True, exist_ok=True)
     tasks.write_text(DEFERRED_TASKS_MD, encoding="utf-8")
 
-    result = await resolve_deferred_tasks(
-        workspace_path=temp_project_dir,
-        plan_uuid=plan_uuid,
-        phase_number=2
-    )
+    result = await resolve_deferred_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid, phase_number=2)
 
     assert result["success"] is True
     # Only Phase 2 deferred tasks: Task 5 (dep on Task 4 - pending), Task 6 (dep on Task 2,4)
@@ -1117,12 +1011,15 @@ async def test_resolve_deferred_tasks_no_deferred(temp_project_dir, plan_uuid):
     """No deferred tasks should return empty lists."""
     tasks = settings.get_plan_tasks_path(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
     tasks.parent.mkdir(parents=True, exist_ok=True)
-    tasks.write_text("""# Tasks
+    tasks.write_text(
+        """# Tasks
 
 ## Phase 1: Setup
 - [x] Task 1: Install framework
 - [ ] Task 2: Configure database
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     result = await resolve_deferred_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
 
@@ -1252,7 +1149,8 @@ async def test_list_workflows_success(temp_project_dir):
         encoding="utf-8",
     )
     (workflows_dir / "deploy-flow.md").write_text(
-        "# Deploy Flow\n\ndescription: Deployment steps\n\n## Build\n- `log` Build step\n## Deploy\n- `log` Deploy step",
+        "# Deploy Flow\n\ndescription: Deployment steps\n\n## Build\n- `log` Build step\n"
+        "## Deploy\n- `log` Deploy step",
         encoding="utf-8",
     )
 

@@ -12,9 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from mcp_server.config import settings
-from mcp_server.helpers.workspace import resolve_db_path
 from mcp_server.helpers.validation import validate_project_root
-
+from mcp_server.helpers.workspace import resolve_db_path
 
 # ── validate_project_root tests ────────────────────────────────────────────
 

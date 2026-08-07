@@ -25,10 +25,7 @@ from .workspace import resolve_db_path
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _get_scope(
-    workspace_path: str | Path,
-    project_id: str | None = None
-) -> str:
+def _get_scope(workspace_path: str | Path, project_id: str | None = None) -> str:
     """
     Return the project scope slug derived from project-id or directory name.
 
@@ -61,6 +58,7 @@ def _enable_wal_mode(db_path: str) -> None:
         conn.close()
     except sqlite3.Error as e:
         from ..helpers.logger import logger
+
         logger.warning(f"Could not set WAL mode on {db_path}: {e}")
 
 

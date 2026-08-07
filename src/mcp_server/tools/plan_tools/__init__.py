@@ -8,18 +8,10 @@ to work without changes.
 
 # ── IO (file disk operations, agent-recall sync) ───────────────────────────
 from .io import (
-    sync_to_agent_recall,
     store_memory_checkpoint,
-    update_registry_phase_count,
     store_pattern_entity,
-)
-
-# ── Tasks (CRUD for tasks.md) ───────────────────────────────────────────────
-from .tasks import (
-    read_plan_tasks,
-    update_task_status,
-    batch_update_tasks,
-    write_plan_tasks,
+    sync_to_agent_recall,
+    update_registry_phase_count,
 )
 
 # ── Phase (gate validation) ─────────────────────────────────────────────────
@@ -29,15 +21,23 @@ from .phase import (
 
 # ── Plan (registry, workflows, retrospective) ───────────────────────────────
 from .plan import (
-    get_next_eligible_task,
-    list_registry,
-    switch_active_plan,
-    mark_phase_complete,
-    resolve_deferred_tasks,
     check_plan_completable,
     execute_workflow,
-    list_workflows,
     generate_retrospective_summary,
+    get_next_eligible_task,
+    list_registry,
+    list_workflows,
+    mark_phase_complete,
+    resolve_deferred_tasks,
+    switch_active_plan,
+)
+
+# ── Tasks (CRUD for tasks.md) ───────────────────────────────────────────────
+from .tasks import (
+    batch_update_tasks,
+    read_plan_tasks,
+    update_task_status,
+    write_plan_tasks,
 )
 
 __all__ = [

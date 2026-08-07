@@ -5,8 +5,8 @@ Covers:
 - read_memory_bank: allowed file (environment.md), disallowed file, missing file
 """
 
-import pytest
 from pathlib import Path
+
 from mcp_server.tools.file_tools import read_memory_bank
 
 
@@ -48,4 +48,3 @@ class TestReadMemoryBank:
         """Should return non-empty content."""
         result = await read_memory_bank(workspace_path=temp_project_dir, filename="environment.md")
         assert len(result["content"]) > 0
-

@@ -10,41 +10,32 @@ from typing import Any
 
 from ...config import settings
 from ...helpers import (
-    fail_obj,
-    read_utf8,
-    write_utf8,
-    parse_tasks_md,
+    VALID_STATUS_MARKERS,
     compute_tasks_summary,
+    create_task_in_md,
+    fail_obj,
+    get_task_status,
+    parse_tasks_md,
+    read_utf8,
     update_task_status_in_md,
-    validate_workspace_path,
-    validate_uuid,
     validate_status,
     validate_status_transition,
+    validate_uuid,
+    validate_workspace_path,
+    write_utf8,
 )
 from .io import append_pending, sync_to_agent_recall
-
 
 # ── Internal Helpers ──────────────────────────────────────────────────────
 
 
 def _extract_old_status(content: str, task_path: str) -> str | None:
-    """Extract current status marker of a task from tasks.md content."""
-    parsed = parse_tasks_md(content)
-    parts = task_path.split(".")
-    if len(parts) != 2:
-        return None
-    try:
-        target_phase = int(parts[0])
-        target_task_idx = int(parts[1])
-        for phase in parsed["phases"]:
-            if phase["phase_number"] == target_phase:
-                top_tasks = [t for t in phase["tasks"] if t["indent"] == 0]
-                if 0 < target_task_idx <= len(top_tasks):
-                    return top_tasks[target_task_idx - 1]["status"]
-                break
-    except (ValueError, IndexError):
-        pass
-    return None
+    """Extract current status marker of a task from tasks.md content.
+
+    Supports N-level dotted paths (``1.2`` / ``1.2.3``) via the shared
+    indentation-based resolver in helpers.file_utils.
+    """
+    return get_task_status(content, task_path)
 
 
 def _apply_task_mutation(
@@ -62,12 +53,16 @@ def _apply_task_mutation(
     if old_status is not None:
         transition_check = validate_status_transition(old_status, new_status)
         if not transition_check["valid"]:
-            return None, old_status, {
-                "success": False,
-                "error": transition_check["reason"],
-                "old_status": old_status,
-                "valid_targets": transition_check["valid_targets"],
-            }
+            return (
+                None,
+                old_status,
+                {
+                    "success": False,
+                    "error": transition_check["reason"],
+                    "old_status": old_status,
+                    "valid_targets": transition_check["valid_targets"],
+                },
+            )
 
     try:
         updated_content = update_task_status_in_md(content, task_path, new_status)
@@ -298,7 +293,7 @@ async def update_task_status(
         workspace_path=workspace_path,
         plan_uuid=plan_uuid,
         updates=[{"task_path": task_path, "new_status": new_status}],
-        project_id=project_id
+        project_id=project_id,
     )
 
     return {
@@ -337,11 +332,16 @@ async def batch_update_tasks(
     Atomically update multiple tasks in a plan's tasks.md.
     If any single update fails, ALL changes are rolled back.
 
+    Each update may be ``{"task_path", "new_status"}`` (update existing) or
+    ``{"task_path", "new_status", "description"}`` (auto-create the phase/task
+    chain when the task does not exist). Internal transition validation returns
+    ``valid_targets`` on illegal transitions.
+
     Args:
         workspace_path: Absolute path to the project workspace root.
         project_id: Project ID for agent-recall isolation.
         plan_uuid: 8-character lowercase alphanumeric UUID.
-        updates: List of {task_path, new_status} dicts.
+        updates: List of {task_path, new_status[, description]} dicts.
     """
     # Validate workspace_path
     valid, err = validate_workspace_path(workspace_path)
@@ -362,6 +362,9 @@ async def batch_update_tasks(
 
     pre_mutation_state = content
     successful: list[dict[str, Any]] = []
+    executed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    created: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     current_content = content
 
@@ -374,6 +377,9 @@ async def batch_update_tasks(
             tasks_path=tasks_path,
             pre_mutation_state=pre_mutation_state,
             successful=successful,
+            executed=executed,
+            skipped=skipped,
+            created=created,
             failed=failed,
         )
         if error is not None:
@@ -390,19 +396,19 @@ async def batch_update_tasks(
             successful=successful,
             failed=[{"task_path": "FILE_WRITE", "new_status": "", "error": "Failed to write tasks.md"}],
             pre_mutation_state=pre_mutation_state,
-            rolled_back=False
+            rolled_back=False,
         )
 
     db_synced = sync_to_agent_recall(
-        workspace_path=workspace_path,
-        plan_uuid=plan_uuid,
-        updates=updates,
-        project_id=project_id
+        workspace_path=workspace_path, plan_uuid=plan_uuid, updates=updates, project_id=project_id
     )
 
     return {
         "success": True,
         "successful": successful,
+        "executed": executed,
+        "skipped": skipped,
+        "created": created,
         "failed": [],
         "db_synced": db_synced,
         "pre_mutation_state": pre_mutation_state,
@@ -416,10 +422,20 @@ def _process_single_update(
     tasks_path: str,
     pre_mutation_state: str,
     successful: list[dict[str, Any]],
+    executed: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    created: list[dict[str, Any]],
     failed: list[dict[str, Any]],
 ) -> tuple[str | None, dict[str, Any] | None]:
     """
-    Process a single update in a batch. Mutates `successful`/`failed` in-place.
+    Process a single update in a batch. Mutates trace lists in-place.
+
+    Semantics:
+        - invalid status      → failed, rolled back (valid_targets = all markers)
+        - already-in-target   → skipped (idempotent no-op)
+        - illegal transition  → failed, rolled back (with valid_targets)
+        - task missing + desc → auto-create chain → created
+        - task missing        → failed "Task not found" (rolled back)
 
     Returns:
         (updated_content, None) on success — caller must use the new content.
@@ -427,14 +443,40 @@ def _process_single_update(
     """
     task_path = update.get("task_path", "")
     new_status = update.get("new_status", "")
+    description = update.get("description")
 
     if not validate_status(new_status):
-        failed.append({
-            "task_path": task_path,
-            "new_status": new_status,
-            "error": f"Invalid status '{new_status}'",
-        })
+        failed.append(
+            {
+                "task_path": task_path,
+                "new_status": new_status,
+                "error": f"Invalid status '{new_status}'",
+                "valid_targets": sorted(VALID_STATUS_MARKERS),
+            }
+        )
         return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
+
+    old_status = _extract_old_status(current_content, task_path)
+
+    # Idempotent skip — already in the target state.
+    if old_status == new_status:
+        skipped.append({"task_path": task_path, "new_status": new_status, "reason": "already in target state"})
+        return current_content, None  # no content change
+
+    # Internal transition validation (existing task).
+    if old_status is not None:
+        transition_check = validate_status_transition(old_status, new_status)
+        if not transition_check["valid"]:
+            failed.append(
+                {
+                    "task_path": task_path,
+                    "new_status": new_status,
+                    "old_status": old_status,
+                    "error": transition_check["reason"],
+                    "valid_targets": transition_check["valid_targets"],
+                }
+            )
+            return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
 
     try:
         updated = update_task_status_in_md(current_content, task_path, new_status)
@@ -443,11 +485,29 @@ def _process_single_update(
         return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
 
     if updated is None:
+        # Task missing — auto-create when a description is provided.
+        if description:
+            try:
+                updated, created_path = create_task_in_md(
+                    current_content,
+                    task_path,
+                    description=description,
+                    new_status=new_status,
+                )
+            except Exception as e:
+                failed.append({"task_path": task_path, "new_status": new_status, "error": f"Auto-create failed: {e}"})
+                return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
+            if updated is None:
+                failed.append({"task_path": task_path, "new_status": new_status, "error": "Task not found"})
+                return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
+            created.append({"task_path": task_path, "description": description, "new_status": new_status})
+            successful.append({"task_path": task_path, "old_status": None, "new_status": new_status})
+            return updated, None
         failed.append({"task_path": task_path, "new_status": new_status, "error": "Task not found"})
         return None, _rollback_and_fail(tasks_path, workspace_path, pre_mutation_state, successful, failed)
 
-    old_status = _extract_old_status(current_content, task_path)
     successful.append({"task_path": task_path, "old_status": old_status, "new_status": new_status})
+    executed.append({"task_path": task_path, "old_status": old_status, "new_status": new_status})
     return updated, None  # signal success
 
 

@@ -8,17 +8,19 @@ Tools:
 """
 
 import os
-import sys
 import platform
+import sys
 from typing import Any
+
+from .._version import VERSION_STRING
 from ..config import settings
 from ..helpers import (
-    read_utf8,
-    resp_obj,
     fail_obj,
     parse_tasks_md,
+    read_utf8,
+    resp_obj,
 )
-from .._version import VERSION_STRING
+
 
 async def generate_mermaid(
     phases: list[str] | None,
@@ -45,7 +47,7 @@ async def generate_mermaid(
         node_id = f"P{i + 1}"
         node_ids.append(node_id)
         safe_phase = phase.replace('"', "'")
-        lines.append(f"  {node_id}[\"{safe_phase}\"]")
+        lines.append(f'  {node_id}["{safe_phase}"]')
 
     # Add edges
     if dependencies:
@@ -98,19 +100,29 @@ async def format_tasks_as_markdown(
     if not isinstance(phases, list):
         return fail_obj(error="Internal error: phases must be a list")
 
+    def _emit_task(task: dict[str, Any], indent: int, out: list[str]) -> None:
+        pad = " " * indent
+        status = task.get("status", "[ ]")
+        desc = task.get("description", "")
+        out.append(f"{pad}- {status} {desc}")
+        depends = task.get("depends", []) or []
+        if depends:
+            out.append(f"{pad}    → depends: {', '.join(depends)}")
+        cond = task.get("if", "")
+        if cond:
+            out.append(f"{pad}    ? if: {cond}")
+        for note in task.get("notes", []) or []:
+            out.append(f"{pad}    → DONE: {note}")
+        for sub in task.get("subtasks", []) or []:
+            _emit_task(sub, indent + 4, out)
+
     lines: list[str] = ["# Tasks", ""]
     for phase in phases:
         phase_name = phase.get("name", f"Phase {phase.get('phase_number', '?')}")
         lines.append(f"## {phase_name}")
         lines.append("")
         for task in phase.get("tasks", []):
-            status = task.get("status", "[ ]")
-            desc = task.get("description", "")
-            lines.append(f"- {status} {desc}")
-            for subtask in task.get("subtasks", []):
-                sub_status = subtask.get("status", "[ ]")
-                sub_desc = subtask.get("description", "")
-                lines.append(f"    - {sub_status} {sub_desc}")
+            _emit_task(task, 0, lines)
         lines.append("")
 
     return resp_obj(markdown="\n".join(lines))

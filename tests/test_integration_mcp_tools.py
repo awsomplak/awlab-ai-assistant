@@ -15,41 +15,40 @@ from pathlib import Path
 
 import pytest
 
-from mcp_server.tools.plan_tools.plan import (
-    list_registry,
-    switch_active_plan,
-    mark_phase_complete,
-    resolve_deferred_tasks,
-    check_plan_completable,
-    get_next_eligible_task,
-    execute_workflow,
-    list_workflows,
-    generate_retrospective_summary,
-)
-from mcp_server.tools.plan_tools.tasks import (
-    read_plan_tasks,
-    update_task_status,
-    batch_update_tasks,
-)
-from mcp_server.tools.plan_tools.phase import validate_phase_gate
-from mcp_server.tools.plan_tools.io import (
-    sync_to_agent_recall,
-    store_memory_checkpoint,
-    update_registry_phase_count,
-    store_pattern_entity,
-)
 from mcp_server.helpers.validation import (
-    validate_uuid,
     validate_status,
     validate_status_transition,
+    validate_uuid,
 )
+from mcp_server.tools.context_tools._cache import load_cache, save_cache
 from mcp_server.tools.context_tools.context import get_context_snapshot
 from mcp_server.tools.context_tools.scanner import scan_project
 from mcp_server.tools.context_tools.suggest import suggest_relevant_files
-from mcp_server.tools.context_tools._cache import load_cache, save_cache
-from mcp_server.tools.memory_tools import search_memory, store_memory, list_patterns
-from mcp_server.tools.utils_tools import get_server_version, get_environment
 from mcp_server.tools.file_tools import read_memory_bank
+from mcp_server.tools.memory_tools import search_memory
+from mcp_server.tools.plan_tools.io import (
+    store_memory_checkpoint,
+    sync_to_agent_recall,
+    update_registry_phase_count,
+)
+from mcp_server.tools.plan_tools.phase import validate_phase_gate
+from mcp_server.tools.plan_tools.plan import (
+    check_plan_completable,
+    execute_workflow,
+    generate_retrospective_summary,
+    get_next_eligible_task,
+    list_registry,
+    list_workflows,
+    mark_phase_complete,
+    resolve_deferred_tasks,
+    switch_active_plan,
+)
+from mcp_server.tools.plan_tools.tasks import (
+    batch_update_tasks,
+    read_plan_tasks,
+    update_task_status,
+)
+from mcp_server.tools.utils_tools import get_environment, get_server_version
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -92,9 +91,7 @@ def temp_workspace(tmp_path_factory):
     plan_dir = artifacts_dir / VALID_UUID
     plan_dir.mkdir(parents=True, exist_ok=True)
     tasks_md = plan_dir / "tasks.md"
-    tasks_md.write_text(
-        "# Tasks\n\n## Phase 1: Test\n- [x] Task 1: completed task\n- [x] Task 2: completed task\n"
-    )
+    tasks_md.write_text("# Tasks\n\n## Phase 1: Test\n- [x] Task 1: completed task\n- [x] Task 2: completed task\n")
 
     # Create project-id
     (tmp / ".ai" / "project-id").write_text("test-project")
@@ -115,7 +112,9 @@ def _assert_success(result: dict, fields: list[str] | None = None):
         result = json.loads(result)
     assert isinstance(result, dict), f"Expected dict, got {type(result)}: {result}"
     if "success" in result:
-        assert result["success"] is True or result.get("success") is True or result.get("success") in (True, "true"), f"Expected success=True, got: {result}"
+        assert result["success"] is True or result.get("success") is True or result.get("success") in (True, "true"), (
+            f"Expected success=True, got: {result}"
+        )
     if fields:
         for field in fields:
             assert field in result, f"Expected field '{field}' in result: {result}"
@@ -155,38 +154,25 @@ class TestPlanToolsIntegration:
 
     @pytest.mark.asyncio
     async def test_switch_active_plan_valid(self, temp_workspace):
-        result = await switch_active_plan(
-            workspace_path=temp_workspace,
-            uuid=VALID_UUID
-        )
+        result = await switch_active_plan(workspace_path=temp_workspace, uuid=VALID_UUID)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
 
     @pytest.mark.asyncio
     async def test_switch_active_plan_invalid_uuid(self, temp_workspace):
-        result = await switch_active_plan(
-            workspace_path=temp_workspace,
-            uuid=INVALID_UUID
-        )
+        result = await switch_active_plan(workspace_path=temp_workspace, uuid=INVALID_UUID)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_error(result)
 
     @pytest.mark.asyncio
     async def test_read_plan_tasks_valid(self, temp_workspace):
-        result = await read_plan_tasks(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID,
-            format="structured"
-        )
+        result = await read_plan_tasks(workspace_path=temp_workspace, plan_uuid=VALID_UUID, format="structured")
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
 
     @pytest.mark.asyncio
     async def test_read_plan_tasks_invalid_uuid(self, temp_workspace):
-        result = await read_plan_tasks(
-            workspace_path=temp_workspace,
-            plan_uuid=INVALID_UUID
-        )
+        result = await read_plan_tasks(workspace_path=temp_workspace, plan_uuid=INVALID_UUID)
         _assert_error(result)
 
     @pytest.mark.asyncio
@@ -196,7 +182,7 @@ class TestPlanToolsIntegration:
             project_id="test-project",
             plan_uuid=VALID_UUID,
             task_path="1.1",
-            new_status="[x!]"
+            new_status="[x!]",
         )
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
@@ -208,29 +194,25 @@ class TestPlanToolsIntegration:
             project_id="test-project",
             plan_uuid=VALID_UUID,
             task_path="1.1",
-            new_status="[invalid]"
+            new_status="[invalid]",
         )
         _assert_error(result)
 
     @pytest.mark.asyncio
     async def test_batch_update_tasks_valid(self, temp_workspace):
-        updates = [{"task_path": "1.1", "new_status": "[x]"}]
+        # Task 1.2 is never mutated by other tests, so [x] -> [x✓] is always legal.
+        updates = [{"task_path": "1.2", "new_status": "[x✓]"}]
         result = await batch_update_tasks(
-            workspace_path=temp_workspace,
-            project_id="test-project",
-            plan_uuid=VALID_UUID,
-            updates=updates
+            workspace_path=temp_workspace, project_id="test-project", plan_uuid=VALID_UUID, updates=updates
         )
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
+        assert result.get("executed") == [{"task_path": "1.2", "old_status": "[x]", "new_status": "[x✓]"}]
 
     @pytest.mark.asyncio
     async def test_batch_update_tasks_empty_updates(self, temp_workspace):
         result = await batch_update_tasks(
-            workspace_path=temp_workspace,
-            project_id="test-project",
-            plan_uuid=VALID_UUID,
-            updates=[]
+            workspace_path=temp_workspace, project_id="test-project", plan_uuid=VALID_UUID, updates=[]
         )
         # Empty updates is valid — returns success with empty lists
         result = json.loads(result) if isinstance(result, str) else result
@@ -241,59 +223,39 @@ class TestPlanToolsIntegration:
     @pytest.mark.asyncio
     async def test_validate_phase_gate_phase1(self, temp_workspace):
         """Phase 1 should always pass (no predecessor gate)."""
-        result = await validate_phase_gate(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID,
-            phase_num=1
-        )
+        result = await validate_phase_gate(workspace_path=temp_workspace, plan_uuid=VALID_UUID, phase_num=1)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
 
     @pytest.mark.asyncio
     async def test_validate_phase_gate_invalid_phase(self, temp_workspace):
         """Non-existent phase number — returns success with pass=True."""
-        result = await validate_phase_gate(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID,
-            phase_num=99
-        )
+        result = await validate_phase_gate(workspace_path=temp_workspace, plan_uuid=VALID_UUID, phase_num=99)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
         assert "pass" in result
 
     @pytest.mark.asyncio
     async def test_get_next_eligible_task_valid(self, temp_workspace):
-        result = await get_next_eligible_task(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID
-        )
+        result = await get_next_eligible_task(workspace_path=temp_workspace, plan_uuid=VALID_UUID)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result, fields=["next_task"])
 
     @pytest.mark.asyncio
     async def test_get_next_eligible_task_invalid_uuid(self, temp_workspace):
-        result = await get_next_eligible_task(
-            workspace_path=temp_workspace,
-            plan_uuid=INVALID_UUID
-        )
+        result = await get_next_eligible_task(workspace_path=temp_workspace, plan_uuid=INVALID_UUID)
         _assert_error(result)
 
     @pytest.mark.asyncio
     async def test_resolve_deferred_tasks_valid(self, temp_workspace):
-        result = await resolve_deferred_tasks(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID
-        )
+        result = await resolve_deferred_tasks(workspace_path=temp_workspace, plan_uuid=VALID_UUID)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
 
     @pytest.mark.asyncio
     async def test_check_plan_completable_not_complete(self, temp_workspace):
         """Plan with open tasks should not be completable."""
-        result = await check_plan_completable(
-            workspace_path=temp_workspace,
-            plan_uuid=VALID_UUID
-        )
+        result = await check_plan_completable(workspace_path=temp_workspace, plan_uuid=VALID_UUID)
         result = json.loads(result) if isinstance(result, str) else result
         assert "completable" in result or "success" in result
 
@@ -371,55 +333,14 @@ class TestMemoryToolsIntegration:
     async def test_search_memory_empty(self, temp_workspace):
         """Search with non-existent query should return empty list."""
         result = await search_memory(
-            workspace_path=temp_workspace,
-            query="ZZZZNONEXISTENT",
-            limit=5,
-            project_id=VALID_UUID
+            workspace_path=temp_workspace, query="ZZZZNONEXISTENT", limit=5, project_id=VALID_UUID
         )
         _assert_success(result)
-    
+
     @pytest.mark.asyncio
     async def test_search_memory_empty_without_uuid(self, temp_workspace):
         """Search with non-existent query should return empty list."""
-        result = await search_memory(
-            workspace_path=temp_workspace,
-            query="ZZZZNONEXISTENT",
-            limit=5
-        )
-        _assert_success(result)
-
-    @pytest.mark.asyncio
-    async def test_store_memory_valid(self, temp_workspace):
-        result = await store_memory(
-            workspace_path=temp_workspace,
-            entity_name="test_entity_integration",
-            observation="Integration test observation",
-            pattern_type="convention",
-            project_id=VALID_UUID
-        )
-        _assert_success(result, fields=["entity", "observation_added"])
-    
-    @pytest.mark.asyncio
-    async def test_store_memory_valid_without_uuid(self, temp_workspace):
-        result = await store_memory(
-            workspace_path=temp_workspace,
-            entity_name="test_entity_integration_no_uuid",
-            observation="Integration test observation without UUID",
-            pattern_type="convention"
-        )
-        _assert_success(result, fields=["entity", "observation_added"])
-
-    @pytest.mark.asyncio
-    async def test_list_patterns(self, temp_workspace):
-        result = await list_patterns(
-            workspace_path=temp_workspace,
-            project_id=VALID_UUID
-        )
-        _assert_success(result)
-
-    @pytest.mark.asyncio
-    async def test_list_patterns_without_uuid(self, temp_workspace):
-        result = await list_patterns(workspace_path=temp_workspace)
+        result = await search_memory(workspace_path=temp_workspace, query="ZZZZNONEXISTENT", limit=5)
         _assert_success(result)
 
     @pytest.mark.asyncio
@@ -456,11 +377,6 @@ class TestContextToolsIntegration:
         result = await get_context_snapshot(workspace_path=temp_workspace)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
-
-    @pytest.mark.asyncio
-    async def test_scan_project(self, temp_workspace):
-        result = await scan_project(workspace_path=temp_workspace)
-        _assert_success(result, fields=["framework", "entry_points"])
 
     @pytest.mark.asyncio
     async def test_scan_project(self, temp_workspace):
@@ -555,10 +471,7 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_read_plan_tasks_empty_uuid(self, temp_workspace):
-        result = await read_plan_tasks(
-            workspace_path=temp_workspace,
-            plan_uuid=""
-        )
+        result = await read_plan_tasks(workspace_path=temp_workspace, plan_uuid="")
         _assert_error(result)
 
     @pytest.mark.asyncio

@@ -9,20 +9,20 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 from ...config import settings
 from ...helpers import (
+    add_observations,
+    compute_tasks_summary,
+    create_entities,
     fail_obj,
     logger,
-    read_utf8,
-    write_utf8,
-    add_observations,
-    create_entities,
     parse_registry,
+    read_utf8,
     rebuild_registry_content,
-    compute_tasks_summary,
     validate_workspace_path,
+    write_utf8,
 )
-
 
 # ── Pending Queue (Failed DB sync fallback) ────────────────────────────────
 
@@ -68,10 +68,7 @@ def get_phase_summary_from_registry(
     }
 
 
-def update_registry_phase_count(
-    workspace_path: str | Path,
-    plan_uuid: str
-) -> bool:
+def update_registry_phase_count(workspace_path: str | Path, plan_uuid: str) -> bool:
     """
     Update the registry with latest phase completion counts.
     Rewrites the summary field to include completion counts.
@@ -86,14 +83,8 @@ def update_registry_phase_count(
         if not registry.get("success", False):
             return False
 
-        summary_data = get_phase_summary_from_registry(
-            plan_uuid=plan_uuid,
-            workspace_path=workspace_path
-        )
-        new_summary_suffix = (
-            f" (Phase complete: {summary_data['tasks_complete']}/"
-            f"{summary_data['tasks_total']} tasks)"
-        )
+        summary_data = get_phase_summary_from_registry(plan_uuid=plan_uuid, workspace_path=workspace_path)
+        new_summary_suffix = f" (Phase complete: {summary_data['tasks_complete']}/{summary_data['tasks_total']} tasks)"
 
         found = False
         for table_name in ("active", "paused", "completed"):
@@ -119,7 +110,7 @@ def update_registry_phase_count(
             new_content,
         )
     except Exception:
-        logger.error(f"Error to update registry phase count.")
+        logger.error("Error to update registry phase count.")
         return False
 
 
@@ -143,22 +134,17 @@ def sync_to_agent_recall(
         if not updates:
             logger.error("sync_to_agent_recall: updates is empty")
             return False
-        obs_contents = [
-            f"Batch update: {u['task_path']} \u2192 {u['new_status']}"
-            for u in updates
+        obs_contents = [f"Batch update: {u['task_path']} \u2192 {u['new_status']}" for u in updates]
+        obs = [
+            {
+                "entityName": f"plan_{plan_uuid}",
+                "contents": obs_contents,
+            }
         ]
-        obs = [{
-            "entityName": f"plan_{plan_uuid}",
-            "contents": obs_contents,
-        }]
-        add_observations(
-            workspace_path=workspace_path,
-            observations=obs,
-            project_id=project_id
-        )
+        add_observations(workspace_path=workspace_path, observations=obs, project_id=project_id)
         return True
     except Exception:
-        logger.error(f"Error sync to agent recall.")
+        logger.error("Error sync to agent recall.")
         return False
 
 
@@ -181,18 +167,16 @@ def store_memory_checkpoint(
             f"Checkpoint: Phase {phase_num} completed at {timestamp}",
             f"Message: {message}",
         ]
-        obs = [{
-            "entityName": f"plan_{plan_uuid}",
-            "contents": obs_contents,
-        }]
-        add_observations(
-            workspace_path=workspace_path,
-            observations=obs,
-            project_id=project_id
-        )
+        obs = [
+            {
+                "entityName": f"plan_{plan_uuid}",
+                "contents": obs_contents,
+            }
+        ]
+        add_observations(workspace_path=workspace_path, observations=obs, project_id=project_id)
         return {"success": True}
     except Exception as e:
-        logger.error(f"Error to store memory checkpoint.")
+        logger.error("Error to store memory checkpoint.")
         return fail_obj(error=str(e))
 
 
@@ -211,25 +195,25 @@ def store_pattern_entity(
 
     try:
         create_entities(
-            workspace_path=workspace_path,
-            entities=[{"name": name, "entityType": "pattern"}],
-            project_id=project_id
+            workspace_path=workspace_path, entities=[{"name": name, "entityType": "pattern"}], project_id=project_id
         )
         add_observations(
             workspace_path=workspace_path,
-            observations=[{
-                "entityName": name,
-                "contents": [
-                    f"type: {pattern_type}",
-                    f"value: {observation}",
-                    "confidence: 0.9",
-                    "source: retrospective",
-                    f"timestamp: {datetime.now(timezone.utc).isoformat()}",
-                ],
-            }],
-            project_id=project_id
+            observations=[
+                {
+                    "entityName": name,
+                    "contents": [
+                        f"type: {pattern_type}",
+                        f"value: {observation}",
+                        "confidence: 0.9",
+                        "source: retrospective",
+                        f"timestamp: {datetime.now(timezone.utc).isoformat()}",
+                    ],
+                }
+            ],
+            project_id=project_id,
         )
         return {"success": True, "entity_name": name}
     except Exception as e:
-        logger.error(f"Error to store pattern entity.")
+        logger.error("Error to store pattern entity.")
         return fail_obj(error=str(e))

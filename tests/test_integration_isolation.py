@@ -10,12 +10,10 @@ from pathlib import Path
 import pytest
 
 from mcp_server.helpers.agent_recall import (
-    create_bridge,
     create_entities,
-    search_nodes,
     delete_entities,
+    search_nodes,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -37,6 +35,7 @@ def tmp_project_root(tmp_path_factory):
 # Cross Project Classes
 # ---------------------------------------------------------------------------
 
+
 class TestCrossProjectIsolation:
     """
     Verify that data written under one project_id is NOT visible under another.
@@ -50,17 +49,10 @@ class TestCrossProjectIsolation:
         # ── Cleanup any stale data ──────────────────────────────────────────
         for pid in ("alpha", "beta"):
             existing = search_nodes(
-                workspace_path=tmp_project_root,
-                query="isolation_test_entity",
-                limit=10,
-                project_id=pid
+                workspace_path=tmp_project_root, query="isolation_test_entity", limit=10, project_id=pid
             )
             for entity in existing:
-                delete_entities(
-                    workspace_path=tmp_project_root,
-                    names=[entity["name"]],
-                    project_id=pid
-                )
+                delete_entities(workspace_path=tmp_project_root, names=[entity["name"]], project_id=pid)
 
         # ── Write entity under 'alpha' ──────────────────────────────────────
         entity_name = "isolation_test_entity"
@@ -72,28 +64,14 @@ class TestCrossProjectIsolation:
         assert result.get("created", 0) >= 1, f"Failed to create entity under 'alpha': {result}"
 
         # ── Search under 'alpha' — should find it ───────────────────────────
-        alpha_results = search_nodes(
-            workspace_path=tmp_project_root,
-            query=entity_name,
-            limit=10,
-            project_id="alpha"
-        )
+        alpha_results = search_nodes(workspace_path=tmp_project_root, query=entity_name, limit=10, project_id="alpha")
         alpha_names = [e["name"] for e in alpha_results]
-        assert entity_name in alpha_names, (
-            f"Entity should be visible under 'alpha'. Found: {alpha_names}"
-        )
+        assert entity_name in alpha_names, f"Entity should be visible under 'alpha'. Found: {alpha_names}"
 
         # ── Search under 'beta' — should NOT find it ────────────────────────
-        beta_results = search_nodes(
-            workspace_path=tmp_project_root,
-            query=entity_name,
-            limit=10,
-            project_id="beta"
-        )
+        beta_results = search_nodes(workspace_path=tmp_project_root, query=entity_name, limit=10, project_id="beta")
         beta_names = [e["name"] for e in beta_results]
-        assert entity_name not in beta_names, (
-            f"Entity should NOT be visible under 'beta'. Found: {beta_names}"
-        )
+        assert entity_name not in beta_names, f"Entity should NOT be visible under 'beta'. Found: {beta_names}"
 
         # ── Cleanup ─────────────────────────────────────────────────────────
         delete_entities(workspace_path=tmp_project_root, names=[entity_name], project_id="alpha")

@@ -8,12 +8,12 @@ Covers:
 """
 
 from pathlib import Path
+
 from mcp_server.helpers import (
-    read_utf8,
     parse_tasks_md,
+    read_utf8,
     update_task_status_in_md,
 )
-
 
 # ── read_utf8 ─────────────────────────────────────────────────────────
 

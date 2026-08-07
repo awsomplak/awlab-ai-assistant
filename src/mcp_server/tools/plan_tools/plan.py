@@ -11,25 +11,29 @@ from typing import Any
 
 from ...config import settings
 from ...helpers import (
-    read_utf8,
-    parse_tasks_md,
+    agent_recall,
     compute_tasks_summary,
-    get_tasks_in_phase,
-    validate_workspace_path,
-    validate_uuid,
     fail_obj,
+    get_tasks_in_phase,
+    parse_tasks_md,
+    read_utf8,
+    resolve_dep_status,
+    validate_uuid,
+    validate_workspace_path,
 )
 from ...helpers.registry_utils import (
     parse_registry,
+)
+from ...helpers.registry_utils import (
     switch_active_plan as _switch_active_plan,
 )
-from ...helpers import agent_recall
 from .io import (
-    sync_to_agent_recall,
     store_memory_checkpoint,
-    update_registry_phase_count,
     store_pattern_entity,
+    sync_to_agent_recall,
+    update_registry_phase_count,
 )
+
 # ── Registry Tools ─────────────────────────────────────────────────────────
 
 
@@ -90,10 +94,7 @@ def _read_phase_tasks(
     return content, tasks_in_phase, None
 
 
-def _check_non_terminal_tasks(
-    tasks_in_phase: list[dict[str, Any]],
-    phase_num: int
-) -> dict[str, Any] | None:
+def _check_non_terminal_tasks(tasks_in_phase: list[dict[str, Any]], phase_num: int) -> dict[str, Any] | None:
     """Check for non-terminal tasks. Returns error dict if found, None if all terminal."""
     non_terminal = [t for t in tasks_in_phase if t["status"] not in ("[x]", "[x✓]", "[x!]", "[—]")]
     if non_terminal:
@@ -187,10 +188,7 @@ async def mark_phase_complete(
 
     # Step 4: Sync changes to agent-recall DB
     db_synced = sync_to_agent_recall(
-        workspace_path=workspace_path,
-        plan_uuid=plan_uuid,
-        updates=updates,
-        project_id=project_id
+        workspace_path=workspace_path, plan_uuid=plan_uuid, updates=updates, project_id=project_id
     )
     if not db_synced:
         errors.append("Failed to sync to agent-recall DB (queued for retry)")
@@ -208,7 +206,7 @@ async def mark_phase_complete(
         plan_uuid=plan_uuid,
         phase_num=phase_num,
         message=memory_message,
-        project_id=project_id
+        project_id=project_id,
     )
     memory_stored = memory_result.get("success", False)
     if not memory_stored:
@@ -247,28 +245,39 @@ async def mark_phase_complete(
 def _evaluate_task_dependencies(
     task: dict[str, Any],
     task_status_map: dict[str, str],
+    tasks_in_phase: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """
     Check a single task's dependencies against a status lookup.
+
+    Dependency refs are resolved path-first (``1.2``) then by description
+    fragment (legacy), via ``resolve_dep_status``. When a task list is provided
+    the path resolution is exact; otherwise falls back to the description map.
 
     Returns:
         (deps_met, deps_unmet) — lists of dependency names.
     """
     deps_met: list[str] = []
     deps_unmet: list[str] = []
+    tasks = tasks_in_phase or []
     for dep_name in task.get("dependencies", []):
-        dep_lower = dep_name.lower()
-        found = False
-        for desc, status in task_status_map.items():
-            if dep_lower in desc:
-                found = True
-                if status in ("[x]", "[x✓]", "[x!]", "[—]"):
-                    deps_met.append(dep_name)
-                else:
-                    deps_unmet.append(f"'{dep_name}' is '{status}'")
-                break
-        if not found:
-            deps_unmet.append(f"'{dep_name}' not found")
+        status = resolve_dep_status(dep_name, tasks) if tasks else None
+        if status is None:
+            # Fall back to the legacy description-substring map.
+            dep_lower = dep_name.lower()
+            found = False
+            for desc, st in task_status_map.items():
+                if dep_lower in desc:
+                    found = True
+                    status = st
+                    break
+            if not found:
+                deps_unmet.append(f"'{dep_name}' not found")
+                continue
+        if status in ("[x]", "[x✓]", "[x!]", "[—]"):
+            deps_met.append(dep_name)
+        else:
+            deps_unmet.append(f"'{dep_name}' is '{status}'")
     return deps_met, deps_unmet
 
 
@@ -346,7 +355,9 @@ async def resolve_deferred_tasks(
         task_status_map: dict[str, str] = {t["description"].lower(): t["status"] for t in tasks_in_phase}
 
         for task in deferred_tasks:
-            deps_met, deps_unmet = _evaluate_task_dependencies(task, task_status_map)
+            deps_met, deps_unmet = _evaluate_task_dependencies(
+                task, task_status_map, tasks_in_phase=tasks_in_phase
+            )
 
             task_path = _resolve_task_path(parsed, pnum, task["description"])
             entry: dict[str, Any] = {
@@ -384,12 +395,14 @@ def _scan_incomplete_tasks(content: str, parsed: dict[str, Any]) -> list[dict[st
             continue
         for task in tasks_in_phase:
             if task["status"] not in ("[x]", "[x✓]", "[x!]", "[—]"):
-                incomplete.append({
-                    "phase_number": phase["phase_number"],
-                    "name": phase["name"],
-                    "description": task["description"],
-                    "status": task["status"],
-                })
+                incomplete.append(
+                    {
+                        "phase_number": phase["phase_number"],
+                        "name": phase["name"],
+                        "description": task["description"],
+                        "status": task["status"],
+                    }
+                )
     return incomplete
 
 
@@ -550,7 +563,7 @@ def _get_next_eligible_task_local(content: str, phase_num: int) -> dict[str, Any
     completed_tasks = [t for t in tasks_in_phase if t["status"] in ("[x]", "[x✓]", "[x!]", "[—]")]
     failed_tasks = [t for t in tasks_in_phase if t["status"] == "[!]"]
 
-    # Build a status map for dependency checking
+    # Build a status map for dependency checking (fallback path)
     task_status_map: dict[str, str] = {}
     for t in tasks_in_phase:
         task_status_map[t["description"].lower()] = t["status"]
@@ -560,19 +573,10 @@ def _get_next_eligible_task_local(content: str, phase_num: int) -> dict[str, Any
     eligible_tasks = []
     blocked_pending = []
     for task in all_pending:
-        deps_met = True
-        for dep_name in task.get("dependencies", []):
-            dep_lower = dep_name.lower()
-            found = False
-            for desc, status in task_status_map.items():
-                if dep_lower in desc:
-                    found = True
-                    if status not in ("[x]", "[x✓]", "[x!]", "[—]"):
-                        deps_met = False
-                    break
-            if not found:
-                deps_met = False
-        if deps_met:
+        deps_met, _ = _evaluate_task_dependencies(
+            task, task_status_map, tasks_in_phase=tasks_in_phase
+        )
+        if len(deps_met) == len(task.get("dependencies", [])):
             eligible_tasks.append(task)
         else:
             blocked_pending.append(task)
@@ -649,7 +653,9 @@ def _execute_workflow_step(step: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-def _load_workflow(workspace_path: str | Path, workflow_name: str, workflows_dir: Path | None = None) -> tuple[dict[str, Any] | None, str | None]:
+def _load_workflow(
+    workspace_path: str | Path, workflow_name: str, workflows_dir: Path | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
     """
     Load and parse a workflow file from <workspace_path>/Cline/Workflows/.
 
@@ -858,12 +864,14 @@ async def list_workflows(
 
         parsed = _parse_workflow_md(content, md_file.name)
 
-        workflows.append({
-            "name": md_file.name.replace(".md", ""),
-            "description": parsed.get("description", ""),
-            "steps_count": len(parsed.get("steps", [])),
-            "file": md_file.name,
-        })
+        workflows.append(
+            {
+                "name": md_file.name.replace(".md", ""),
+                "description": parsed.get("description", ""),
+                "steps_count": len(parsed.get("steps", [])),
+                "file": md_file.name,
+            }
+        )
 
     return {
         "success": True,
@@ -927,12 +935,14 @@ def _extract_patterns_from_tasks(
                 if clean_desc:
                     short_name = clean_desc[:20].lower().replace(" ", "_")
                     pattern_name = f"pattern_retro_{plan_uuid}_{phase['phase_number']}_{short_name}"
-                    patterns.append({
-                        "name": pattern_name,
-                        "description": clean_desc,
-                        "phase": phase["phase_number"],
-                        "source_plan": plan_uuid,
-                    })
+                    patterns.append(
+                        {
+                            "name": pattern_name,
+                            "description": clean_desc,
+                            "phase": phase["phase_number"],
+                            "source_plan": plan_uuid,
+                        }
+                    )
     return patterns
 
 
@@ -966,11 +976,13 @@ def _store_retro_patterns(
             for pat_name in stored:
                 agent_recall.create_relations(
                     workspace_path=workspace_path,
-                    relations=[{
-                        "from": pat_name,
-                        "to": f"plan_{plan_uuid}",
-                        "relationType": "extracted_from",
-                    }]
+                    relations=[
+                        {
+                            "from": pat_name,
+                            "to": f"plan_{plan_uuid}",
+                            "relationType": "extracted_from",
+                        }
+                    ],
                 )
         except Exception as e:
             errors.append(f"Failed to link patterns: {e}")

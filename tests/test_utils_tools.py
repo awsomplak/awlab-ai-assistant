@@ -8,10 +8,11 @@ Covers:
 """
 
 from pathlib import Path
+
 from mcp_server.tools.utils_tools import (
+    format_tasks_as_markdown,
     generate_mermaid,
     get_environment,
-    format_tasks_as_markdown,
 )
 
 
@@ -31,8 +32,7 @@ class TestGenerateMermaid:
     async def test_with_dependencies(self):
         """Should add dependency arrows."""
         result = await generate_mermaid(
-            phases=["Backend", "Frontend", "Testing"],
-            dependencies=[{"from": "P1", "to": "P3"}]
+            phases=["Backend", "Frontend", "Testing"], dependencies=[{"from": "P1", "to": "P3"}]
         )
         code = result["mermaid_code"]
         assert "graph TD" in code
@@ -83,10 +83,12 @@ class TestFormatTasksAsMarkdown:
                 "phase_number": 1,
                 "tasks": [
                     {"description": "Setup DB", "status": "[x]", "subtasks": []},
-                    {"description": "Create API", "status": "[ ]", "subtasks": [
-                        {"description": "Route", "status": "[ ]", "subtasks": []}
-                    ]}
-                ]
+                    {
+                        "description": "Create API",
+                        "status": "[ ]",
+                        "subtasks": [{"description": "Route", "status": "[ ]", "subtasks": []}],
+                    },
+                ],
             }
         ]
         result = await format_tasks_as_markdown(phases=phases)
