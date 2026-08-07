@@ -698,7 +698,8 @@ REGISTRY: dict[str, dict[str, Any]] = {
         },
         "returns": (
             "{success, out_dir, nodes, edges, files, artifacts} — rebuild writes "
-            "graphify_feedback memory obs when files changed"
+            "graphify_feedback memory obs when files changed; if a background rebuild "
+            "is already in flight this coalesces and returns {rebuilding: true}"
         ),
         "example": 'action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid", "graph_dir_ready"],
@@ -723,7 +724,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "summary": "Search the code graph (labels / source files / types). Auto-freshens first.",
         "doc": (
             "Search graph nodes by label / source file / type (case-insensitive, ranked). "
-            "The graph_fresh precondition rebuilds the graph first if source files changed."
+            "The graph_fresh precondition rebuilds the graph first if source files changed. "
+            "Result includes freshness metadata: graph_fresh / graph_exists / "
+            "graph_rebuilding / graph_built_at — when graph_rebuilding is true the read "
+            "may have served the previous graph; re-read after a moment."
         ),
         "handler": _graph_query,
         "params": {
@@ -733,7 +737,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
         },
-        "returns": "{success, count, results:[{id, label, type, source_file}], related_memory:[{name, observations}]}",
+        "returns": (
+            "{success, count, results:[{id, label, type, source_file}], "
+            "related_memory:[{name, observations}], graph_fresh, graph_exists, "
+            "graph_rebuilding, graph_built_at}"
+        ),
         "example": (
             'action_call(action="graph_query", params={"workspace_path": "D:/Project/Foo", "query": "registry"})'
         ),
@@ -744,7 +752,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "summary": "Shortest path between two graph nodes. Auto-freshens first.",
         "doc": (
             "Shortest path (BFS) between two nodes by label. "
-            "The graph_fresh precondition rebuilds the graph first if source files changed."
+            "The graph_fresh precondition rebuilds the graph first if source files changed. "
+            "Result includes freshness metadata: graph_fresh / graph_exists / "
+            "graph_rebuilding / graph_built_at."
         ),
         "handler": _graph_path,
         "params": {
@@ -753,7 +763,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "b": {"type": "string", "required": True, "desc": "To node label"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
         },
-        "returns": "{success, path:[labels], hops}",
+        "returns": (
+            "{success, path:[labels], hops, graph_fresh, graph_exists, "
+            "graph_rebuilding, graph_built_at}"
+        ),
         "example": (
             'action_call(action="graph_path", '
             'params={"workspace_path": "D:/Project/Foo", "a": "action_call", "b": "registry"})'
@@ -765,7 +778,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "summary": "Explain a graph node (details + direct neighbours). Auto-freshens first.",
         "doc": (
             "Explain a node: its details + direct neighbours with relation types. "
-            "The graph_fresh precondition rebuilds the graph first if source files changed."
+            "The graph_fresh precondition rebuilds the graph first if source files changed. "
+            "Result includes freshness metadata: graph_fresh / graph_exists / "
+            "graph_rebuilding / graph_built_at."
         ),
         "handler": _graph_explain,
         "params": {
@@ -777,7 +792,8 @@ REGISTRY: dict[str, dict[str, Any]] = {
         },
         "returns": (
             "{success, node:{id, label, type, source_file, source_location}, "
-            "neighbours:[{node, relation}], related_memory:[{name, observations}]}"
+            "neighbours:[{node, relation}], related_memory:[{name, observations}], "
+            "graph_fresh, graph_exists, graph_rebuilding, graph_built_at}"
         ),
         "example": (
             'action_call(action="graph_explain", params={"workspace_path": "D:/Project/Foo", "node": "registry"})'

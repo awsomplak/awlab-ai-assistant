@@ -65,6 +65,24 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 | `graph_path` | Shortest path between two graph nodes. Auto-freshens first. |
 | `graph_explain` | Explain a graph node (details + direct neighbours). Auto-freshens first. |
 
+#### Graph freshness contract
+
+Every graph read (`graph_query`, `graph_path`, `graph_explain`) returns these
+metadata fields so the agent can always tell whether the data is current and
+whether a rebuild is in flight:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `graph_fresh` | `bool` | Whether the served graph was fresh at read time (source unchanged since the last build). |
+| `graph_exists` | `bool` | Whether a graph exists yet (`false` on a first-ever read). |
+| `graph_rebuilding` | `bool` | `true` when a heavy rebuild is running in the background (the read may have served slightly stale data). |
+| `graph_built_at` | `str` | ISO timestamp of the last successful build. |
+
+**Freshness behavior:**
+- A stale graph with **few changed files** → rebuilt **synchronously** before the read (results are accurate).
+- A stale graph with **many changed files (≥ 20) or a first build** → rebuilt in a **background thread**; the read returns immediately and may serve the previous graph. When `graph_rebuilding: true`, wait a moment and re-read (the next read is fresh).
+- `graph_build` (explicit) during an in-flight background rebuild **coalesces** — it returns `rebuilding: true` instead of starting a duplicate build.
+
 ### task
 
 | Action | Summary |

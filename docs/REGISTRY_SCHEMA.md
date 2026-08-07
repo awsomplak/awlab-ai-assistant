@@ -216,6 +216,19 @@ All three read the **same dict** — editing one entry updates every surface.
 }
 ```
 
+**Freshness contract (all `graph_*` reads).** `graph_query`, `graph_path` and
+`graph_explain` each return `graph_fresh`, `graph_exists`, `graph_rebuilding` and
+`graph_built_at` so the agent can tell whether the data it read is current and
+whether a rebuild is in flight. A stale graph with many changed files (≥ 20), or
+on a first build, is rebuilt in a **background thread** so the read never blocks:
+the read reports `graph_rebuilding: true` and may serve the previous graph until
+the rebuild finishes (graph.json is written atomically, so a concurrent read
+never sees a partial file). Small incremental rebuilds stay synchronous so a read
+right after an edit returns accurate results. Explicit `graph_build` coalesces
+with an in-flight background rebuild (returns `rebuilding: true`, no duplicate
+build). Builds are serialized per project (a per-workspace lock); different
+projects build concurrently.
+
 ## 9. Backward-Compat Alias Map (36 → 11)
 
 | New action | Absorbed old tools |
