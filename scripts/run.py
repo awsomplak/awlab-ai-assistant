@@ -65,6 +65,7 @@ RULE_ORDER = [
     "10-pattern-lifecycle.md",
     "11-agent-memory-isolation.md",
     "12-agent-mcp-workspace-path.md",
+    "13-file-hygiene.md",
 ]
 
 # Static fallback used only when mcp_server is not importable (never drifts in

@@ -12,6 +12,7 @@ When rules appear to conflict, resolve using this explicit priority order (1 is 
 5. **03-token-strategies.md** (Optimization, compression, context budgets)
 6. **06-project-scanner.md** (Scanning behavior, indexing protocols)
 7. **04-commands.md** (Reference tables and shortcuts ONLY — never overrides core rules)
+8. **13-file-hygiene.md** (Scratch/temp file location; keep throwaway files out of git)
 
 ## Single Source of Truth Registry
 
@@ -22,6 +23,7 @@ Each concept maps to exactly ONE authoritative file. Other rules may *reference*
 - **Project Scanning & Indexing** → `06-project-scanner.md`
 - **Phase Execution & Tasks** → `02-plan-artifacts.md`
 - **Token Limits & Budgets** → `03-token-strategies.md`
+- **File & Workspace Hygiene** → `13-file-hygiene.md` (scratch/temp files live in `.ai/temp/`, never project root)
 
 ## Deep Analysis Protocol
 
