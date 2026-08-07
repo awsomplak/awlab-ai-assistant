@@ -8,7 +8,7 @@ When rules appear to conflict, resolve using this explicit priority order (1 is 
 1. **Security Constraints** (Never overridden. No secrets in `.ai/`, no path traversal out of project root)
 2. **05-environment.md** (Shell/command correctness and environment detection)
 3. **02-plan-artifacts.md** (Phase execution logic, task formats, UUID rules)
-4. **01-memory-bank.md** (Memory operations via awlab-memory MCP tools)
+4. **01-memory-bank.md** (Memory operations via awlab-mcp `mem_*` actions)
 5. **03-token-strategies.md** (Optimization, compression, context budgets)
 6. **06-project-scanner.md** (Scanning behavior, indexing protocols)
 7. **04-commands.md** (Reference tables and shortcuts ONLY — never overrides core rules)
@@ -17,7 +17,7 @@ When rules appear to conflict, resolve using this explicit priority order (1 is 
 
 Each concept maps to exactly ONE authoritative file. Other rules may *reference* these concepts but must never *redefine* them.
 
-- **Memory Operations** → `01-memory-bank.md` (uses awlab-memory MCP tools)
+- **Memory Operations** → `01-memory-bank.md` (uses awlab-mcp `mem_*` actions)
 - **Environment & Commands** → `05-environment.md`
 - **Project Scanning & Indexing** → `06-project-scanner.md`
 - **Phase Execution & Tasks** → `02-plan-artifacts.md`
@@ -28,7 +28,7 @@ Each concept maps to exactly ONE authoritative file. Other rules may *reference*
 When analyzing a complex system, trying to understand unfamiliar code, or feeling "confused", strictly follow this sequence:
 
 1. **WHAT** — What specific question am I trying to answer?
-2. **WHERE** — Which 1-3 files contain the answer? (Use `mem_search` via awlab-memory for patterns first, then check `patterns.md` Quick Index if still file‑based)
+2. **WHERE** — Which 1-3 files contain the answer? (Use `action_call(action="mem_search", params={"entity_type": "pattern"})` for patterns first, then check `patterns.md` Quick Index if still file‑based)
 3. **READ** — Read ONLY those specific files (maximum of 3 files at a time). NEVER bulk-read files from search results or directory structure lists.
 4. **ANSWER** — Answer the specific question.
 5. **NEXT** — What is the next specific question?

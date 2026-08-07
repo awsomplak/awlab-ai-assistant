@@ -1,31 +1,32 @@
 <!-- → authority: 00-meta.md -->
-# Memory Bank (Powered by awlab-memory)
+# Memory Bank (Powered by awlab-mcp)
 
-**CRITICAL**: Your Memory Bank is now managed by the `awlab-memory` MCP server.  
-All memory operations use the knowledge graph tools listed below.  
-The old markdown files (`.ai/memory-bank/*.md`) are DEPRECATED, except `environment.md`.
+**CRITICAL**: Your Memory Bank is now managed by the `awlab-mcp` MCP server.  
+All memory operations go through `action_call(action="mem_*")` using the knowledge-graph
+actions below. The old markdown files (`.ai/memory-bank/*.md`) are DEPRECATED, except
+`environment.md` (static env config) and `context.md` (dynamic orchestration state —
+regenerated atomically by `ctx_info mode="context"`).
 
 ## Auto‑Setup
 
 If `./.ai/memory-bank/memory/` does not exist, create it silently.
 
-## Core MCP Tools (awlab-memory)
+## Core Memory Actions (via action_call)
 
-| Tool | Purpose |
-|------|---------|
-| `mem_create_entities` | Create new nodes (people, decisions, patterns, concepts) |
-| `mem_tag_entity` | Tag an entity with additional context labels |
-| `mem_search` | Search memory (hybrid, supports project_id + scope + use_dense params) |
-| `mem_relate` | Declare a semantic association between two entities |
-| `mem_fetch_node_details` | Query specific attributes of localized graph nodes |
-| `mem_read_graph` | Explore the neighbourhood of an entity |
-| `mem_archive_entities` | Move entities to a historical archive state |
-| `mem_delete_relations` | Remove relations between entities |
-| `mem_delete_observations` | Remove specific observations from entities |
-| `mem_store` | Store an observation (creates entity if needed) |
-| `mem_list_patterns` | List all stored patterns |
-| `ctx_store` | Store context fragments with TTL-based expiry |
-| `ctx_get_fragment` | Retrieve topic-specific context without file reads |
+| Action | Purpose | Params |
+|--------|---------|--------|
+| `mem_write` | Create/tag entities, add observations, relate entities (one call) | `entities`, `observations`, `relations` |
+| `mem_search` | Hybrid BM25+dense search; `entity_type="pattern"` lists patterns deterministically | `query`, `scope`, `limit`, `use_dense`, `entity_type` |
+| `mem_read` | Read node details or the graph neighbourhood | `node`, `limit` |
+| `mem_remove` | Archive entities, delete observations or relations | `names`, `deletions`, `relations` |
+
+Every call takes `workspace_path`; `project_id` is optional (isolation is automatic via
+`AGENT_RECALL_SLUG` from `.ai/project-id`).
+
+Legacy tool names still work as aliases: `mem_create_entities`, `mem_tag_entity`,
+`mem_relate`, `mem_store` → `mem_write`; `mem_list_patterns` → `mem_search`; 
+`mem_fetch_node_details`, `mem_read_graph` → `mem_read`; `mem_archive_entities`,
+`mem_delete_observations`, `mem_delete_relations` → `mem_remove`.
 
 ## Mandatory Workflow
 
@@ -37,33 +38,19 @@ If `./.ai/memory-bank/memory/` does not exist, create it silently.
 - Run `mem_search` with the task description to retrieve relevant context.
 - Do NOT read `.ai/memory-bank/*.md` except `environment.md`.
 
-### During a task (call tools directly — no XML wrapping needed)
-- **New concept** → `mem_create_entities(entities=[{"name": "Concept", "entityType": "concept", "observations": ["description"]}])`
-- **Tag entity** → `mem_tag_entity(observations=[{"entityName": "Entity", "contents": ["fact"]}])`
-- **Link entities** → `mem_create_entities` + `mem_tag_entity` + `mem_relate`
-- **Task completion** → `mem_tag_entity(observations=[{"entityName": "Progress", "contents": ["Completed: Phase N: description"]}])`
-- **Store pattern** → `mem_store(entity_name="pattern_name", observation="value: ...", pattern_type="preference")`
-- **List patterns** → `mem_list_patterns(workspace_path="...")`
-  <server_name>awlab-memory</server_name>
-  <tool_name>mem_list_patterns</tool_name>
-  <arguments>
-  {}
-  </arguments>
-  </use_mcp_tool>
-  ```
-- **Context snapshot** →
-  ```xml
-  <use_mcp_tool>
-  <server_name>awlab-mcp</server_name>
-  <tool_name>ctx_get_snapshot</tool_name>
-  <arguments>
-  {}
-  </arguments>
-  </use_mcp_tool>
-  ```
+### During a task (call via action_call — no XML wrapping needed)
+- **New concept** → `action_call(action="mem_write", params={"entities": [{"name": "Concept", "entityType": "concept", "observations": ["description"]}]})`
+- **Tag entity** → `action_call(action="mem_write", params={"observations": [{"entityName": "Entity", "contents": ["fact"]}]})`
+- **Link entities** → `mem_write` with `entities` + `relations`
+- **Task completion** → `action_call(action="mem_write", params={"observations": [{"entityName": "Progress", "contents": ["Completed: Phase N: description"]}]})`
+- **Store pattern** → `action_call(action="mem_write", params={"observations": [{"entityName": "pattern_preference_pnpm", "contents": ["type: preference", "value: ...", "confidence: 0.9", "timestamp: <ISO>", "source: explicit"]}]})`
+- **List patterns** → `action_call(action="mem_search", params={"entity_type": "pattern"})`
+- **Context snapshot** → `action_call(action="ctx_info")` (mode defaults to `snapshot`)
 
 ### At phase/plan completion
-- Run final `mem_search` to capture learnings, then consolidate with `mem_tag_entity`.
+- Run final `mem_search` to capture learnings, then consolidate with `mem_write`.
 
-### Exception: `environment.md`
-- The file `./.ai/memory-bank/environment.md` is **KEPT** only for shell command syntax detection (see `05-environment.md`). All other markdown (`.md`) files in `.ai/memory-bank/` are ignored.
+### Exception: `environment.md` / `context.md`
+- The file `./.ai/memory-bank/environment.md` is **KEPT** only for shell command syntax detection (see `05-environment.md`).
+- The file `./.ai/memory-bank/context.md` is the dynamic orchestration state, ATOMICALLY regenerated by `ctx_info mode="context"` (see `04-commands.md`). Do not hand-edit it.
+- All other markdown (`.md`) files in `.ai/memory-bank/` are ignored.

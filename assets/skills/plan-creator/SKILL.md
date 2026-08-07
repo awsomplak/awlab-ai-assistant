@@ -11,7 +11,7 @@ description: >
 
 # plan-creator
 
-This skill handles the creation of structured implementation plans and automatic memory population via awlab-memory. It generates plan documentation, stores project analysis results using awlab-memory's tools, and maintains the plan registry. **Plans are documentation only - no code execution or implementation occurs during plan creation.**
+This skill handles the creation of structured implementation plans and automatic memory population via `awlab-mcp` (`mem_write`). It generates plan documentation, stores project analysis results using the memory actions, and maintains the plan registry. **Plans are documentation only - no code execution or implementation occurs during plan creation.**
 
 ## Usage
 
@@ -27,28 +27,28 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 
 3. **Ensure Structure Exists** — Silent create `./.ai/` and `./.ai/artifacts/` and `registry.md` if missing. Do NOT create `./.ai/memory-bank/`.
 
-4. **Read Project ID** — Read `.ai/project-id` (if missing, run `#08-project-id` bootstrap first). Store as `$PROJECT_ID` (for informational use only – awlab-memory uses `AGENT_MEMORY_SLUG` automatically).
+4. **Read Project ID** — Read `.ai/project-id` (if missing, run `#08-project-id` bootstrap first). Store as `$PROJECT_ID` (for informational use only – `awlab-mcp` uses `AGENT_RECALL_SLUG` automatically).
 
 5. **Load user patterns**  
-    - Run `search_nodes(query="type: pattern")`.  
+    - Run `action_call(action="mem_search", params={"entity_type": "pattern"})`.  
     - For each result, parse observations to extract `type`, `value`, `confidence`, `timestamp`.  
     - Sort by `timestamp` descending (most recent first).  
     - Exclude patterns with `confidence < 0.3` and older than 30 days (based on `timestamp`).  
     - Store the top 5–10 patterns in a variable `$USER_PATTERNS`.
 
-6. **Scan Project & Populate Memory via awlab-memory**
-    - Run the **Fingerprint Protocol** defined in **`#06-project-scanner`**.
-    - Use scan results to call awlab-memory tools:
+6. **Scan Project & Populate Memory via mem_write**
+    - Run the **Fingerprint Protocol** defined in **`#06-project-scanner`** (`ctx_info mode="scan"`).
+    - Use scan results to call `action_call(action="mem_write", params={...})`:
         - **Project architecture**:  
-          `create_entities(entities=[{"name": "Project Architecture", "entityType": "concept", "observations": ["Project type: {language} / {framework}. Architecture: {pattern}. Key directories: {list}. Entry point: {file}."}])`
+          `params={"entities": [{"name": "Project Architecture", "entityType": "concept", "observations": ["Project type: {language} / {framework}. Architecture: {pattern}. Key directories: {list}. Entry point: {file}."}]}`
         - **Dependencies**:  
-          `create_entities(entities=[{"name": "Dependencies", "entityType": "concept", "observations": ["Top dependencies: {list}"]}])`
+          `params={"entities": [{"name": "Dependencies", "entityType": "concept", "observations": ["Top dependencies: {list}"]}]}`
         - **Testing framework**:  
-          `create_entities(entities=[{"name": "Testing", "entityType": "concept", "observations": ["Framework: {name}. Location: {path}. Run command: {command}"}])`
+          `params={"entities": [{"name": "Testing", "entityType": "concept", "observations": ["Framework: {name}. Location: {path}. Run command: {command}"}]}`
         - **Key relationships** (max 15):  
-          `create_relations(relations=[{"from": "FileA", "to": "FileB", "relationType": "depends_on"}])`
+          `params={"relations": [{"from": "FileA", "to": "FileB", "relationType": "depends_on"}]}`
         - **Quick index** (max 20):  
-          `create_entities(entities=[{"name": "{concept}", "entityType": "index", "observations": ["{file_path}: {key_info}"]}])`
+          `params={"entities": [{"name": "{concept}", "entityType": "index", "observations": ["{file_path}: {key_info}"]}]}`
     - Also store initial brief, context, progress as observations on dedicated entities.
 
 7. **Read Registry**
@@ -75,6 +75,11 @@ Activate this skill when the user explicitly requests a **new** plan using the t
         - **Approach**
         - **Expected Outcomes**
     - Write `tasks.md` with phases and ordered checklist per `#02-plan-artifacts` (Tasks Format and Extended Task Format). Use `→ depends:` and `? if:` markers where appropriate.
+    - **STRICT numbering** (see `#02-plan-artifacts` "Task Path & Phase Numbering"): every
+      phase header is `## Phase N:` with N a **sequential positive integer**; every task path
+      segment is a **positive integer** (`1.2`, `1.2.3`). NEVER use decimals (no `12.5`),
+      letters, or sub-phase labels — a non-integer phase breaks parsing and silently merges
+      tasks into the wrong phase. Re-number integer phases if you need to insert work.
     - Write `notes.md` only if technical constraints, risks, or key decisions exist
 
 10. **Update Registry**
@@ -85,7 +90,7 @@ Activate this skill when the user explicitly requests a **new** plan using the t
     - Open in editor without asking: `plan.md`, `tasks.md`.
 
 12. **Confirm and Stop**
-    - Display: "Plan '{summary}' created with UUID {uuid}. Memory populated via awlab-memory. Files opened in editor."
+    - Display: "Plan '{summary}' created with UUID {uuid}. Memory populated via mem_write. Files opened in editor."
     - **CRITICAL**: Do NOT execute any implementation, code changes, or task execution.
 
 ## Implementation Instructions

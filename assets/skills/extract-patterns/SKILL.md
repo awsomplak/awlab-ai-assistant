@@ -11,7 +11,7 @@ User says "learn from this session", "remember my patterns", or automatically af
 
 ## Steps
 
-1. **Retrieve session context** – use `search_memory(query="session: recent work")` to retrieve stored session context; otherwise ask the user to provide highlights of the recent conversation.
+1. **Retrieve session context** – use `action_call(action="mem_search", params={"query": "session: recent work"})` to retrieve stored session context; otherwise ask the user to provide highlights of the recent conversation.
 
 2. **Identify pattern candidates**:
    - User statements containing "I always…", "I prefer…", "don't use…", "my convention is…", etc.
@@ -23,8 +23,8 @@ User says "learn from this session", "remember my patterns", or automatically af
    - Extract `value` (the core rule).
    - Set `source` to `explicit` if user stated it clearly, otherwise `inferred`.
    - Set `confidence` accordingly (0.9 for explicit, 0.4 for inferred, 0.9 for corrections).
-   - Check for existing similar patterns using `search_memory(query="type: {pattern_type}")`.
-- Resolve conflicts (replace via `delete_entities(names=[...])` + `mem_store`, or ask user first as per `#10-pattern-lifecycle`).
+   - Check for existing similar patterns using `action_call(action="mem_search", params={"entity_type": "pattern", "query": "{pattern_type}"})`.
+- Resolve conflicts (replace via `mem_remove` + `mem_write`, or ask user first as per `#10-pattern-lifecycle`).
 
 4. **Report** – "Added X new patterns: … (and resolved Y conflicts)."
 

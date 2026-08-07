@@ -2,7 +2,7 @@
 # Project ID Auto-Detection
 
 ## Purpose
-Generate a stable identifier from the workspace folder name. This ID is used by the wrapper script to set `AGENT_RECALL_SLUG`, which awlab-memory uses for project isolation.
+Generate a stable identifier from the workspace folder name. This ID is used by the wrapper script to set `AGENT_RECALL_SLUG`, which `awlab-mcp` uses for project isolation.
 
 ## Bootstrap (Run on every `follow rules`)
 
@@ -12,4 +12,4 @@ Generate a stable identifier from the workspace folder name. This ID is used by 
 
 ## Usage
 - The wrapper script reads this file and sets `AGENT_RECALL_SLUG`.
-- awlab-memory isolates all memories under that slug automatically.
+- `awlab-mcp` isolates all memories under that slug automatically.
