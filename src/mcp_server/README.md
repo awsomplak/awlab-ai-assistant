@@ -69,8 +69,9 @@ flowchart LR
 **Key design decisions:**
 - **No workspace auto-detection.** The server never inspects env vars, process trees, or CWD to resolve the project root.
 - **`workspace_path` is required** for all tools that operate on disk (plans, registry, memory bank, scanning).
-- **`DB_PATH` is the only env-based config** — it overrides the agent-recall database location. If unset, the caller must provide a workspace path at the call site.
-- **`get_project_id` MCP tool is removed.** To get the project ID, read `.ai/project-id` directly via `read_memory_bank` or other file-reading tools.
+- **Env vars are optional** — the server runs with sensible defaults. See [Configuration](#configuration) below.
+- **`DB_PATH`** overrides the agent-recall database location; when unset the caller must provide a workspace path at the call site.
+- **`get_project_id` MCP tool is removed.** To get the project ID, read `.ai/project-id` via `ctx_info mode="memory_bank"`.
 - **`psutil` dependency is removed.** No process inspection is performed.
 
 ---
@@ -177,10 +178,11 @@ Two MCP tools are exposed:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `AWLAB_ENV` | Force `production`/`development` mode (else auto-detected from PyInstaller exe) | auto |
+| `LOG_ENABLED` | Enable/disable file logging (`true`/`1`/`yes`) | `true` |
+| `LOG_LEVEL` | Logging verbosity (`info`, `debug`) | `info` |
 | `DB_PATH` | Override agent-recall database directory | *(workspace_path/.ai/memory/)* |
-| `AGENT_RECALL_CMD` | Override agent-recall executable path | *(auto-detected from `.venv`)* |
-| `LOG_ENABLED` | Enable/disable logging | `false` |
-| `LOG_LEVEL` | Logging verbosity (`INFO`, `DEBUG`) | `INFO` |
+| `GRAPH_PARALLEL` | Opt-in parallel graph extraction (see docs/INSTALL.md) | `false` |
 
 Copy `.env` (or `config.json`) in the production config home `~/.awlab-id/agent-memory/` or project root to customize:
 
@@ -189,6 +191,7 @@ AWLAB_ENV=production        # Force production mode
 LOG_ENABLED=true
 LOG_LEVEL=INFO
 DB_PATH=C:\custom\memory     # Override agent-recall DB location
+GRAPH_PARALLEL=false        # Sequential extraction (default, recommended)
 ```
 
 ---
@@ -198,7 +201,7 @@ DB_PATH=C:\custom\memory     # Override agent-recall DB location
 ```
 mcp_server/
 ├── __init__.py
-├── _version.py             # Version string (v1.1.0+build.068)
+├── _version.py             # Version string (v1.1.0+build.093)
 ├── server.py               # Dev console entry (awlab-mcp)
 ├── __main__.py             # PyInstaller entry — single executable
 ├── registry.py             # REGISTRY — 16 actions, single source of truth

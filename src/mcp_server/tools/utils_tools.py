@@ -133,7 +133,7 @@ async def get_server_version() -> dict[str, Any]:
     Return the server build version string.
 
     Returns:
-        { "version": "awlab-mcp-server v1.1.0+build.001" }
+        { "version": VERSION_STRING }   # e.g. "awlab-mcp-server v1.1.0+build.093"
     """
     return resp_obj(version=VERSION_STRING)
 
