@@ -91,7 +91,7 @@ python scripts/run.py <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `compile-rules` | Compile rules + skills into per-agent profiles under `assets/profiles/` |
+| `compile-rules` | Compile rules + skills into per-agent profiles under `dist/profiles/` |
 | `build` | Compile profiles + build Python package + standalone binaries → `dist/` |
 | `publish` | Publish `dist/` contents to AI assistant locations |
 | `test` | Run the pytest test suite |
@@ -107,7 +107,7 @@ python scripts/run.py compile-rules
 Compiles `assets/rules/` (13 rule files) and `assets/skills/` (4 skills) into per-agent profiles:
 
 ```
-assets/profiles/
+dist/profiles/
 ├── cline/             # Individual .md files + skills
 ├── copilot/           # .instructions.md with YAML frontmatter + skills
 ├── claude/            # CLAUDE.md monolith + skills

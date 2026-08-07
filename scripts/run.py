@@ -47,7 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 RULES_SRC = ROOT / "assets" / "rules"
 SKILLS_SRC = ROOT / "assets" / "skills"
-PROFILES_DIR = ROOT / "assets" / "profiles"
+PROFILES_DIR = DIST / "profiles"
 PYTHON_SRC = ROOT / "src" / "mcp_server"
 TEST_DIR = ROOT / "tests"
 
@@ -164,23 +164,25 @@ def cmd_help(command: str | None = None) -> None:
         "build": """\
 Usage: run.py build [options]
 
-Build the entire project to /dist.  /dist is always cleaned before build.
+Build the project to /dist. A full build cleans /dist first; partial builds
+(--no-bin / --no-rules) clean only the outputs they regenerate and leave the
+other artifacts intact.
 
 Options:
-  --no-bin            Skip Python package build
-  --no-rules         Skip rules/skills compilation
+  --no-bin            Skip Python package build (rules/skills only → dist/profiles)
+  --no-rules          Skip rules/skills compilation (binary only → dist/bin)
   --target-os=OS     Target OS: auto (default), windows, linux, macos, all
 
 Output:
   dist/
   ├── build-manifest.json
-  ├── bin/               # Executable(s) + source fallback
-  ├── rules/
-  ├── profiles/
-  └── skills/
+  ├── bin/               # Executable(s) + source fallback (binary build)
+  └── profiles/          # Per-agent compiled rules/skills (rules build)
 
 Examples:
-  run.py build                        # Build for current OS
+  run.py build                        # Full build (cleans dist, rebuilds all)
+  run.py build --no-bin               # Profiles only (keeps dist/bin)
+  run.py build --no-rules             # Binary only (keeps dist/profiles)
   run.py build --target-os=all        # Build for all OSes (specs for non-host)
   run.py build --target-os=linux      # Build spec for Linux
 """,
@@ -223,10 +225,10 @@ Examples:
 Usage: run.py compile-rules
 
 Compile rules from assets/rules/ into assistant-specific profiles
-in assets/profiles/.
+under dist/profiles/.
 
 Output:
-  assets/profiles/
+  dist/profiles/
   ├── claude/              (global skills and CLAUDE.md monolith)
   ├── cline/               (global skills and rules for cline)
   ├── copilot/             (global skills and rules for copilot)
@@ -531,41 +533,56 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
     _info(f"Host OS: {current_os}")
     _info(f"Target(s): {', '.join(build_targets)}")
 
-    # Auto-stop stale server processes so /dist isn't locked (stale binaries hold the lock)
-    _stop_awlab_processes()
+    # Auto-stop stale server processes ONLY when rebuilding the binary — the
+    # running exe holds a lock on dist/bin. A rules/skills-only build (--no-bin)
+    # must not kill a live MCP server.
+    if not no_bin:
+        _stop_awlab_processes()
 
-    # Always clean /dist before build to prevent stale/mixed artifacts
+    # Selectively clean /dist based on what is being built, so partial builds
+    # never delete artifacts they aren't regenerating:
+    #   full build (bin + rules)      → clean everything
+    #   rules/skills only (--no-bin)  → clean profiles/rules/skills, keep bin
+    #   binary only (--no-rules)      → clean bin, keep profiles
     try:
-        if DIST.exists():
-            shutil.rmtree(DIST)
-            _ok("Cleaned /dist")
+        if not no_bin and not no_rules:
+            # Full build: clean everything and rebuild from scratch.
+            if DIST.exists():
+                shutil.rmtree(DIST)
+                _ok("Cleaned /dist (full build)")
+        else:
+            # Partial build: clean only what will be regenerated.
+            #   --no-rules (bin only)   → clean bin, keep profiles
+            #   --no-bin   (rules only) → clean profiles, keep bin
+            targets = ("bin",) if not no_bin else ("profiles", "rules", "skills")
+            for sub in targets:
+                path = DIST / sub
+                if path.exists():
+                    shutil.rmtree(path)
+                    _detail(f"Cleaned /dist/{sub}")
         DIST.mkdir(parents=True, exist_ok=True)
     except PermissionError:
         _warn("Permission denied while cleaning /dist")
         _warn("A stale awlab-* process is still holding the lock. Stop it (scripts/stop-mcp-servers.ps1) and retry.")
         sys.exit(1)
 
-    # 1. Bump build tag
-    vf = PYTHON_SRC / "_version.py"
-    raw = vf.read_text("utf-8")
-    m = re.search(r'__build_tag__\s*=\s*"build\.(\d+)"', raw)
-    if m:
-        new = f"build.{int(m.group(1)) + 1:03d}"
-        raw = raw.replace(m.group(0), f'__build_tag__ = "{new}"')
-        vf.write_text(raw, "utf-8")
-        old_tag = m.group(0).split("=")[1].strip().strip('"')
-        _info(f"Tag: {old_tag} -> {new}")
+    # 1. Bump build tag — only when the binary is rebuilt (the tag describes the exe)
+    if not no_bin:
+        vf = PYTHON_SRC / "_version.py"
+        raw = vf.read_text("utf-8")
+        m = re.search(r'__build_tag__\s*=\s*"build\.(\d+)"', raw)
+        if m:
+            new = f"build.{int(m.group(1)) + 1:03d}"
+            raw = raw.replace(m.group(0), f'__build_tag__ = "{new}"')
+            vf.write_text(raw, "utf-8")
+            old_tag = m.group(0).split("=")[1].strip().strip('"')
+            _info(f"Tag: {old_tag} -> {new}")
 
     # 2. Compile rules → dist/profiles/{agent}/
     if not no_rules:
         _info("Compiling assets...")
         rules, skills = cmd_compile_rules()
-
-        # Copy per-agent profiles to dist
-        if PROFILES_DIR.exists():
-            shutil.copytree(PROFILES_DIR, DIST / "profiles", dirs_exist_ok=True)
-            _detail("profiles/  (per-agent: cline, copilot, claude, hermes)")
-
+        _detail("profiles/  (per-agent: cline, copilot, claude, hermes)")
         _ok(f"{len(rules)} rules, {len(skills)} skills")
 
     # 3. Python package
