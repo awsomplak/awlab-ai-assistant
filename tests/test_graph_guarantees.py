@@ -1,0 +1,219 @@
+"""
+Phase 9 — Verify graph_* Guarantees.
+
+Locks in:
+
+1. Single-request flow — a graph read with no prior build auto-builds; after a
+   source edit the next read auto-updates (not just no-op); the trace reports
+   the executed steps.
+2. Per-project isolation — two projects get separate .ai/codegraph/ dirs and
+   never cross-contaminate (queries in project A never see project B symbols).
+
+Uses the same direct-tool-call pattern as test_dispatcher_surface.py.
+"""
+
+import json
+from pathlib import Path
+
+from mcp_server.modules import registration
+
+
+def _tools() -> dict:
+    return registration.mcp._tool_manager._tools
+
+
+async def action_call(action: str, params: dict | None = None) -> dict:
+    tool = _tools()["action_call"]
+    return json.loads(await tool.fn(action=action, params=params))
+
+
+# ── Task 1: single-request flow ─────────────────────────────────────────────
+
+
+async def test_single_request_auto_builds_then_auto_updates(tmp_path: Path):
+    """Read with no build → auto-build (executed); edit a file → next read auto-updates."""
+    sample = tmp_path / "sample.py"
+    sample.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    ws = str(tmp_path)
+
+    # 1. No prior build → read auto-builds.
+    r1 = await action_call("graph_query", {"workspace_path": ws, "query": "foo"})
+    assert r1["success"] is True
+    assert "graph_fresh" in r1["executed"]
+    assert r1["result"]["count"] >= 1
+    assert (tmp_path / ".ai" / "codegraph" / "graph.json").is_file()
+
+    # 2. Fresh read (no change) → nothing re-runs.
+    r2 = await action_call("graph_query", {"workspace_path": ws, "query": "foo"})
+    assert r2["executed"] == []
+    assert "graph_fresh" in r2["skipped"]
+
+    # 3. Edit a source file → next read auto-updates (executed again).
+    sample.write_text("def foo():\n    return 1\n\ndef bar():\n    return 2\n", encoding="utf-8")
+    r3 = await action_call("graph_query", {"workspace_path": ws, "query": "bar"})
+    assert r3["success"] is True
+    assert "graph_fresh" in r3["executed"]  # stale → rebuild ran
+    assert r3["result"]["count"] >= 1  # new symbol now searchable
+
+
+async def test_single_request_edit_surfaces_new_symbol(tmp_path: Path):
+    """After an edit, a previously-unknown symbol becomes queryable."""
+    sample = tmp_path / "sample.py"
+    sample.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    ws = str(tmp_path)
+
+    await action_call("graph_query", {"workspace_path": ws, "query": "foo"})
+    before = await action_call("graph_query", {"workspace_path": ws, "query": "brand_new_sym"})
+    assert before["result"]["count"] == 0
+
+    sample.write_text("def brand_new_sym():\n    return 42\n", encoding="utf-8")
+    after = await action_call("graph_query", {"workspace_path": ws, "query": "brand_new_sym"})
+    assert after["success"] is True
+    assert after["result"]["count"] >= 1
+
+
+# ── Task 2: per-project isolation ───────────────────────────────────────────
+
+
+async def test_per_project_isolation(tmp_path: Path):
+    """Two projects get separate .ai/codegraph/ and never cross-contaminate."""
+    proj_a = tmp_path / "proj_a"
+    proj_b = tmp_path / "proj_b"
+    proj_a.mkdir()
+    proj_b.mkdir()
+    (proj_a / "alpha.py").write_text("def alpha_func():\n    return 'a'\n", encoding="utf-8")
+    (proj_b / "beta.py").write_text("def beta_func():\n    return 'b'\n", encoding="utf-8")
+
+    wa, wb = str(proj_a), str(proj_b)
+
+    ra = await action_call("graph_query", {"workspace_path": wa, "query": "alpha_func"})
+    rb = await action_call("graph_query", {"workspace_path": wb, "query": "beta_func"})
+    assert ra["success"] is True and rb["success"] is True
+    assert ra["result"]["count"] >= 1
+    assert rb["result"]["count"] >= 1
+
+    # A must NOT see B's symbol, and vice-versa.
+    ra_beta = await action_call("graph_query", {"workspace_path": wa, "query": "beta_func"})
+    rb_alpha = await action_call("graph_query", {"workspace_path": wb, "query": "alpha_func"})
+    assert ra_beta["result"]["count"] == 0
+    assert rb_alpha["result"]["count"] == 0
+
+    # Separate codegraph dirs exist.
+    assert (proj_a / ".ai" / "codegraph" / "graph.json").is_file()
+    assert (proj_b / ".ai" / "codegraph" / "graph.json").is_file()
+
+
+async def test_graph_status_reports_existence_per_project(tmp_path: Path):
+    """graph_status reflects each project independently (exists/fresh)."""
+    proj_a = tmp_path / "proj_a"
+    proj_b = tmp_path / "proj_b"
+    proj_a.mkdir()
+    proj_b.mkdir()
+    (proj_a / "alpha.py").write_text("def alpha_func():\n    return 1\n", encoding="utf-8")
+
+    # Only project A has been built.
+    await action_call("graph_query", {"workspace_path": str(proj_a), "query": "alpha_func"})
+
+    sa = await action_call("graph_status", {"workspace_path": str(proj_a)})
+    sb = await action_call("graph_status", {"workspace_path": str(proj_b)})
+    assert sa["result"].get("exists") is True
+    assert sb["result"].get("exists") is False
+
+
+# ── Task 3: incremental rebuild ─────────────────────────────────────────────
+
+
+def _codegraph(proj: Path) -> dict:
+    """Load graph.json from a project's .ai/codegraph dir."""
+    return json.loads((proj / ".ai" / "codegraph" / "graph.json").read_text(encoding="utf-8"))
+
+
+def _make_multi_file_project(tmp_path: Path, name: str = "incr") -> tuple[Path, str]:
+    proj = tmp_path / name
+    proj.mkdir()
+    (proj / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    (proj / "b.py").write_text("def beta():\n    return alpha()\n", encoding="utf-8")
+    (proj / "c.py").write_text("def gamma():\n    return 2\n", encoding="utf-8")
+    return proj, str(proj)
+
+
+async def test_incremental_rebuild_after_edit(tmp_path: Path):
+    """Edit one file → next build re-extracts only it (incremental=True) with no drift."""
+    proj, ws = _make_multi_file_project(tmp_path)
+
+    first = await action_call("graph_build", {"workspace_path": ws})
+    assert first["success"] is True
+    assert first["result"].get("incremental") is False  # first build is full
+
+    # Edit a single file (different content, same second is fine — ns manifest).
+    (proj / "b.py").write_text("def beta():\n    return alpha() * 2\n", encoding="utf-8")
+    second = await action_call("graph_build", {"workspace_path": ws})
+    assert second["success"] is True
+    assert second["result"].get("incremental") is True  # incremental path taken
+    assert second["result"].get("nodes") == first["result"].get("nodes")  # no node drift
+
+    # No synthetic global 'any' node leaked in.
+    g = _codegraph(proj)
+    assert not any(n.get("id") == "any" for n in g["nodes"])
+    # Cross-file edge (beta -> alpha) still present.
+    assert any(e.get("source", "").endswith("_beta") for e in g["links"])
+
+
+async def test_incremental_no_change_skips(tmp_path: Path):
+    """Rebuild with no source change → fast skip (nothing re-extracted)."""
+    proj, ws = _make_multi_file_project(tmp_path)
+
+    await action_call("graph_build", {"workspace_path": ws})
+    again = await action_call("graph_build", {"workspace_path": ws})
+    assert again["success"] is True
+    assert again["result"].get("skipped") is True  # fresh → no-op
+    assert again["result"].get("incremental") is False
+
+
+async def test_incremental_delete_removes_stale_nodes(tmp_path: Path):
+    """Deleting a file drops its nodes on the next incremental build (no stale ghost)."""
+    proj, ws = _make_multi_file_project(tmp_path)
+
+    await action_call("graph_build", {"workspace_path": ws})
+
+    # Add a file, build (incremental add), then delete it and rebuild.
+    (proj / "d.py").write_text("def delta():\n    return 3\n", encoding="utf-8")
+    added = await action_call("graph_build", {"workspace_path": ws})
+    assert added["result"].get("incremental") is True
+    assert any(n["id"].endswith("_delta") for n in _codegraph(proj)["nodes"])
+
+    (proj / "d.py").unlink()
+    removed = await action_call("graph_build", {"workspace_path": ws})
+    assert removed["result"].get("incremental") is True
+    g = _codegraph(proj)
+    assert not any(n["id"].endswith("_delta") for n in g["nodes"])  # stale node gone
+
+
+async def test_incremental_matches_full_rebuild(tmp_path: Path):
+    """At the same source state, incremental output == a forced full rebuild output."""
+    proj, ws = _make_multi_file_project(tmp_path)
+
+    # Build full, edit one file, build incremental.
+    await action_call("graph_build", {"workspace_path": ws})
+    (proj / "b.py").write_text("def beta():\n    return alpha() * 3\n", encoding="utf-8")
+    inc = await action_call("graph_build", {"workspace_path": ws})
+    assert inc["result"].get("incremental") is True
+    inc_g = _codegraph(proj)
+
+    # Force a full rebuild of the SAME state (delete manifest + graph.json).
+    for f in (".build_state.json", "graph.json", "graph.html"):
+        p = proj / ".ai" / "codegraph" / f
+        if p.exists():
+            p.unlink()
+    full = await action_call("graph_build", {"workspace_path": ws})
+    assert full["result"].get("incremental") is False
+    full_g = _codegraph(proj)
+
+    def node_key(g):
+        return {(n.get("source_file") or "", n["id"]) for n in g["nodes"]}
+
+    def edge_key(g):
+        return {(e.get("source"), e.get("relation"), e.get("target")) for e in g["links"]}
+
+    assert node_key(inc_g) == node_key(full_g)
+    assert edge_key(inc_g) == edge_key(full_g)
