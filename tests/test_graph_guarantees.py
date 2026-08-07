@@ -217,3 +217,30 @@ async def test_incremental_matches_full_rebuild(tmp_path: Path):
 
     assert node_key(inc_g) == node_key(full_g)
     assert edge_key(inc_g) == edge_key(full_g)
+
+
+# ── Task 4: scratch/temp files are never indexed ────────────────────────────
+
+
+async def test_scratch_dir_excluded_from_graph(tmp_path: Path):
+    """Files under .ai/temp/ (scratch) must never appear in the code graph."""
+    proj = tmp_path / "scratch_proj"
+    proj.mkdir()
+    (proj / "real.py").write_text("def real_func():\n    return 1\n", encoding="utf-8")
+    scratch = proj / ".ai" / "temp"
+    scratch.mkdir(parents=True)
+    (scratch / "scratch_check.py").write_text(
+        "def scratch_only():\n    return 99\n", encoding="utf-8"
+    )
+    ws = str(proj)
+
+    r = await action_call("graph_build", {"workspace_path": ws})
+    assert r["success"] is True
+
+    g = _codegraph(proj)
+    ids = [n["id"] for n in g["nodes"]]
+    assert any(i.endswith("_real_func") for i in ids)          # real code indexed
+    assert not any("scratch" in i or i.endswith("_scratch_only") for i in ids)  # scratch excluded
+    # No node may carry a source_file under .ai/temp
+    assert not any((n.get("source_file") or "").startswith(".ai/temp") for n in g["nodes"])
+

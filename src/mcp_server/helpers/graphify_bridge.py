@@ -38,10 +38,23 @@ _NOISE_DIRS = {
     ".mypy_cache",
     ".ruff_cache",
     ".ai",
+    ".temp",
     "logs",
     ".eggs",
     "*.egg-info",
 }
+
+
+def _is_noise_relpath(rel: str) -> bool:
+    """True if a forward-slash relpath lives under a noise directory.
+
+    Used to filter graphify's ``detect`` output (which does not honour our
+    ``_NOISE_DIRS``) so scratch/temp and dependency dirs never reach ``extract``.
+    """
+    parts = rel.split("/")
+    return any(
+        p in _NOISE_DIRS or p.endswith(".egg-info") for p in parts[:-1]
+    )
 
 
 def _source_manifest(root: Path) -> dict[str, str]:
@@ -336,7 +349,22 @@ def build_graph(
 
     try:
         detected = g["detect"](root, cache_root=root)
-        files = [Path(f) for lst in detected.get("files", {}).values() for f in lst]
+
+        def _noise_free(path: Path) -> bool:
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                return False  # outside root — not a source file
+            return not _is_noise_relpath(str(rel).replace("\\", "/"))
+
+        # graphify's detect does not honour our _NOISE_DIRS — filter scratch/temp
+        # and dependency dirs (e.g. .ai/temp) out of the file list BEFORE extract.
+        files = [
+            Path(f)
+            for lst in detected.get("files", {}).values()
+            for f in lst
+            if _noise_free(Path(f))
+        ]
         if not files:
             return fail_obj(error="no supported source files detected")
 
