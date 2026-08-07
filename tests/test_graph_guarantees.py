@@ -276,6 +276,10 @@ async def test_heavy_stale_rebuild_runs_in_background(tmp_path: Path):
     elapsed = time.perf_counter() - t0
     assert r2["success"] is True
     assert elapsed < 10, f"graph read blocked on a full rebuild: {elapsed:.1f}s"
+    # The agent can now SEE it read stale data (and that a rebuild is in flight),
+    # so it won't silently act on outdated structure.
+    assert r2["result"].get("graph_fresh") is False
+    assert r2["result"].get("graph_rebuilding") is True
 
     # The background rebuild eventually completes → graph becomes fresh.
     deadline = time.perf_counter() + 60
@@ -287,5 +291,43 @@ async def test_heavy_stale_rebuild_runs_in_background(tmp_path: Path):
             break
         await asyncio.sleep(0.5)
     assert fresh, "background rebuild never completed"
+
+    # A read now reports fresh data.
+    r3 = await action_call("graph_query", {"workspace_path": ws, "query": "m00"})
+    assert r3["result"].get("graph_fresh") is True
+
+
+def test_graph_build_coalesces_with_background_rebuild(tmp_path: Path):
+    """Explicit graph_build during an in-flight background rebuild must not
+    double-build — it returns ``rebuilding: True`` immediately."""
+    from mcp_server.helpers import graphify_bridge as gb
+
+    proj = tmp_path / "coalesce"
+    proj.mkdir()
+    n = 24
+    for i in range(n):
+        (proj / f"m{i:02d}.py").write_text(f"def m{i:02d}():\n    return {i}\n", encoding="utf-8")
+    ws = str(proj)
+
+    # First build (synchronous).
+    assert gb.build_graph(ws).get("success") is True
+
+    # Heavy stale → background rebuild starts.
+    for i in range(n):
+        (proj / f"m{i:02d}.py").write_text(f"def m{i:02d}():\n    return {i + 1}\n", encoding="utf-8")
+    r = gb.ensure_fresh(ws, background=True)
+    assert r.get("background") is True
+    assert gb._rebuild_in_flight(ws) is True
+
+    # Explicit build while it runs → coalesce (no duplicate/block).
+    r2 = gb.graph_build_action(ws)
+    assert r2.get("rebuilding") is True
+
+    # Wait for the background build to finish → fresh.
+    deadline = time.perf_counter() + 60
+    while time.perf_counter() < deadline and not gb.graph_status(ws).get("fresh"):
+        time.sleep(0.2)
+    assert gb.graph_status(ws).get("fresh") is True
+
 
 

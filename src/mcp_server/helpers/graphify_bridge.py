@@ -86,6 +86,30 @@ def _background_rebuild(workspace_path: str | Path, root: Path) -> bool:
         return True
 
 
+def _rebuild_in_flight(workspace_path: str | Path, root: str | Path | None = None) -> bool:
+    """True if a background rebuild is currently running for this project."""
+    key = str(Path(root or workspace_path).resolve())
+    with _BUILD_LOCKS_GUARD:
+        t = _BACKGROUND_THREADS.get(key)
+    return t is not None and t.is_alive()
+
+
+def _graph_freshness(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any]:
+    """Freshness metadata attached to every graph read result.
+
+    This is what lets the AGENT tell whether the data it just read is current and
+    whether a background rebuild is in flight — without it, a stale read looks
+    identical to a fresh one and the agent silently acts on outdated structure.
+    """
+    st = graph_status(workspace_path, root)
+    return {
+        "graph_fresh": bool(st.get("fresh", False)),
+        "graph_exists": bool(st.get("exists", False)),
+        "graph_rebuilding": _rebuild_in_flight(workspace_path, root),
+        "graph_built_at": st.get("built_at"),
+    }
+
+
 # Directories never indexed as source (mirrors graphify's own noise exclusions).
 _NOISE_DIRS = {
     ".git",
@@ -412,6 +436,30 @@ def build_graph(
     root = Path(root or workspace_path).resolve()
     with _build_lock(root):
         return _build_graph_impl(workspace_path, root, include_html, directed, project_id)
+
+
+def graph_build_action(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    include_html: bool = True,
+    directed: bool = False,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
+
+    If a background rebuild is already running for this project, return
+    immediately with ``{rebuilding: True}`` instead of starting a duplicate build
+    (which would block the request and double-build). The graph will be fresh
+    shortly; the agent can confirm via ``graph_status``.
+    """
+    if _rebuild_in_flight(workspace_path, root):
+        return ok_obj(
+            success=True,
+            rebuilding=True,
+            out_dir=str(_codegraph_dir(Path(root or workspace_path).resolve())),
+            note="graph rebuild already in progress — will be fresh shortly; no new build started",
+        )
+    return build_graph(workspace_path, root, include_html=include_html, directed=directed, project_id=project_id)
 
 
 def _build_graph_impl(
@@ -795,6 +843,7 @@ def query_graph(
         count=len(scored),
         results=results,
         related_memory=_related_memory(workspace_path, q, project_id=project_id, limit=5),
+        **_graph_freshness(workspace_path, root),
     )
 
 
@@ -845,6 +894,7 @@ def path_query(
     return ok_obj(
         path=[label.get(i, i) for i in ids],
         hops=max(0, len(ids) - 1),
+        **_graph_freshness(workspace_path, root),
     )
 
 
@@ -906,4 +956,5 @@ def explain_node(
             project_id=project_id,
             limit=5,
         ),
+        **_graph_freshness(workspace_path, root),
     )

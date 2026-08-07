@@ -28,13 +28,13 @@ from . import helpers
 from .config import settings
 from .helpers.context_builder import materialize_context
 from .helpers.graphify_bridge import (
-    build_graph as _graph_build,
-)
-from .helpers.graphify_bridge import (
     ensure_fresh as _graph_ensure_fresh,
 )
 from .helpers.graphify_bridge import (
     explain_node as _graph_explain,
+)
+from .helpers.graphify_bridge import (
+    graph_build_action as _graph_build,
 )
 from .helpers.graphify_bridge import (
     graph_status as _graph_status,
