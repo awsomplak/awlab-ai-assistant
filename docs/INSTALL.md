@@ -41,13 +41,14 @@ python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all     # Specs for non-host OSes
 ```
 
-Built binaries at `dist/bin/`:
+Built binary at `dist/bin/`:
 
-| Binary | Server | Tools |
-|--------|--------|-------|
-| `awlab-mcp.exe` | `awlab-mcp` | 6 utility & context |
-| `awlab-plan.exe` | `awlab-plan` | 17 plan/registry/task/workflow |
-| `awlab-memory.exe` | `awlab-memory` | 13 memory & context store |
+| Binary | Server | Exposed Tools |
+|--------|--------|---------------|
+| `awlab-mcp.exe` | `awlab-mcp` | `action_call` (dispatcher), `action_help` |
+
+One consolidated executable — the `action_call` dispatcher routes to all operations
+(plan, task, memory, graph, context, util, workflow).
 
 Binaries are fully standalone — no Python or source files needed.
 
