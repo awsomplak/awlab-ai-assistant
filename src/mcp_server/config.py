@@ -16,11 +16,11 @@ Production config home:  ``~/.awlab-id/agent-memory/``
   - Logs stored in ``<config_home>/logs/``
 """
 
+import json
 import os
 import sys
-import json
-from pathlib import Path
 from functools import cached_property
+from pathlib import Path
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Environment detection
@@ -82,6 +82,7 @@ def _load_config_file(path: Path) -> dict:
 
 
 # ── Singleton ───────────────────────────────────────────────────────────────
+
 
 class _Settings:
     """Lazy-loaded settings singleton with production/development awareness."""
@@ -259,4 +260,3 @@ settings = _Settings()
 
 # Singleton instance
 settings = _Settings()
-

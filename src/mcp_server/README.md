@@ -1,14 +1,12 @@
 # AWLab-ID MCP Server
 
-**Deterministic MCP server providing 36 tools across 3 standalone servers for plan management, memory operations, registry control, workflow execution, and project scanning — all without AI model invocation.**
+**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 16 actions across plan management, memory operations, registry control, workflow execution, project scanning, and the code knowledge graph — all without AI model invocation.**
 
 Part of the [cline-ai-assisted-dev](../) system.
 
-| Server | Tools | Entry Point |
-|--------|-------|-------------|
-| `awlab-mcp` | 6 utility & context tools | `server.py` / `__main__.py` |
-| `awlab-plan` | 17 plan, registry, task & workflow tools | `server_plan.py` / `__main_plan__.py` |
-| `awlab-memory` | 13 memory & context store tools | `server_memory.py` / `__main_memory__.py` |
+| Server | MCP tools | Actions (via `action_call`) | Entry Point |
+|--------|-----------|------------------------------|-------------|
+| `awlab-mcp` | `action_call` + `action_help` | 16 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`) | `server.py` / `__main__.py` |
 
 ---
 
@@ -18,11 +16,11 @@ Part of the [cline-ai-assisted-dev](../) system.
 graph TB
   subgraph SERVER["Python Package — mcp_server/"]
     direction LR
-    MCP_MAIN["server.py · server_plan.py · server_memory.py<br/>3 Entry Points"]
-    CFG["config.py<br/>Settings"]
+    MAIN["__main__.py / server.py<br/>Single Entry Point"]
+    DISP["modules/dispatcher.py<br/>action_call + action_help"]
+    REG["registry.py<br/>REGISTRY — 16 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
-    HELPERS["helpers/<br/>agent_recall · file_utils · registry_utils<br/>embeddings · hybrid_search · validation"]
-    MODS["modules/<br/>lifecycle · registration<br/>registration_plan · registration_memory"]
+    HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
 
   subgraph CLIENTS["MCP Consumers"]
@@ -33,15 +31,17 @@ graph TB
   subgraph EXTERNAL["External Systems"]
     FS[".ai/ Project Directories"]
     AG["agent-recall<br/>Knowledge Graph"]
+    CG["graphify<br/>Code Graph (.ai/codegraph)"]
   end
 
-  CL & CP -->|"stdio protocol"| MCP_MAIN
-  MCP_MAIN -->|"load"| CFG
-  MCP_MAIN -->|"register"| MODS
-  MODS -->|"expose"| TOOLS
+  CL & CP -->|"stdio protocol"| MAIN
+  MAIN -->|"register"| DISP
+  DISP -->|"route"| REG
+  REG -->|"resolve handlers"| TOOLS
   TOOLS -->|"use"| HELPERS
   HELPERS -->|"read/write"| FS
-  HELPERS -->|"subprocess"| AG
+  HELPERS -->|"import"| AG
+  HELPERS -->|"library import"| CG
 
   style SERVER fill:#3572A5,color:#fff
   style CLIENTS fill:#2d2d2d,color:#fff
@@ -52,7 +52,7 @@ graph TB
 
 ## Parameter-Driven Architecture (No Auto-Detection)
 
-All file-operating MCP tools accept an explicit **`workspace_path`** parameter — the AI Agent is responsible for passing the correct workspace root. The server performs **no automatic detection** of the project root.
+All file-operating actions accept an explicit **`workspace_path`** parameter — the AI Agent is responsible for passing the correct workspace root. The server performs **no automatic detection** of the project root.
 
 ```mermaid
 flowchart LR
@@ -95,7 +95,7 @@ python scripts/run.py build --target-os=all
 python scripts/run.py build --target-os=linux
 ```
 
-Built binaries at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, `dist/bin/awlab-memory.exe`.
+Built executable at `dist/bin/awlab-mcp.exe` (Windows) / `dist/bin/awlab-mcp` (Linux/macOS) — a single binary for all platforms.
 
 ### Configure in Cline
 
@@ -105,22 +105,6 @@ Built binaries at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, `dist/bin
     "awlab-mcp": {
       "type": "stdio",
       "command": "path_to/dist/awlab-mcp.exe",
-      "env": {
-        "LOG_ENABLED": "true",
-        "LOG_LEVEL": "INFO"
-      }
-    },
-    "awlab-plan": {
-      "type": "stdio",
-      "command": "path_to/dist/awlab-plan.exe",
-      "env": {
-        "LOG_ENABLED": "true",
-        "LOG_LEVEL": "INFO"
-      }
-    },
-    "awlab-memory": {
-      "type": "stdio",
-      "command": "path_to/dist/awlab-memory.exe",
       "env": {
         "LOG_ENABLED": "true",
         "LOG_LEVEL": "INFO"
@@ -136,84 +120,56 @@ Built binaries at `dist/bin/awlab-mcp.exe`, `dist/bin/awlab-plan.exe`, `dist/bin
 |--------|-------------|-----------|--------|
 | `awlab-mcp` | Installed CLI | `.venv\Scripts\awlab-mcp.exe` | *(none)* |
 | `awlab-mcp` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server"]` |
-| `awlab-plan` | Installed CLI | `.venv\Scripts\awlab-plan.exe` | *(none)* |
-| `awlab-plan` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server.server_plan"]` |
-| `awlab-memory` | Installed CLI | `.venv\Scripts\awlab-memory.exe` | *(none)* |
-| `awlab-memory` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server.server_memory"]` |
+| `awlab-mcp` | Built executable | `dist/bin/awlab-mcp.exe` | *(none)* |
 
 ---
 
-## Tools Reference (36 tools across 3 servers)
+## Tools Reference — action_call dispatcher (16 actions)
 
-### 🔧 awlab-mcp (6 tools — Utility & Context)
+Two MCP tools are exposed:
 
-| Tool | Description |
-|------|-------------|
-| `util_get_version` | Return MCP server build version & tag |
-| `util_get_project_meta` | Return OS, shell, server version, workspace metadata |
-| `ctx_get_snapshot` | Active plan + patterns + project ID snapshot |
-| `ctx_read_memory_bank` | Read allowed files from `.ai/memory-bank/` |
-| `ctx_scan_project` | Framework-aware project scan (entry points, relationships) |
-| `ctx_suggest_files` | Suggest relevant files for a task description |
+| MCP tool | Description |
+|----------|-------------|
+| `action_call(action, params?)` | Route any REGISTRY action; runs preconditions (idempotent) + pipeline (ordered) then the handler; returns `{success, action, result, executed, skipped}` |
+| `action_help(action?)` | Per-action usage (params, defaults, example, errors, preconditions, pipeline) or grouped overview |
 
-### 📋 awlab-plan (17 tools — Registry, Tasks & Workflows)
+### Actions by group
 
-**Registry Lifecycle**
+**📋 Plan / Registry / Tasks**
 
-| Tool | Description |
-|------|-------------|
-| `reg_list_registry` | Return Active/Paused/Completed plans as JSON |
-| `reg_switch_active_plan` | Change the active plan UUID in the registry |
-| `reg_validate_phase_gate` | Check if predecessor phase is complete |
-| `reg_get_next_eligible_task` | Find next non-blocked, non-terminal task |
-| `reg_mark_phase_complete` | Mark all tasks in a phase as completed |
-| `reg_resolve_deferred_tasks` | Re-evaluate ⏳ deferred tasks |
-| `reg_check_plan_completable` | Verify all tasks are in terminal states |
-| `reg_generate_retrospective` | Extract patterns from a completed plan |
+| Action | Description |
+|--------|-------------|
+| `task_read` | Parse `tasks.md` into structured/raw/minimal JSON |
+| `task_update` | Update task status (multi-level paths) with atomic rollback |
+| `plan_status` | Registry + next-eligible task + phase gate + completable check |
+| `plan_update` | Switch active plan / mark phase complete / resolve deferred tasks |
+| `wf` | List or execute named workflows |
 
-**Task Management**
+**🧠 Memory**
 
-| Tool | Description |
-|------|-------------|
-| `task_read_plan_tasks` | Parse `tasks.md` into structured/raw/minimal JSON |
-| `task_write_plan_tasks` | Write markdown content to `tasks.md` |
-| `task_update_status` | Update a single task's status marker |
-| `task_batch_update` | Atomically update multiple tasks with rollback |
-| `task_validate_transition` | Check if a status marker transition is legal |
-| `task_format_markdown` | Format task list as markdown |
+| Action | Description |
+|--------|-------------|
+| `mem_search` | Hybrid BM25+dense search (scope + project_id) |
+| `mem_write` | Create/tag/relate/store observations + entities |
+| `mem_read` | Node details or graph neighbourhood |
+| `mem_remove` | Archive entities / delete observations / delete relations |
 
-**Workflows & Utilities**
+**🕸️ Code Knowledge Graph**
 
-| Tool | Description |
-|------|-------------|
-| `wf_execute` | Execute a named workflow from `Cline/Workflows/` |
-| `wf_list` | List available workflow files |
-| `util_generate_mermaid` | Generate Mermaid flowchart from phases |
+| Action | Description |
+|--------|-------------|
+| `graph_build` | Build the code graph into `<root>/.ai/codegraph/` (AST-only, no LLM) |
+| `graph_status` | Freshness check {fresh, last_built, changed_files} |
+| `graph_query` | Search graph nodes by label/source/type |
+| `graph_path` | Shortest path (BFS) between two nodes |
+| `graph_explain` | Node details + direct neighbours with relations |
 
-### 🧠 awlab-memory (13 tools — Memory & Context Store)
+**⚙️ Context / Util**
 
-**Knowledge Graph**
-
-| Tool | Description |
-|------|-------------|
-| `mem_search` | Hybrid BM25+dense search (supports scope + project_id) |
-| `mem_store` | Store an observation (auto-creates entity if needed) |
-| `mem_create_entities` | Create new entities (people, concepts, patterns) |
-| `mem_tag_entity` | Attach context labels to an existing entity |
-| `mem_relate` | Declare a semantic association between entities |
-| `mem_fetch_node_details` | Query specific attributes of graph nodes |
-| `mem_read_graph` | Read the knowledge graph neighbourhood |
-| `mem_archive_entities` | Move entities to historical archive state |
-| `mem_delete_observations` | Remove specific observations from entities |
-| `mem_delete_relations` | Remove relations between entities |
-| `mem_list_patterns` | List all stored patterns |
-
-**Context Store (TTL-based)**
-
-| Tool | Description |
-|------|-------------|
-| `ctx_store` | Store context fragments with TTL-based expiry |
-| `ctx_get_fragment` | Retrieve topic-specific context without file reads |
+| Action | Description |
+|--------|-------------|
+| `ctx_info` | Active plan + patterns + project ID snapshot |
+| `util_info` | OS, shell, server version, build metadata |
 
 ---
 
@@ -242,18 +198,15 @@ DB_PATH=C:\custom\memory     # Override agent-recall DB location
 ```
 mcp_server/
 ├── __init__.py
-├── _version.py             # Version string (v1.1.0+build.065)
-├── server.py               # FastMCP entry point — awlab-mcp (6 tools)
-├── server_plan.py          # FastMCP entry point — awlab-plan (17 tools)
-├── server_memory.py        # FastMCP entry point — awlab-memory (13 tools)
-├── __main__.py             # Thin CLI entry point (awlab-mcp)
-├── __main_plan__.py        # CLI entry point (awlab-plan)
-├── __main_memory__.py      # CLI entry point (awlab-memory)
+├── _version.py             # Version string (v1.1.0+build.068)
+├── server.py               # Dev console entry (awlab-mcp)
+├── __main__.py             # PyInstaller entry — single executable
+├── registry.py             # REGISTRY — 16 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/
 │   ├── __init__.py
-│   ├── plan_tools.py       # Plan & task management
+│   ├── plan_tools/         # Plan & task management
 │   ├── memory_tools.py     # Memory operations
 │   ├── utils_tools.py      # Utility functions
 │   ├── file_tools.py       # File reading operations
@@ -263,13 +216,15 @@ mcp_server/
 │       ├── scanner.py
 │       ├── suggest.py
 │       ├── _cache.py
-│       └── _memory_search.py
+│       ├── _memory_search.py
+│       └── _registry_parser.py
 ├── helpers/
 │   ├── __init__.py         # Re-exports all helpers
-│   ├── agent_recall.py     # agent-recall subprocess wrapper
+│   ├── agent_recall.py     # agent-recall bridge (library import)
+│   ├── graphify_bridge.py  # Code knowledge graph (graphifyy, AST-only)
 │   ├── file_utils.py       # File I/O and markdown parsing
 │   ├── registry_utils.py   # Registry.md parsing and updating
-│   ├── embeddings.py       # FastEmbed integration (optional)
+│   ├── embeddings.py       # FastEmbed integration
 │   ├── hybrid_search.py    # BM25 + dense re-ranking
 │   ├── logger.py           # Professional logger with tool scoping
 │   ├── validation.py       # UUID, status, phase validation
@@ -278,9 +233,8 @@ mcp_server/
 └── modules/
     ├── __init__.py
     ├── lifecycle.py        # Server lifecycle — FastMCP app + run_server()
-    ├── registration.py     # Tool registration — awlab-mcp tools
-    ├── registration_plan.py  # Tool registration — awlab-plan tools
-    └── registration_memory.py # Tool registration — awlab-memory tools
+    ├── dispatcher.py       # action_call + action_help (routes via REGISTRY)
+    └── registration.py     # Tool registration — registers the dispatcher
 ```
 
 ---

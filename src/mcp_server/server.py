@@ -6,8 +6,8 @@ This file exists only to trigger registration and provide backward-compatible ac
 to the ``mcp`` instance, ``_wrap`` helper, and ``main()`` entry point.
 """
 
-from .modules.lifecycle import mcp, main
 from .modules import registration  # noqa: F401 — triggers @mcp.tool() decorators at import time
+from .modules.lifecycle import main
 
 if __name__ == "__main__":
     main()

@@ -14,7 +14,7 @@ _src = Path(__file__).resolve().parent.parent  # src/
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
-from mcp_server.modules.lifecycle import mcp, main  # noqa: E402
-from mcp_server.modules import registration  # noqa: F401 — triggers @mcp.tool() decorators at import time
+from mcp_server.modules import registration  # noqa: E402, F401 — triggers @mcp.tool() decorators at import time
+from mcp_server.modules.lifecycle import main  # noqa: E402
 
 main()

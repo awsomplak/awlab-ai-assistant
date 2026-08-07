@@ -12,13 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
-from .file_utils import (
-    write_file_safe,
-    read_registry_md
-)
+from .file_utils import read_registry_md, write_file_safe
 from .response import (
-    ok_obj,
     fail_obj,
+    ok_obj,
     resp_obj,
 )
 
@@ -32,6 +29,7 @@ TABLE_SEPARATOR = "|------|--------|------|---------|"
 TABLE_HEADER_PATTERN = re.compile(r"^\|?\s*(UUID|Status|Date|Summary)\s*\|")
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
 TABLE_SEPARATOR_PATTERN = re.compile(r"^\|?\s*[-:]+\s*\|")
+
 
 def parse_table_rows(content: str) -> list[dict[str, str]]:
     """
@@ -55,12 +53,14 @@ def parse_table_rows(content: str) -> list[dict[str, str]]:
             # Parse columns: split by | and trim
             parts = [p.strip() for p in stripped.split("|") if p.strip()]
             if len(parts) >= 4:
-                rows.append({
-                    "uuid": parts[0].strip(),
-                    "status": parts[1].strip(),
-                    "date": parts[2].strip(),
-                    "summary": parts[3].strip(),
-                })
+                rows.append(
+                    {
+                        "uuid": parts[0].strip(),
+                        "status": parts[1].strip(),
+                        "date": parts[2].strip(),
+                        "summary": parts[3].strip(),
+                    }
+                )
     return rows
 
 
@@ -268,7 +268,7 @@ def load_registry(workspace_path: str | Path = "") -> dict[str, list[dict[str, s
     Returns:
         dic[str, str]:
         { "active": [...], "paused": [...], "completed": [...] }
-        
+
         Returns empty structure if registry not found.
     """
     registry = parse_registry(workspace_path=workspace_path)
@@ -320,4 +320,3 @@ def list_completed_plans(workspace_path: str | Path = "") -> list[dict[str, str]
     """
     registry = load_registry(workspace_path=workspace_path)
     return registry.get("completed", [])
-

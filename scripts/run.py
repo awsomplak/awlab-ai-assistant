@@ -14,6 +14,7 @@ Commands:
     build           Build Python package + compile rules/skills → /dist
     publish         Publish /dist to AI assistant locations
     test            Run the test suite
+    lint            Run lint & code hygiene (ruff)
     compile-rules   Compile rules to assistant-specific profiles
     help            Show this message or help for a specific command
 """
@@ -26,6 +27,17 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Windows consoles default to cp1252, which cannot encode the box-drawing /
+# checkmark glyphs used in this CLI. Reconfigure stdout/stderr to UTF-8 so the
+# CLI output never crashes with UnicodeEncodeError (e.g. "✓", "→", "═").
+# `reconfigure` is a real IOBase method at runtime but is missing from the
+# `TextIO` stub in typeshed, hence the targeted ignore.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Constants
@@ -40,41 +52,67 @@ PYTHON_SRC = ROOT / "src" / "mcp_server"
 TEST_DIR = ROOT / "tests"
 
 RULE_ORDER = [
-    "00-meta.md", "05-environment.md", "02-plan-artifacts.md",
-    "01-memory-bank.md", "03-token-strategies.md", "06-project-scanner.md",
-    "07-model-router.md", "04-commands.md",
-    "08-project-id.md", "09-user-patterns.md", "10-pattern-lifecycle.md",
-    "11-agent-memory-isolation.md", "12-agent-mcp-workspace-path.md",
+    "00-meta.md",
+    "05-environment.md",
+    "02-plan-artifacts.md",
+    "01-memory-bank.md",
+    "03-token-strategies.md",
+    "06-project-scanner.md",
+    "07-model-router.md",
+    "04-commands.md",
+    "08-project-id.md",
+    "09-user-patterns.md",
+    "10-pattern-lifecycle.md",
+    "11-agent-memory-isolation.md",
+    "12-agent-mcp-workspace-path.md",
 ]
 
-MCP_TOOLS = """
-  ── awlab-mcp (Utility & Context) ──
-    ctx_get_snapshot, ctx_read_memory_bank, ctx_scan_project,
-    ctx_suggest_files, util_get_version, util_get_project_meta
+# Static fallback used only when mcp_server is not importable (never drifts in
+# practice — the REGISTRY is the source of truth, see _mcp_tools_text()).
+_MCP_TOOLS_FALLBACK = """
+  ── awlab-mcp (single executable — Windows/Linux/macOS) ──
+    Exposes exactly 2 tools on the MCP surface:
 
-  ── awlab-plan (Registry, Tasks & Workflows) ──
-    reg_list_registry, reg_switch_active_plan, reg_validate_phase_gate,
-    reg_get_next_eligible_task, reg_mark_phase_complete,
-    reg_resolve_deferred_tasks, reg_check_plan_completable,
-    reg_generate_retrospective,
-    task_read_plan_tasks, task_update_status, task_batch_update,
-    task_validate_transition, task_write_plan_tasks, task_format_markdown,
-    wf_execute, wf_list,
-    util_generate_mermaid
+      action_call(action, params)   route any REGISTRY action (task_*, plan_*,
+                                    mem_*, graph_*, ctx_*, util_*, wf)
+      action_help(action)           per-action usage / general help
 
-  ── awlab-memory (Memory & Context Store) ──
-    mem_search (unified — accepts project_id + scope + use_dense),
-    mem_create_entities, mem_tag_entity,
-    mem_relate, mem_fetch_node_details, mem_read_graph,
-    mem_archive_entities, mem_delete_observations, mem_delete_relations,
-    mem_store, mem_list_patterns,
-    ctx_store, ctx_get_fragment
+    The full action surface (16 actions) is driven by src/mcp_server/registry.py
+    — a single source of truth, no separate servers / binaries.
 """
+
+
+def _mcp_tools_text() -> str:
+    """Generate the MCP-tools header from the REGISTRY (no drift).
+
+    Reuses ``build_help`` from src/mcp_server/registry.py so the header always
+    lists the exact 16-action surface. Falls back to a static string only if
+    the package is not importable (e.g. before ``pip install -e .``).
+    """
+    try:
+        from mcp_server.registry import build_help
+
+        overview = build_help()  # grouped list of every action
+        return (
+            "\n  ── awlab-mcp (single executable — Windows/Linux/macOS) ──\n"
+            "    Exposes exactly 2 tools on the MCP surface:\n\n"
+            "      action_call(action, params)   route any REGISTRY action\n"
+            "      action_help(action)           per-action usage / general help\n\n"
+            "    Full action surface (generated from src/mcp_server/registry.py):\n\n"
+            + "\n".join("    " + line if line else "" for line in overview.splitlines())
+            + "\n"
+        )
+    except ImportError:
+        return _MCP_TOOLS_FALLBACK
+
+
+MCP_TOOLS = _mcp_tools_text()
 
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Terminal Helpers
 # ══════════════════════════════════════════════════════════════════════════
+
 
 class Style:
     BOLD = "\033[1m"
@@ -118,6 +156,7 @@ def _header(title: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 #  Help
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def cmd_help(command: str | None = None) -> None:
     texts = {
@@ -210,6 +249,7 @@ Output:
 #  Compile Rules
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _load_rules() -> list[dict]:
     """Load raw rule content, preserving HTML comments."""
     rules = []
@@ -230,8 +270,10 @@ def _strip_html_comments(text: str) -> str:
 
 def _offset_headings(text: str, levels: int = 1) -> str:
     """Offset all markdown headings by N levels (e.g. ``##`` \u2192 ``####``)."""
+
     def _repl(m: re.Match) -> str:
         return "#" * levels + m.group(0)
+
     return re.sub(r"^#+", _repl, text, flags=re.MULTILINE)
 
 
@@ -258,6 +300,7 @@ def _load_skills() -> list[dict]:
 #  Link Rewriting — heading anchors for compiled outputs
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _rewrite_refs(text: str) -> str:
     """Convert file-based rule references to heading anchors.
 
@@ -269,11 +312,12 @@ def _rewrite_refs(text: str) -> str:
     (rule files). Leaves project files (tasks.md, plan.md, registry.md,
     environment.md, notes.md) and template files untouched.
     """
+
     def _replace(m: re.Match) -> str:
         full = m.group(0)
         name = m.group(1)  # captured base name (e.g. "00-meta")
         # Replace only inside backtick or bold markers
-        head = full[:m.start(1) - 1] if m.start(1) > 0 else ""
+        head = full[: m.start(1) - 1] if m.start(1) > 0 else ""
         return f"{head}#{name}"
 
     # Match `NN-name.md` or **NN-name.md** — only rule-file style names
@@ -287,6 +331,7 @@ def _rewrite_refs(text: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════
 #  Per-Agent Compilation Pipeline
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def _copy_skills(skills: list[dict], dest_dir: Path, label: str) -> None:
     """Copy all skills into a per-agent skills directory."""
@@ -313,7 +358,9 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
     _copy_skills(skills, cline_dir, "cline/skills/")
 
     # .clinerules monolith (project-level) \u2014 strip HTML comments + rewrite refs
-    stripped = [{"filename": r["filename"], "content": _rewrite_refs(_strip_html_comments(r["content"]))} for r in rules]
+    stripped = [
+        {"filename": r["filename"], "content": _rewrite_refs(_strip_html_comments(r["content"]))} for r in rules
+    ]
     unified = _build_unified(stripped)
     (profiles_dir / ".clinerules").write_text(
         f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n## Available MCP Tools\n{MCP_TOOLS}\n", "utf-8"
@@ -328,7 +375,7 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
 
     descriptions = {
         "00-meta": "Rule priority, conflict resolution, and deep analysis protocol",
-        "01-memory-bank": "Knowledge-graph memory operations via awlab-memory MCP tools",
+        "01-memory-bank": "Knowledge-graph memory operations via awlab-mcp mem_* actions",
         "02-plan-artifacts": "Plan registry, task tracking, phase execution format",
         "03-token-strategies": "Context optimization, token budgets, file loading discipline",
         "04-commands": "Session commands and project scanning reference",
@@ -365,8 +412,7 @@ def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -
     unified = _build_unified(processed)
 
     (claude_dir / "CLAUDE.md").write_text(
-        f"# Claude Code — AWLab-ID\n\n"
-        f"MCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n", "utf-8"
+        f"# Claude Code — AWLab-ID\n\nMCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n", "utf-8"
     )
     _ok("claude/CLAUDE.md  (monolith, comments stripped, heading anchors)")
 
@@ -398,7 +444,8 @@ def _compile_hermes(rules: list[dict], skills: list[dict], profiles_dir: Path) -
         f"---\n"
         f"\n"
         f"# AWLab-ID Rules\n\n"
-        f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n", "utf-8"
+        f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n",
+        "utf-8",
     )
     _ok("hermes/skills/awlab-rules/SKILL.md  (skill-packaged rules, comments stripped, anchors)")
 
@@ -437,9 +484,11 @@ def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
 #  Build
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _detect_current_os() -> str:
     """Detect the current operating system."""
     import platform
+
     sys_platform = platform.system().lower()
     if sys_platform == "windows":
         return "windows"
@@ -451,6 +500,18 @@ def _detect_current_os() -> str:
 def _exe_name(base: str, target_os: str) -> str:
     """Return the executable filename for the given OS."""
     return f"{base}.exe" if target_os == "windows" else base
+
+
+def _stop_awlab_processes() -> None:
+    """Stop stale awlab-mcp server processes so /dist isn't locked.
+
+    Only ``awlab-mcp`` exists now (single executable — the legacy awlab-plan /
+    awlab-memory binaries were removed).
+    """
+    if sys.platform.startswith("win"):
+        subprocess.run(["taskkill", "/F", "/IM", "awlab-mcp.exe"], capture_output=True)
+    else:
+        subprocess.run(["pkill", "-f", "awlab-mcp"], capture_output=True)
 
 
 def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "auto") -> None:
@@ -469,6 +530,9 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
     _info(f"Host OS: {current_os}")
     _info(f"Target(s): {', '.join(build_targets)}")
 
+    # Auto-stop stale server processes so /dist isn't locked (stale binaries hold the lock)
+    _stop_awlab_processes()
+
     # Always clean /dist before build to prevent stale/mixed artifacts
     try:
         if DIST.exists():
@@ -477,7 +541,7 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         DIST.mkdir(parents=True, exist_ok=True)
     except PermissionError:
         _warn("Permission denied while cleaning /dist")
-        _warn("The awlab-mcp binary may still be running — please stop it first, then retry.")
+        _warn("A stale awlab-* process is still holding the lock. Stop it (scripts/stop-mcp-servers.ps1) and retry.")
         sys.exit(1)
 
     # 1. Bump build tag
@@ -488,7 +552,8 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         new = f"build.{int(m.group(1)) + 1:03d}"
         raw = raw.replace(m.group(0), f'__build_tag__ = "{new}"')
         vf.write_text(raw, "utf-8")
-        _info(f"Tag: {m.group(0).split('=')[1].strip().strip('\"')} → {new}")
+        old_tag = m.group(0).split("=")[1].strip().strip('"')
+        _info(f"Tag: {old_tag} -> {new}")
 
     # 2. Compile rules → dist/profiles/{agent}/
     if not no_rules:
@@ -507,7 +572,9 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         _info("Building Python package...")
         r = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-e", str(ROOT)],
-            capture_output=True, text=True, cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
         )
         if r.returncode:
             _fail(f"pip install failed:\n{r.stderr}")
@@ -515,7 +582,11 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         py_dist = DIST / "bin"
         py_dist.mkdir(parents=True, exist_ok=True)
 
-        pe = shutil.which("pyinstaller") or shutil.which("pyinstaller.exe") or (ROOT / ".venv" / "Scripts" / "pyinstaller.exe")
+        pe = (
+            shutil.which("pyinstaller")
+            or shutil.which("pyinstaller.exe")
+            or (ROOT / ".venv" / "Scripts" / "pyinstaller.exe")
+        )
         has_pyinstaller = pe and Path(pe).exists()
 
         for target in build_targets:
@@ -530,7 +601,7 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                     f"#\n"
                     f"# Auto-generated by run.py build --target-os={target}\n"
                     f"# (Replace paths if the project root differs)\n",
-                    "utf-8"
+                    "utf-8",
                 )
                 _detail(f"  Spec: {spec_path.name}")
                 continue
@@ -544,28 +615,34 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                         shutil.copy2(f, d)
                 continue
 
-            # ── Build 3 separate MCP server binaries ─────────────────────
+            # ── Build single consolidated MCP server binary ──────────────
+            # One executable exposes action_call + action_help; the REGISTRY routes
+            # to ALL actions (plan / memory / context / util / graph), so a single
+            # binary is sufficient. Hidden imports cover every REGISTRY handler module.
             BINARIES = [
-                ("awlab-mcp", "__main__.py", [
-                    "mcp_server", "mcp_server.config",
-                    "mcp_server.modules.lifecycle", "mcp_server.modules.registration",
-                    "mcp_server.helpers", "mcp_server.tools",
-                    "mcp_server.tools.context_tools", "mcp_server.tools.file_tools",
-                    "mcp_server.tools.utils_tools",
-                ]),
-                ("awlab-plan", "__main_plan__.py", [
-                    "mcp_server", "mcp_server.config",
-                    "mcp_server.modules.lifecycle", "mcp_server.modules.registration_plan",
-                    "mcp_server.helpers", "mcp_server.tools",
-                    "mcp_server.tools.plan_tools", "mcp_server.tools.utils_tools",
-                ]),
-                ("awlab-memory", "__main_memory__.py", [
-                    "mcp_server", "mcp_server.config",
-                    "mcp_server.modules.lifecycle", "mcp_server.modules.registration_memory",
-                    "mcp_server.helpers",
-                    "mcp_server.tools.context_tools",
-                    "mcp_server.helpers.hybrid_search", "mcp_server.helpers.embeddings",
-                ]),
+                (
+                    "awlab-mcp",
+                    "__main__.py",
+                    [
+                        "mcp_server",
+                        "mcp_server.config",
+                        "mcp_server.modules",
+                        "mcp_server.modules.lifecycle",
+                        "mcp_server.modules.registration",
+                        "mcp_server.modules.dispatcher",
+                        "mcp_server.registry",
+                        "mcp_server.helpers",
+                        "mcp_server.helpers.agent_recall",
+                        "mcp_server.helpers.hybrid_search",
+                        "mcp_server.helpers.embeddings",
+                        "mcp_server.tools",
+                        "mcp_server.tools.context_tools",
+                        "mcp_server.tools.file_tools",
+                        "mcp_server.tools.utils_tools",
+                        "mcp_server.tools.plan_tools",
+                        "mcp_server.tools.memory_tools",
+                    ],
+                ),
             ]
 
             pkg_src = str(PYTHON_SRC)
@@ -576,17 +653,26 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                 _info(f"Building {bin_name} for {target}...")
                 exe_name = _exe_name(bin_name, target)
                 cmd = [
-                    str(pe), "--onefile", "--distpath", str(py_dist),
-                    "--name", bin_name,
-                    "--paths", str(PYTHON_SRC.parent),
-                    "--add-data", f"{pkg_src}{sep}{pkg_dest}",
+                    str(pe),
+                    "--onefile",
+                    "--distpath",
+                    str(py_dist),
+                    "--name",
+                    bin_name,
+                    "--paths",
+                    str(PYTHON_SRC.parent),
+                    "--add-data",
+                    f"{pkg_src}{sep}{pkg_dest}",
                 ]
                 for hi in hidden_imports:
                     cmd.extend(["--hidden-import", hi])
                 cmd.append(str(PYTHON_SRC / entry_module))
 
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, cwd=str(ROOT),
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(ROOT),
                 )
 
                 # Clean PyInstaller per-binary artifacts
@@ -610,10 +696,17 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
             pass
 
     # 4. Manifest
-    (DIST / "build-manifest.json").write_text(json.dumps({
-        "version": _get_version(), "buildTag": _get_build_tag(),
-        "buildTime": datetime.now(timezone.utc).isoformat(),
-    }, indent=2), "utf-8")
+    (DIST / "build-manifest.json").write_text(
+        json.dumps(
+            {
+                "version": _get_version(),
+                "buildTag": _get_build_tag(),
+                "buildTime": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+        ),
+        "utf-8",
+    )
 
     print(f"\n  {Style.GREEN}{Style.BOLD}\u2713 Build complete{Style.RESET}  {Style.DIM}\u2192 {DIST}{Style.RESET}")
 
@@ -623,21 +716,33 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
 # ══════════════════════════════════════════════════════════════════════════
 
 PUBLISH_MAP = {
-    "cline": ("Cline", [
-        ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
-        ("profiles/cline/skills", "{home}/.agents/skills"),
-    ]),
-    "copilot": ("Copilot", [
-        ("profiles/copilot", "{home}/.copilot/instructions"),
-        ("profiles/cline/skills", "{home}/.agents/skills"),
-    ]),
-    "claude": ("Claude", [
-        ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
-        ("profiles/claude/skills", "{home}/.claude/skills"),
-    ]),
-    "hermes": ("Hermes", [
-        ("profiles/hermes/skills", "{home}/.hermes/skills"),
-    ]),
+    "cline": (
+        "Cline",
+        [
+            ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
+            ("profiles/cline/skills", "{home}/.agents/skills"),
+        ],
+    ),
+    "copilot": (
+        "Copilot",
+        [
+            ("profiles/copilot", "{home}/.copilot/instructions"),
+            ("profiles/cline/skills", "{home}/.agents/skills"),
+        ],
+    ),
+    "claude": (
+        "Claude",
+        [
+            ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
+            ("profiles/claude/skills", "{home}/.claude/skills"),
+        ],
+    ),
+    "hermes": (
+        "Hermes",
+        [
+            ("profiles/hermes/skills", "{home}/.hermes/skills"),
+        ],
+    ),
 }
 
 
@@ -753,6 +858,7 @@ def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = Fal
 #  Test
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def cmd_test(pytest_args: list[str] | None = None) -> None:
     _header("Test Suite")
     cmd = [sys.executable, "-m", "pytest", str(TEST_DIR), "-q"]
@@ -762,13 +868,29 @@ def cmd_test(pytest_args: list[str] | None = None) -> None:
     sys.exit(r.returncode)
 
 
+def cmd_lint(fix: bool = False, apply_format: bool = False, paths: list[str] | None = None) -> None:
+    """Run the lint & code-hygiene script (ruff)."""
+    _header("Lint & Code Hygiene")
+    cmd = [sys.executable, str(ROOT / "scripts" / "lint.py")]
+    if fix:
+        cmd.append("--fix")
+    if apply_format:
+        cmd.append("--format")
+    if paths:
+        cmd.extend(paths)
+    r = subprocess.run(cmd, cwd=str(ROOT))
+    sys.exit(r.returncode)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════════════
 
+
 def _get_version() -> str:
     try:
         from mcp_server._version import __version__
+
         return __version__
     except ImportError:
         return "0.0.0"
@@ -777,6 +899,7 @@ def _get_version() -> str:
 def _get_build_tag() -> str:
     try:
         from mcp_server._version import __build_tag__
+
         return __build_tag__
     except ImportError:
         return "build.000"
@@ -785,6 +908,7 @@ def _get_build_tag() -> str:
 # ══════════════════════════════════════════════════════════════════════════
 #  CLI
 # ══════════════════════════════════════════════════════════════════════════
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -800,6 +924,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("build", ["--no-bin", "--no-rules", "--target-os"], "Build everything to /dist"),
         ("publish", ["--target", "--skip-build", "--force", "--uninstall"], "Publish /dist to AI assistants"),
         ("test", ["pytest_args"], "Run test suite"),
+        ("lint", ["--fix", "--format", "paths"], "Run lint & code hygiene (ruff)"),
         ("compile-rules", [], "Compile rules to assistant profiles"),
         ("help", ["help_command"], "Show help for a command"),
     ]:
@@ -813,16 +938,25 @@ def build_parser() -> argparse.ArgumentParser:
                 sp.add_argument("--uninstall", action="store_true")
             elif o == "--force":
                 sp.add_argument("--force", action="store_true")
+            elif o == "--fix":
+                sp.add_argument("--fix", action="store_true")
+            elif o == "--format":
+                sp.add_argument("--format", action="store_true")
             elif o == "--no-bin":
                 sp.add_argument("--no-bin", action="store_true")
             elif o == "--no-rules":
                 sp.add_argument("--no-rules", action="store_true")
             elif o == "--target-os":
-                sp.add_argument("--target-os", default="auto",
+                sp.add_argument(
+                    "--target-os",
+                    default="auto",
                     choices=["auto", "windows", "linux", "macos", "all"],
-                    help="Target OS for executable (auto=current OS)")
+                    help="Target OS for executable (auto=current OS)",
+                )
             elif o == "pytest_args":
                 sp.add_argument("pytest_args", nargs=argparse.REMAINDER)
+            elif o == "paths":
+                sp.add_argument("paths", nargs=argparse.REMAINDER)
             elif o == "help_command":
                 sp.add_argument("help_command", nargs="?")
 
@@ -846,6 +980,8 @@ def main() -> None:
             cmd_publish(target=args.target, skip_build=args.skip_build, force=args.force, uninstall=args.uninstall)
         case "test":
             cmd_test(args.pytest_args)
+        case "lint":
+            cmd_lint(fix=args.fix, apply_format=args.format, paths=args.paths)
         case "compile-rules":
             cmd_compile_rules()
         case "help":
