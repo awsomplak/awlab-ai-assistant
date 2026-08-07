@@ -18,23 +18,28 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..config import settings
 from .response import fail_obj, ok_obj
 
-# graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. That works
-# under the venv, but inside the PyInstaller-frozen onefile exe the pool workers
-# still hang on a full-corpus extract (even with ``multiprocessing.freeze_support``
-# + the entry guard in ``__main__.py``). Since incremental rebuilds — the hot path
-# — extract only a few files (below graphify's parallel threshold) and never
-# benefit from parallelism, fall back to single-process extraction when frozen.
-# Full cold rebuilds stay single-process (~13s), which is rare and acceptable.
-_PARALLEL_EXTRACT = not getattr(sys, "frozen", False)
+
+# graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. Default OFF:
+# sequential is proven faster at realistic project scale (Windows spawn overhead
+# exceeds the small parallelizable portion), and the pool hangs in the frozen
+# onefile exe. Opt in for very large corpora via the central config
+# ``settings.graph_parallel`` (env ``GRAPH_PARALLEL=1`` or config.json).
+def _use_parallel() -> bool:
+    """Whether graphify extraction should use the ProcessPoolExecutor.
+
+    Single source of truth: ``settings.graph_parallel`` (see ``config.py``) — so
+    the toggle lives in one place alongside log-level and other env settings.
+    """
+    return settings.graph_parallel
 
 
 # A stale graph whose rebuild would be heavy (first build or many changed files)
@@ -557,14 +562,14 @@ def _build_graph_impl(
                 to_extract,
                 root=root,
                 cache_root=root,
-                parallel=_PARALLEL_EXTRACT,
+                parallel=_use_parallel(),
                 resolution_context_nodes=prev_graph["nodes"],
                 resolution_context_edges=prev_graph["edges"],
             )
             extraction = _merge_extractions(prev_graph, fresh, changed, rel_files)
         else:
             # Full build (first time, or nearly everything changed).
-            extraction = g["extract"](files, root=root, cache_root=root, parallel=_PARALLEL_EXTRACT)
+            extraction = g["extract"](files, root=root, cache_root=root, parallel=_use_parallel())
 
         graph = g["build_from_json"](extraction, root=root, directed=directed)
         communities = g["cluster"](graph)

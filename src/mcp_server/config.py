@@ -187,6 +187,18 @@ class _Settings:
         """Log level string (e.g. "info", "debug"). Default from env or "info"."""
         return self._get("LOG_LEVEL", "INFO").strip().lower()
 
+    @cached_property
+    def graph_parallel(self) -> bool:
+        """Whether graphify extraction uses the ProcessPoolExecutor (default OFF).
+
+        Sequential extraction is proven faster at realistic project scale (Windows
+        process-spawn overhead exceeds the small parallelizable portion), and the
+        pool hangs in the frozen onefile exe. Opt in for very large corpora via
+        ``GRAPH_PARALLEL=1`` (env var or config.json).
+        """
+        val = self._get("GRAPH_PARALLEL", "false")
+        return val.strip().lower() in ("true", "1", "yes")
+
     # ── .ai/ directory resolvers ────────────────────────────────────────────
 
     def get_ai_dir(self, workspace_path: str | Path = "") -> Path:
