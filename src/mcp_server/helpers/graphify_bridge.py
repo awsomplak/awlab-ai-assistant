@@ -25,6 +25,15 @@ from typing import Any
 
 from .response import fail_obj, ok_obj
 
+# graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. The frozen
+# exe supports this via ``multiprocessing.freeze_support()`` in ``__main__.py``
+# (worker children re-execute the binary and route into the pool bootstrap), so
+# parallelism is always enabled: full rebuilds extract across cores, and
+# incremental rebuilds stay single-pass anyway (few files, below graphify's
+# parallel threshold).
+_PARALLEL_EXTRACT = True
+
+
 # Directories never indexed as source (mirrors graphify's own noise exclusions).
 _NOISE_DIRS = {
     ".git",
@@ -181,6 +190,28 @@ def _write_feedback(
         )
     except Exception:  # noqa: BLE001 — best-effort, never break the build
         pass
+
+
+def _git_head_safe(root: Path) -> str:
+    """Return the current git HEAD commit hash via pure file reads (no subprocess).
+
+    graphify's ``to_json`` calls ``_git_head()`` which spawns ``git``; that
+    subprocess deadlocks inside the frozen exe on Windows (``communicate``
+    timeout hangs on the reader-thread join), freezing ``graph_build``. Reading
+    ``.git/HEAD`` directly avoids subprocess entirely and keeps the
+    ``built_at_commit`` metadata. Returns "" when not a git repo or on any error.
+    """
+    try:
+        head = root / ".git" / "HEAD"
+        if not head.is_file():
+            return ""
+        ref = head.read_text(encoding="utf-8").strip()
+        if ref.startswith("ref:"):
+            ref_path = root / ".git" / ref[5:].strip()
+            return ref_path.read_text(encoding="utf-8").strip()[:40] if ref_path.is_file() else ""
+        return ref[:40]
+    except Exception:  # noqa: BLE001 — best-effort metadata, never break the build
+        return ""
 
 
 def _graph_from_json(out_dir: Path) -> dict[str, Any] | None:
@@ -407,14 +438,14 @@ def build_graph(
                 to_extract,
                 root=root,
                 cache_root=root,
-                parallel=True,
+                parallel=_PARALLEL_EXTRACT,
                 resolution_context_nodes=prev_graph["nodes"],
                 resolution_context_edges=prev_graph["edges"],
             )
             extraction = _merge_extractions(prev_graph, fresh, changed, rel_files)
         else:
             # Full build (first time, or nearly everything changed).
-            extraction = g["extract"](files, root=root, cache_root=root, parallel=True)
+            extraction = g["extract"](files, root=root, cache_root=root, parallel=_PARALLEL_EXTRACT)
 
         graph = g["build_from_json"](extraction, root=root, directed=directed)
         communities = g["cluster"](graph)
@@ -425,7 +456,16 @@ def build_graph(
         # graphify's shrink guard would otherwise refuse to overwrite and stale
         # nodes would persist. The merge is fully controlled (unchanged files
         # carried over from the prior graph), so the reduction is trusted here.
-        g["to_json"](graph, communities, str(graph_path), force=incremental)
+        # ``built_at_commit`` is passed explicitly so graphify skips its
+        # subprocess ``git`` call, which deadlocks in the frozen exe (see
+        # _git_head_safe).
+        g["to_json"](
+            graph,
+            communities,
+            str(graph_path),
+            force=incremental,
+            built_at_commit=_git_head_safe(root),
+        )
 
         artifacts = {"graph.json": str(graph_path)}
         if include_html:
@@ -543,14 +583,28 @@ def _load_graph(workspace_path: str | Path, root: str | Path | None = None) -> d
 
 
 def _find_node_id(data: dict[str, Any], term: str) -> str | None:
-    """Find a node id by exact label match, else first substring label match."""
+    """Find a node id by label, in order of specificity:
+
+    1. Exact label match (case-insensitive).
+    2. Function-name exact match — the term matches a label after stripping a
+       trailing ``()``/``(...)`` call signature (e.g. ``graph_status`` matches
+       the node labeled ``graph_status()``). Without this, ``graph_path`` could
+       resolve ``graph_status`` to an unrelated node whose label merely
+       *contains* the term (e.g. a test named ``test_graph_status_...``).
+    3. First substring label match (fallback).
+    """
     t = (term or "").strip().lower()
     if not t:
         return None
-    for n in data.get("nodes", []):
+    nodes = data.get("nodes", [])
+    for n in nodes:
         if (n.get("label") or "").lower() == t:
             return n.get("id")
-    for n in data.get("nodes", []):
+    for n in nodes:
+        label = (n.get("label") or "").lower()
+        if label.split("(", 1)[0].strip() == t:
+            return n.get("id")
+    for n in nodes:
         if t in (n.get("label") or "").lower():
             return n.get("id")
     return None
