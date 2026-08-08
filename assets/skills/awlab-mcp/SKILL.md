@@ -43,6 +43,9 @@ responses include `executed`/`skipped` traces. Use `action_help(action)` for det
 - **mem_remove** — Archive entities or delete observations/relations (type-safe).
   - Params: workspace_path, project_id, names, entities, deletions, relations, store
   - Example: `action_call(action="mem_remove", params={"entities": [{"name": "X", "entityType": "concept"}]})`
+- **mem_replay** — Replay the offline cache (pending.jsonl): re-apply queued mutations.
+  - Params: workspace_path, dry_run
+  - Example: `action_call(action="mem_replay", params={"dry_run": True})`
 - **mem_search** — Hybrid BM25+dense search over memory (optionally by entity type).
   - Params: workspace_path, query, project_id, limit, use_dense, entity_type, scope, context, store
   - Example: `action_call(action="mem_search", params={"query": "registry schema"})`
@@ -57,6 +60,9 @@ responses include `executed`/`skipped` traces. Use `action_help(action)` for det
 - **plan_update** — Mutate plan/registry: switch, mark phase complete, resolve deferred, run retrospective.
   - Params: workspace_path, project_id, mode, plan_uuid, phase_number
   - Example: `action_call(action="plan_update", params={"mode": "mark_phase", "plan_uuid": "mcptool1", "phase_number": 2})`
+- **reg_update** — Single registry.md CRUD: create / update status / delete a plan row.
+  - Params: workspace_path, project_id, type, summary, uuid, status, confirmed
+  - Example: `action_call(action="reg_update", params={"type": "create", "summary": "New plan"})`
 
 ## task
 - **task_read** — Read a plan's tasks.md as structured/raw/minimal JSON.

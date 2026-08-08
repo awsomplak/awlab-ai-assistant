@@ -10,11 +10,12 @@
 1. **One source of truth** — `REGISTRY` drives tool description, `action_help`, and SKILL.md.
 2. **Server-owned orchestration** — the agent makes ONE call; the server guarantees the
    complete flow via `preconditions` + `pipeline`. No partial execution, ever.
-3. **Coarse, complete actions** — 36 partial tools → 19 actions (incl. `graph_*`, plus the
-   `mem_list_entities` + `mem_dedupe` memory-auditing actions and the `mem_replay` offline-cache replay).
+3. **Coarse, complete actions** — 36 partial tools → 20 actions (incl. `graph_*`, plus the
+   `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache
+   replay, and the `reg_update` single registry.md CRUD).
 4. **Reuse existing business logic as-is** — `src/mcp_server/tools/` handlers are called
    directly by name (`**params`). No logic rewrite.
-5. **Backward compatible** — the 36 legacy tool names map onto the 19 actions (32 as `aliases`;
+5. **Backward compatible** — the 36 legacy tool names map onto the 20 actions (32 as `aliases`;
    3 were dropped, 3 became canonical action names), so current skills/rules keep working during
    migration.
 6. **Loud failure + transparent trace** — every response includes `executed`/`skipped`;
@@ -231,7 +232,7 @@ with an in-flight background rebuild (returns `rebuilding: true`, no duplicate
 build). Builds are serialized per project (a per-workspace lock); different
 projects build concurrently.
 
-## 9. Backward-Compat Alias Map (36 → 18)
+## 9. Backward-Compat Alias Map (36 → 20)
 
 | New action | Absorbed old tools |
 |-----------|--------------------|

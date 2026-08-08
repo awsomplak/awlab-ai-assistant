@@ -1,7 +1,7 @@
 # AGENTS.md — read this first (session start)
 
 This project is **AWLab-ID** — an AI-Assisted Development System (rules, workflows, skills, MCP server).
-It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-mcp.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **16 actions** (plan, task, memory, graph, context, util, workflow).
+It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-mcp.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **20 actions** (plan, task, memory, graph, context, util, workflow).
 
 ## ⚠️ Session-start protocol (mandatory — prevents hallucination)
 

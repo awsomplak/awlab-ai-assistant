@@ -57,6 +57,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 |--------|---------|
 | `plan_status` | Read plan/registry status: active plan, next task, completeness, phase gate. |
 | `plan_update` | Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks. |
+| `reg_update` | Single registry.md CRUD: `create` (server-generated UUID, Active ⏹️, Date + immutable Created At) / `update` (status active\|paused\|complete → move to correct table, refresh Date, keep Created At, optional summary) / `delete` (strict user approval via `confirmed=true`). |
 
 ### graph
 
@@ -81,6 +82,14 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 - `graph_path` finds a **symbol-level** path first; if none exists it falls back to a **module-level**
   path over `imports_from`/`imports` edges (`mode: "module"`), and otherwise reports a rich
   "no path" diagnostic with both source files.
+- **Vite/JS path-alias imports are indexed** (`@/stores/auth`, `@pages/...`, `~/components/...`).
+  graphifyy only resolves relative imports + tsconfig/jsconfig `paths`; the bridge adds a
+  post-build pass that reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or
+  array form, including `fileURLToPath(new URL(...))` replacements) and emits the missing
+  `imports_from`/`imports` edges — so `.vue` SFCs and any `@/`-importing file stay connected
+  in `graph_path` even when no `tsconfig.json` exists. Alias-resolved edges carry
+  `alias_resolved: true`; the pass is idempotent and also self-heals previously-built graphs
+  (no full rebuild needed).
 
 #### Graph freshness contract
 

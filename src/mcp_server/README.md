@@ -1,12 +1,12 @@
 # AWLab-ID MCP Server
 
-**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 19 actions across plan management, memory operations, registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
+**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 20 actions across plan management, memory operations, registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
 
 Part of the [cline-ai-assisted-dev](../) system.
 
 | Server | MCP tools | Actions (via `action_call`) | Entry Point |
 |--------|-----------|------------------------------|-------------|
-| `awlab-mcp` | `action_call` + `action_help` | 19 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`) | `server.py` / `__main__.py` |
+| `awlab-mcp` | `action_call` + `action_help` | 20 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
 
 ---
 
@@ -18,7 +18,7 @@ graph TB
     direction LR
     MAIN["__main__.py / server.py<br/>Single Entry Point"]
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
-    REG["registry.py<br/>REGISTRY — 19 actions, single source of truth"]
+    REG["registry.py<br/>REGISTRY — 20 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
     HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
@@ -125,7 +125,7 @@ Built executable at `dist/bin/awlab-mcp.exe` (Windows) / `dist/bin/awlab-mcp` (L
 
 ---
 
-## Tools Reference — action_call dispatcher (19 actions)
+## Tools Reference — action_call dispatcher (20 actions)
 
 Two MCP tools are exposed:
 
@@ -144,6 +144,7 @@ Two MCP tools are exposed:
 | `task_update` | Update task status (multi-level paths) with atomic rollback |
 | `plan_status` | Registry + next-eligible task + phase gate + completable check |
 | `plan_update` | Switch active plan / mark phase complete / resolve deferred tasks |
+| `reg_update` | Single registry.md CRUD: create (server UUID) / update status (active\|paused\|complete) / delete (requires approval) |
 | `wf` | List or execute named workflows |
 
 **🧠 Memory**
@@ -207,7 +208,7 @@ mcp_server/
 ├── _version.py             # Version string (v3.0.1+build.093)
 ├── server.py               # Dev console entry (awlab-mcp)
 ├── __main__.py             # PyInstaller entry — single executable
-├── registry.py             # REGISTRY — 19 actions, single source of truth
+├── registry.py             # REGISTRY — 20 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/
