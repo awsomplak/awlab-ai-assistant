@@ -272,7 +272,8 @@ class TestPlanToolsIntegration:
 
     @pytest.mark.asyncio
     async def test_list_workflows_valid(self, temp_workspace):
-        result = await list_workflows(workspace_path=temp_workspace)
+        workflows_dir = Path(temp_workspace) / "Cline" / "Workflows"
+        result = await list_workflows(workspace_path=temp_workspace, workflows_dir=workflows_dir)
         result = json.loads(result) if isinstance(result, str) else result
         _assert_success(result)
 

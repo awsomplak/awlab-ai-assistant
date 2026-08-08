@@ -28,6 +28,7 @@ from ...helpers.registry_utils import (
     switch_active_plan as _switch_active_plan,
 )
 from .io import (
+    _pattern_name,
     store_memory_checkpoint,
     store_pattern_entity,
     sync_to_agent_recall,
@@ -355,9 +356,7 @@ async def resolve_deferred_tasks(
         task_status_map: dict[str, str] = {t["description"].lower(): t["status"] for t in tasks_in_phase}
 
         for task in deferred_tasks:
-            deps_met, deps_unmet = _evaluate_task_dependencies(
-                task, task_status_map, tasks_in_phase=tasks_in_phase
-            )
+            deps_met, deps_unmet = _evaluate_task_dependencies(task, task_status_map, tasks_in_phase=tasks_in_phase)
 
             task_path = _resolve_task_path(parsed, pnum, task["description"])
             entry: dict[str, Any] = {
@@ -573,9 +572,7 @@ def _get_next_eligible_task_local(content: str, phase_num: int) -> dict[str, Any
     eligible_tasks = []
     blocked_pending = []
     for task in all_pending:
-        deps_met, _ = _evaluate_task_dependencies(
-            task, task_status_map, tasks_in_phase=tasks_in_phase
-        )
+        deps_met, _ = _evaluate_task_dependencies(task, task_status_map, tasks_in_phase=tasks_in_phase)
         if len(deps_met) == len(task.get("dependencies", [])):
             eligible_tasks.append(task)
         else:
@@ -654,16 +651,19 @@ def _execute_workflow_step(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def _load_workflow(
-    workspace_path: str | Path, workflow_name: str, workflows_dir: Path | None = None
+    workflow_name: str,
+    workflows_dir: str | Path | None = None,
+    workspace_path: str | Path | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """
-    Load and parse a workflow file from <workspace_path>/Cline/Workflows/.
+    Load and parse a workflow file from the shared workflows directory.
 
     Args:
-        workspace_path: the workspace (project root) path.
         workflow_name: Name of the workflow file (with or without .md extension).
         workflows_dir: Optional override for the workflows directory.
-                       Defaults to ~/Documents/Cline/Workflows.
+                       Defaults to ~/.awlab-id/agent-memory/work-flows.
+        workspace_path: Unused (kept for signature compatibility); workflows are
+                        workspace-independent step definitions.
 
     Returns:
         (workflow_def, error_string_or_None)
@@ -676,12 +676,12 @@ def _load_workflow(
         workflow_name += ".md"
 
     if workflows_dir is None:
-        # workflows_dir = Path(workspace_path) / "Cline" / "Workflows"
-        workflows_dir = settings.user_home / "Documents" / "Cline" / "Workflows"
+        workflows_dir = settings.workflows_dir
+    workflows_dir = Path(workflows_dir)
     workflow_path = workflows_dir / workflow_name
 
     if not workflow_path.exists():
-        return None, f"Workflow '{workflow_name}' not found in Cline/Workflows/"
+        return None, f"Workflow '{workflow_name}' not found in {workflows_dir.name}/"
 
     content = read_utf8(workflow_path)
     if content is None:
@@ -691,31 +691,32 @@ def _load_workflow(
 
 
 async def execute_workflow(
-    workspace_path: str | Path,
+    workspace_path: str | Path | None = None,
     project_id: str | None = None,
     workflow_name: str = "",
     params: dict[str, Any] | None = None,
-    workflows_dir: Path | None = None,
+    workflows_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """
-    Execute a workflow by loading its definition from Cline/Workflows/ and running
-    the defined steps.
+    Execute a workflow by loading its definition from the shared workflows dir
+    and running the defined steps.
 
     Args:
-        workspace_path: the workspace (project root) path.
+        workspace_path: optional (workspace-independent); validated only when provided.
         workflow_name: Name of the workflow file (with or without .md extension).
         params: Optional parameters for the workflow.
         workflows_dir: Optional override for the workflows directory.
-                       Defaults to ~/Documents/Cline/Workflows.
+                       Defaults to ~/.awlab-id/agent-memory/work-flows.
 
     Returns:
         {success, workflow, steps, error}
     """
-    # Validate workspace_path
-    valid, err = validate_workspace_path(workspace_path)
-    if not valid:
-        return fail_obj(error=err)
-    workflow_def, error = _load_workflow(workspace_path, workflow_name, workflows_dir=workflows_dir)
+    # Validate workspace_path only when provided (workflows are workspace-free)
+    if workspace_path:
+        valid, err = validate_workspace_path(workspace_path)
+        if not valid:
+            return fail_obj(error=err)
+    workflow_def, error = _load_workflow(workflow_name, workflows_dir=workflows_dir)
     if error:
         return fail_obj(error=error)
 
@@ -826,32 +827,34 @@ def _parse_workflow_md(content: str, filename: str) -> dict[str, Any]:
 
 
 async def list_workflows(
-    workspace_path: str | Path,
+    workspace_path: str | Path | None = None,
     project_id: str | None = None,
-    workflows_dir: Path | None = None,
+    workflows_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """
-    List all available workflow files in the Cline/Workflows/ directory.
+    List all available workflow files in the shared workflows directory.
 
     Args:
-        workspace_path: the workspace (project root) path.
+        workspace_path: optional (workspace-independent); validated only when provided.
         workflows_dir: Optional override for the workflows directory.
-                       Defaults to <workspace_path>/Cline/Workflows.
+                       Defaults to ~/.awlab-id/agent-memory/work-flows.
 
     Returns:
         {success, workflows, count}
     """
-    # Validate workspace_path
-    valid, err = validate_workspace_path(workspace_path)
-    if not valid:
-        return fail_obj(error=err)
+    # Validate workspace_path only when provided (workflows are workspace-free)
+    if workspace_path:
+        valid, err = validate_workspace_path(workspace_path)
+        if not valid:
+            return fail_obj(error=err)
     if workflows_dir is None:
-        workflows_dir = Path(workspace_path) / "Cline" / "Workflows"
+        workflows_dir = settings.workflows_dir
+    workflows_dir = Path(workflows_dir)
 
     if not workflows_dir.exists():
         return {
             "success": False,
-            "error": f"Cline/Workflows/ directory not found at {workflows_dir}",
+            "error": f"Workflows directory not found at {workflows_dir}",
         }
 
     md_files = sorted(workflows_dir.glob("*.md"))
@@ -933,13 +936,13 @@ def _extract_patterns_from_tasks(
                 desc = task["description"]
                 clean_desc = re.sub(r"^Task\s+\d+:\s*", "", desc)
                 if clean_desc:
-                    short_name = clean_desc[:20].lower().replace(" ", "_")
-                    pattern_name = f"pattern_retro_{plan_uuid}_{phase['phase_number']}_{short_name}"
+                    pattern_name = _pattern_name("convention", clean_desc)
                     patterns.append(
                         {
                             "name": pattern_name,
                             "description": clean_desc,
                             "phase": phase["phase_number"],
+                            "context": phase.get("name", phase.get("title", "")),
                             "source_plan": plan_uuid,
                         }
                     )
@@ -966,6 +969,8 @@ def _store_retro_patterns(
             name=pattern["name"],
             observation=f"Retrospective pattern: {pattern['description']}",
             pattern_type="convention",
+            patterns=True,  # learned patterns live in the dedicated user-patterns store
+            context=pattern.get("context", ""),
         )
         if result.get("success"):
             stored.append(pattern["name"])
@@ -983,6 +988,7 @@ def _store_retro_patterns(
                             "relationType": "extracted_from",
                         }
                     ],
+                    patterns=True,
                 )
         except Exception as e:
             errors.append(f"Failed to link patterns: {e}")
