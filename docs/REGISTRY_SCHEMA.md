@@ -202,6 +202,8 @@ All three read the **same dict** — editing one entry updates every surface.
     "example": 'action_call(action="mem_search", query="registry schema", scope="project")',
     "aliases": ["mem_list_patterns"],             # list_patterns == search "type: pattern"
 }
+```
+
 ### `graph_build` (demonstrates pipeline + preconditions)
 
 ```python

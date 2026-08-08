@@ -20,7 +20,7 @@
 
 ### Context Retrieval
 
-- `awlab-mcp` memory actions inject relevant memories on demand. Do not load memory files manually.
+- `awlab-ai-assistant` memory actions inject relevant memories on demand. Do not load memory files manually.
 - Use `action_call(action="mem_search", ...)` before starting tasks to retrieve context.
 - The only files that may be read are `./.ai/memory-bank/environment.md` (shell detection) and `./.ai/memory-bank/context.md` (read via `ctx_info mode="context"`).
 

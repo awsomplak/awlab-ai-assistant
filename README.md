@@ -8,7 +8,7 @@ Transforms:
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Experimental), and
 - [Hermes Agent](https://github.com/nousresearch/hermes-agent) (Experimental)
 
-into project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-mcp`, single executable) exposing **2 tools** that route **20 actions**.
+into project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-ai-assistant`, single executable) exposing **2 tools** that route **20 actions**.
 
 ---
 
@@ -30,7 +30,7 @@ into project-aware AI development assistants with structured plan management, pe
 graph TB
   CL["Cline Extension"]
   CP["VS Code Copilot"]
-  AM["awlab-mcp (single exe: action_call + action_help, 20 actions)"]
+  AM["awlab-ai-assistant (single exe: action_call + action_help, 20 actions)"]
   ART["artifacts/ registry.md + plans"]
   AG["agent-recall Knowledge Graph"]
   CG["code graph .ai/codegraph/ (graphify)"]

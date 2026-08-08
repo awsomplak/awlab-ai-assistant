@@ -11,7 +11,7 @@ description: >
 
 # plan-creator
 
-This skill handles the creation of structured implementation plans and automatic memory population via `awlab-mcp` (`mem_write`). It generates plan documentation, stores project analysis results using the memory actions, and maintains the plan registry. **Plans are documentation only - no code execution or implementation occurs during plan creation.**
+This skill handles the creation of structured implementation plans and automatic memory population via `awlab-ai-assistant` (`mem_write`). It generates plan documentation, stores project analysis results using the memory actions, and maintains the plan registry. **Plans are documentation only - no code execution or implementation occurs during plan creation.**
 
 ## Usage
 
@@ -27,7 +27,7 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 
 3. **Ensure Structure Exists** — Silent create `./.ai/` and `./.ai/artifacts/` and `registry.md` if missing. Do NOT create `./.ai/memory-bank/`.
 
-4. **Read Project ID** — Read `.ai/project-id` (if missing, run `#08-project-id` bootstrap first). Store as `$PROJECT_ID` (for informational use only – `awlab-mcp` uses `AGENT_RECALL_SLUG` automatically).
+4. **Read Project ID** — Read `.ai/project-id` (if missing, run `#08-project-id` bootstrap first). Store as `$PROJECT_ID` (for informational use only – `awlab-ai-assistant` uses `AGENT_RECALL_SLUG` automatically).
 
 5. **Load user patterns**  
     - Run `action_call(action="mem_search", params={"entity_type": "pattern"})`.  

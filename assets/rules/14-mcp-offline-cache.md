@@ -2,7 +2,7 @@
 # Offline Cache Protocol — Never Drop Memory When MCP Is Down
 
 ## Purpose
-When the `awlab-mcp` server (or its agent-recall store) is unreachable, intended
+When the `awlab-ai-assistant` server (or its agent-recall store) is unreachable, intended
 **memory / plan mutations must never be silently dropped**. Queue them to the
 offline cache, keep working, and replay them once the server is back. This is
 the write-side cache that prevents stale/lost memory.

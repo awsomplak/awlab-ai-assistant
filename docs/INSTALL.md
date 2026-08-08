@@ -45,7 +45,7 @@ Built binary at `dist/bin/`:
 
 | Binary | Server | Exposed Tools |
 |--------|--------|---------------|
-| `awlab-mcp.exe` | `awlab-mcp` | `action_call` (dispatcher), `action_help` |
+| `awlab-ai-assistant.exe` | `awlab-ai-assistant` | `action_call` (dispatcher), `action_help` |
 
 One consolidated executable — the `action_call` dispatcher routes to all operations
 (plan, task, memory, graph, context, util, workflow).

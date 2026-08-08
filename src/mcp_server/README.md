@@ -6,7 +6,7 @@ Part of the [cline-ai-assisted-dev](../) system.
 
 | Server | MCP tools | Actions (via `action_call`) | Entry Point |
 |--------|-----------|------------------------------|-------------|
-| `awlab-mcp` | `action_call` + `action_help` | 20 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
+| `awlab-ai-assistant` | `action_call` + `action_help` | 20 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
 
 ---
 
@@ -83,7 +83,7 @@ flowchart LR
 ```bash
 # From project root
 pip install -e .
-# Now `awlab-mcp` is available as a CLI command
+# Now `awlab-ai-assistant` is available as a CLI command
 ```
 
 ### Build standalone executables
@@ -96,16 +96,16 @@ python scripts/run.py build --target-os=all
 python scripts/run.py build --target-os=linux
 ```
 
-Built executable at `dist/bin/awlab-mcp.exe` (Windows) / `dist/bin/awlab-mcp` (Linux/macOS) — a single binary for all platforms.
+Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awlab-ai-assistant` (Linux/macOS) — a single binary for all platforms.
 
 ### Configure in Cline
 
 ```json
 {
   "mcpServers": {
-    "awlab-mcp": {
+    "awlab-ai-assistant": {
       "type": "stdio",
-      "command": "path_to/dist/awlab-mcp.exe",
+      "command": "path_to/dist/awlab-ai-assistant.exe",
       "env": {
         "LOG_ENABLED": "true",
         "LOG_LEVEL": "INFO"
@@ -119,9 +119,9 @@ Built executable at `dist/bin/awlab-mcp.exe` (Windows) / `dist/bin/awlab-mcp` (L
 
 | Server | Entry Point | `command` | `args` |
 |--------|-------------|-----------|--------|
-| `awlab-mcp` | Installed CLI | `.venv\Scripts\awlab-mcp.exe` | *(none)* |
-| `awlab-mcp` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server"]` |
-| `awlab-mcp` | Built executable | `dist/bin/awlab-mcp.exe` | *(none)* |
+| `awlab-ai-assistant` | Installed CLI | `.venv\Scripts\awlab-ai-assistant.exe` | *(none)* |
+| `awlab-ai-assistant` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server"]` |
+| `awlab-ai-assistant` | Built executable | `dist/bin/awlab-ai-assistant.exe` | *(none)* |
 
 ---
 
@@ -206,7 +206,7 @@ GRAPH_PARALLEL=false        # Sequential extraction (default, recommended)
 mcp_server/
 ├── __init__.py
 ├── _version.py             # Version string (v3.0.1+build.093)
-├── server.py               # Dev console entry (awlab-mcp)
+├── server.py               # Dev console entry (awlab-ai-assistant)
 ├── __main__.py             # PyInstaller entry — single executable
 ├── registry.py             # REGISTRY — 20 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json

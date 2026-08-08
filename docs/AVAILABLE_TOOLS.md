@@ -11,7 +11,7 @@ One consolidated executable — the `REGISTRY` routes to all actions:
 
 | Binary | Server | Exposed Tools |
 |--------|--------|---------------|
-| `awlab-mcp.exe` | `awlab-mcp` | `action_call`, `action_help` |
+| `awlab-ai-assistant.exe` | `awlab-ai-assistant` | `action_call`, `action_help` |
 
 ---
 

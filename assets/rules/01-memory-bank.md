@@ -1,7 +1,7 @@
 <!-- → authority: 00-meta.md -->
-# Memory Bank (Powered by awlab-mcp)
+# Memory Bank (Powered by awlab-ai-assistant)
 
-**CRITICAL**: Your Memory Bank is now managed by the `awlab-mcp` MCP server.  
+**CRITICAL**: Your Memory Bank is now managed by the `awlab-ai-assistant` MCP server.  
 All memory operations go through `action_call(action="mem_*")` using the knowledge-graph
 actions below. The old markdown files (`.ai/memory-bank/*.md`) are DEPRECATED, except
 `environment.md` (static env config) and `context.md` (dynamic orchestration state —
