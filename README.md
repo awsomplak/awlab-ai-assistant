@@ -4,11 +4,13 @@
 
 Transforms:
 - [Cline](https://github.com/cline/cline),
-- [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) (Experimental),
+- [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview),
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Experimental), and
-- [Hermes Agent](https://github.com/nousresearch/hermes-agent) (Experimental)
+- [Hermes Agent](https://github.com/nousresearch/hermes-agent)
 
 into project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-ai-assistant`, single executable) exposing **2 tools** that route **20 actions**.
+
+**Cross-platform:** the server builds and runs on **Windows and Linux** — both are tested (build + usage) and running perfectly.
 
 ---
 
