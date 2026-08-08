@@ -25,7 +25,6 @@ action_call(action="task_read", params={
 - `mem_search`, `mem_write`, `mem_read`, `mem_remove`
 - `graph_build`, `graph_status`, `graph_query`, `graph_path`, `graph_explain`
 - `ctx_info` (all modes: snapshot / memory_bank / scan / suggest / context)
-- `wf` (execute — when operating on disk-based workflows; `list` is workspace-free)
 
 ### Rule 2: `get_project_id` action is removed
 
@@ -41,11 +40,17 @@ action_call(action="ctx_info", params={
 
 ### Rule 3: Actions that do NOT need `workspace_path`
 
-The following actions operate on server internals and do not require `workspace_path`:
+The following actions operate on server internals or workspace-free data and do not require `workspace_path`:
 
 - `util_info` (mode=`info` version/metadata; mode=`mermaid` generation)
-- `wf` (action=`list` — workspace-free listing)
+- `wf` (both `list` and `execute` — workflows are workspace-free step definitions)
 
-### Rule 4: `DB_PATH` is the only env-based config
+### Rule 4: `wf` loads workflows from the shared work-flows directory
+
+The `wf` action loads workflow definitions from the shared location by default:
+`~/.awlab-id/agent-memory/work-flows/` (mirrored for Cline to `~/Documents/Cline/Workflows/`).
+Pass `workflows_dir` to override the directory.
+
+### Rule 5: `DB_PATH` is the only env-based config
 
 The only environment variable that controls server behavior is `DB_PATH` (overrides the agent-memory database directory). All other configuration (workspace paths, project roots, log directories) must be passed as parameters or omitted entirely.

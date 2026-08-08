@@ -41,6 +41,27 @@ After **every** completed implementation step, the agent **MUST** immediately up
 5. When tasks in `tasks.md` become outdated (e.g., scope changed), use `task_update` with `content` to rewrite them with accurate status.
 6. Mark phases complete via `plan_update` (mode=`mark_phase`) only when ALL tasks in that phase are done.
 7. Auto-create a missing phase/task by including `description` in an update — the path still must follow the STRICT numbering rules below.
+8. **Complete-before-advance** — mark a task `[x]` immediately after it is verified done, BEFORE starting the next task; never leave a completed task unchecked while advancing.
+
+## Plan-First & Record-Before-Execute (MANDATORY)
+
+- **Plan-first, verify-after** — during plan creation do ONLY the required bootstrap
+  (env detect, registry read, pattern load, memory populate). No verification, tests,
+  fixture builds, or source exploration before the plan is presented and approved.
+- **Record-before-execute** — any new work discovered outside plan/notes/tasks is
+  recorded into the plan (new task/note) BEFORE executing it.
+- **Verify-before-claim** — when you state that something was recorded/updated in the
+  plan (tasks.md / notes.md / plan.md), ACTUALLY perform the write (via `task_update`
+  or direct edit) and CONFIRM it persisted before claiming it. Never claim "recorded"
+  for a change you did not write and re-read; if a prior claim was false, correct the
+  artifact first, then restate.
+- **Resolve-before-write** — verify imports resolve and types are clean (no
+  unresolved-import/type warnings) BEFORE and AS writing code; run get_errors after
+  every edit and never leave unresolved import warnings (a wrong relative-import depth
+  surfaces here first).
+- **Hygiene** — never emit `depends: none`; never put internal plan references (plan
+  UUIDs, "(new action, plan X)") in production docs/artifacts — keep provenance in
+  plan artifacts + memory only.
 
 ## Task Path & Phase Numbering (STRICT — parsing depends on it)
 
@@ -155,6 +176,8 @@ Status markers: `[ ]` Pending · `[x]` Done · `[x✓]` Tested · `[x!]` Warning
 
 **Every phase number and every path segment MUST be a positive integer.**
 `→ depends:` and `? if:` reference paths with the same dotted-integer notation.
+Only emit `→ depends:` when a real dependency exists — NEVER write `depends: none`
+(omit the line entirely).
 
 Use `task_update` (params: `updates`) to change markers.  
 Use `task_update` (params: `format="markdown"`, `phases`) to preview without saving.  

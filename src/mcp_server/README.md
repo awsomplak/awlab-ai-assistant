@@ -1,12 +1,12 @@
 # AWLab-ID MCP Server
 
-**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 16 actions across plan management, memory operations, registry control, workflow execution, project scanning, and the code knowledge graph — all without AI model invocation.**
+**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 19 actions across plan management, memory operations, registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
 
 Part of the [cline-ai-assisted-dev](../) system.
 
 | Server | MCP tools | Actions (via `action_call`) | Entry Point |
 |--------|-----------|------------------------------|-------------|
-| `awlab-mcp` | `action_call` + `action_help` | 16 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`) | `server.py` / `__main__.py` |
+| `awlab-mcp` | `action_call` + `action_help` | 19 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`) | `server.py` / `__main__.py` |
 
 ---
 
@@ -18,7 +18,7 @@ graph TB
     direction LR
     MAIN["__main__.py / server.py<br/>Single Entry Point"]
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
-    REG["registry.py<br/>REGISTRY — 16 actions, single source of truth"]
+    REG["registry.py<br/>REGISTRY — 19 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
     HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
@@ -125,7 +125,7 @@ Built executable at `dist/bin/awlab-mcp.exe` (Windows) / `dist/bin/awlab-mcp` (L
 
 ---
 
-## Tools Reference — action_call dispatcher (16 actions)
+## Tools Reference — action_call dispatcher (19 actions)
 
 Two MCP tools are exposed:
 
@@ -154,6 +154,9 @@ Two MCP tools are exposed:
 | `mem_write` | Create/tag/relate/store observations + entities |
 | `mem_read` | Node details or graph neighbourhood |
 | `mem_remove` | Archive entities / delete observations / delete relations |
+| `mem_list_entities` | Inventory all memory entities (name/type/obs count) for auditing |
+| `mem_dedupe` | Merge same-named entities (keep data-bearing, archive dupes) |
+| `mem_replay` | Replay the offline cache (`pending.jsonl`) — re-apply queued mutations |
 
 **🕸️ Code Knowledge Graph**
 
@@ -204,7 +207,7 @@ mcp_server/
 ├── _version.py             # Version string (v3.0.1+build.093)
 ├── server.py               # Dev console entry (awlab-mcp)
 ├── __main__.py             # PyInstaller entry — single executable
-├── registry.py             # REGISTRY — 16 actions, single source of truth
+├── registry.py             # REGISTRY — 19 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/

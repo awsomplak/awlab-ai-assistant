@@ -74,7 +74,7 @@ Activate this skill when the user explicitly requests a **new** plan using the t
           Include each pattern from `$USER_PATTERNS`, formatted as `- {type}: {value}`.
         - **Approach**
         - **Expected Outcomes**
-    - Write `tasks.md` with phases and ordered checklist per `#02-plan-artifacts` (Tasks Format and Extended Task Format). Use `→ depends:` and `? if:` markers where appropriate.
+    - Write `tasks.md` with phases and ordered checklist per `#02-plan-artifacts` (Tasks Format and Extended Task Format). Use `→ depends:` only when a real dependency exists (NEVER `depends: none` — omit the line); use `? if:` only when conditional.
     - **STRICT numbering** (see `#02-plan-artifacts` "Task Path & Phase Numbering"): every
       phase header is `## Phase N:` with N a **sequential positive integer**; every task path
       segment is a **positive integer** (`1.2`, `1.2.3`). NEVER use decimals (no `12.5`),
@@ -92,6 +92,37 @@ Activate this skill when the user explicitly requests a **new** plan using the t
 12. **Confirm and Stop**
     - Display: "Plan '{summary}' created with UUID {uuid}. Memory populated via mem_write. Files opened in editor."
     - **CRITICAL**: Do NOT execute any implementation, code changes, or task execution.
+
+## Plan-First Gate (MANDATORY)
+
+**Plan-first, verify-after.** During plan creation do ONLY the required bootstrap
+(env detect, registry read, pattern load, memory populate). Do NOT run verification,
+tests, fixture builds, or source exploration before the plan is presented and
+approved — plan docs come first, then STOP and show the user. All analysis belongs
+in plan tasks AFTER approval.
+
+**Record-before-execute.** Any new work discovered while executing (outside what is
+already in plan.md / notes.md / tasks.md) MUST be recorded into the plan (a new task
+or a note) BEFORE executing it — dynamic changes always stay tracked.
+
+**Verify-before-claim.** When you state that something was recorded/updated in the
+plan (tasks.md / notes.md / plan.md), ACTUALLY perform the write (via `task_update`
+or direct edit) and CONFIRM it persisted before claiming it. Never claim "recorded"
+or "added" for a change you have not written and re-read. If a prior claim is
+discovered to be false, correct the artifact first, then restate.
+
+**Complete-before-advance.** Mark each task `[x]` via `task_update` immediately after
+it is verified done — never leave a completed task unchecked while advancing.
+
+**Resolve-before-write.** Verify imports resolve and types are clean BEFORE and AS you
+write code: run get_errors (or the equivalent diagnostics) after every edit and never
+leave unresolved-import or type warnings. A wrong relative-import depth or a missing
+name shows up here first — fix it before moving on, not after the test run.
+
+**Task hygiene.**
+- Never emit `→ depends: none` — only write `→ depends:` when a real dependency exists.
+- Never include internal plan references (plan UUIDs, "(new action, plan X)") in
+  production docs/artifacts — keep provenance in plan artifacts + memory only.
 
 ## Implementation Instructions
 
