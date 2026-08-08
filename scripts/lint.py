@@ -41,6 +41,16 @@ def _ruff_cmd() -> list[str]:
     return [sys.executable, "-m", "ruff"]
 
 
+def _vulture_cmd() -> list[str]:
+    """Prefer the vulture binary next to the venv python, else ``python -m vulture``."""
+    scripts_dir = Path(sys.executable).parent
+    for name in ("vulture.exe", "vulture"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return [str(candidate)]
+    return [sys.executable, "-m", "vulture"]
+
+
 def _run(label: str, cmd: list[str]) -> int:
     print(f"\n==> {label}\n    {subprocess.list2cmdline(cmd)}")
     proc = subprocess.run(cmd, cwd=ROOT)
@@ -55,6 +65,11 @@ def main() -> int:
         dest="apply_format",
         action="store_true",
         help="APPLY ruff format (default is --check only)",
+    )
+    parser.add_argument(
+        "--deadcode",
+        action="store_true",
+        help="Also run a vulture dead-code scan (repeatable audit: src + .vulture_whitelist.py)",
     )
     parser.add_argument(
         "paths",
@@ -78,6 +93,20 @@ def main() -> int:
     code = 0
     code |= _run("Lint (ruff check)", check_cmd)
     code |= _run("Format (ruff format)", format_cmd)
+
+    if args.deadcode:
+        code |= _run(
+            "Dead code (vulture)",
+            [
+                *_vulture_cmd(),
+                "src",
+                str(ROOT / ".vulture_whitelist.py"),
+                "--min-confidence",
+                "60",
+                "--ignore-names",
+                "__doc__",
+            ],
+        )
 
     if code == 0:
         print("\n[OK] Lint & format clean.")

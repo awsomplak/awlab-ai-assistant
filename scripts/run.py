@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 RULES_SRC = ROOT / "assets" / "rules"
 SKILLS_SRC = ROOT / "assets" / "skills"
+WORKFLOWS_SRC = ROOT / "assets" / "workflows"
 PROFILES_DIR = DIST / "profiles"
 PYTHON_SRC = ROOT / "src" / "mcp_server"
 TEST_DIR = ROOT / "tests"
@@ -355,7 +356,7 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
         # Individual files keep HTML comments, rewrite refs to heading anchors
         content = _rewrite_refs(r["content"])
         (cline_dir / "rules" / r["filename"]).write_text(content, "utf-8")
-    _ok("cline/rules/  (13 individual files, HTML comments preserved, heading anchors)")
+    _ok(f"cline/rules/  ({len(rules)} individual files, HTML comments preserved, heading anchors)")
 
     # Skills for Cline
     _copy_skills(skills, cline_dir, "cline/skills/")
@@ -390,6 +391,8 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
         "10-pattern-lifecycle": "Pattern storage, conflict resolution, live detection",
         "11-agent-memory-isolation": "Per-project memory namespaces via AGENT_RECALL_SLUG",
         "12-agent-mcp-workspace-path": "Workspace_path parameter rules for MCP tools",
+        "13-file-hygiene": "File & workspace hygiene — scratch/temp files",
+        "14-mcp-offline-cache": "Offline cache — queue memory/plan mutations when MCP is down; replay on recovery",
     }
     for r in rules:
         base = r["filename"].replace(".md", "")
@@ -399,7 +402,7 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
         cleaned = _rewrite_refs(cleaned)
         frontmatter = f"---\nname: {base}\ndescription: '{desc}'\n---\n\n"
         (copilot_dir / f"{base}.instructions.md").write_text(frontmatter + cleaned, "utf-8")
-    _ok("copilot/  (13 .instructions.md files, comments stripped, headings offset, heading anchors)")
+    _ok(f"copilot/  ({len(rules)} .instructions.md files, comments stripped, headings offset, heading anchors)")
 
 
 def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
@@ -585,6 +588,15 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
         _detail("profiles/  (per-agent: cline, copilot, claude, hermes)")
         _ok(f"{len(rules)} rules, {len(skills)} skills")
 
+        # 2b. Copy shared workflows → dist/workflows/ for publish
+        if WORKFLOWS_SRC.exists():
+            wf_dst = DIST / "workflows"
+            wf_dst.mkdir(parents=True, exist_ok=True)
+            for f in WORKFLOWS_SRC.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, wf_dst / f.name)
+            _ok(f"{len(list(WORKFLOWS_SRC.iterdir()))} workflow files → dist/workflows/")
+
     # 3. Python package
     if not no_bin:
         _info("Building Python package...")
@@ -739,6 +751,9 @@ PUBLISH_MAP = {
         [
             ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
             ("profiles/cline/skills", "{home}/.agents/skills"),
+            # Cline keeps its native destination AND mirrors to the shared MCP data dir
+            ("workflows", "{home}/Documents/Cline/Workflows/"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
     "copilot": (
@@ -746,6 +761,7 @@ PUBLISH_MAP = {
         [
             ("profiles/copilot", "{home}/.copilot/instructions"),
             ("profiles/cline/skills", "{home}/.agents/skills"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
     "claude": (
@@ -753,12 +769,14 @@ PUBLISH_MAP = {
         [
             ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
             ("profiles/claude/skills", "{home}/.claude/skills"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
     "hermes": (
         "Hermes",
         [
             ("profiles/hermes/skills", "{home}/.hermes/skills"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
 }
