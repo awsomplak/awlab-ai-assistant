@@ -22,10 +22,19 @@ from ...helpers import (
     validate_workspace_path,
 )
 from ...helpers.registry_utils import (
+    create_registry_entry as _create_registry_entry,
+)
+from ...helpers.registry_utils import (
+    delete_registry_entry as _delete_registry_entry,
+)
+from ...helpers.registry_utils import (
     parse_registry,
 )
 from ...helpers.registry_utils import (
     switch_active_plan as _switch_active_plan,
+)
+from ...helpers.registry_utils import (
+    update_registry_status as _update_registry_status,
 )
 from .io import (
     _pattern_name,
@@ -238,6 +247,54 @@ async def mark_phase_complete(
         result["success"] = False
 
     return result
+
+
+async def create_registry_entry(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    summary: str = "",
+) -> dict[str, Any]:
+    """Create a new registry row (server generates the UUID; Active table, ⏹️)."""
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+    return _create_registry_entry(workspace_path, summary)
+
+
+async def update_registry_status(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    uuid: str = "",
+    status: str = "",
+    summary: str | None = None,
+) -> dict[str, Any]:
+    """Update a registry row's status (active | paused | complete).
+
+    Moves the row to the correct table, refreshes ``Date``, and never touches
+    ``Created At``.
+    """
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+    if not validate_uuid(uuid):
+        return fail_obj(error="Invalid plan_uuid format.")
+    if not status:
+        return fail_obj(error="update_registry_status: status (active|paused|complete) required")
+    return _update_registry_status(workspace_path, uuid, status, summary)
+
+
+async def delete_registry_entry(
+    workspace_path: str | Path,
+    project_id: str | None = None,
+    uuid: str = "",
+) -> dict[str, Any]:
+    """Delete a registry row (user approval is enforced at the action layer)."""
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+    if not validate_uuid(uuid):
+        return fail_obj(error="Invalid plan_uuid format.")
+    return _delete_registry_entry(workspace_path, uuid)
 
 
 # ── Dependency Resolution ─────────────────────────────────────────────────

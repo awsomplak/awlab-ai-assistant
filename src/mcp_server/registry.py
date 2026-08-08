@@ -209,6 +209,50 @@ async def _plan_update(
     )
 
 
+async def _reg_update(
+    workspace_path: str,
+    project_id: str | None = None,
+    type: str = "",
+    summary: str = "",
+    uuid: str = "",
+    status: str = "",
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    """Single registry.md CRUD: create / update status / delete a plan row.
+
+    - ``create``: server generates the UUID (Active, ⏹️) — agent saves tokens.
+    - ``update``: move the row to the correct table by status
+      (active|paused|complete), refresh ``Date``, never touch ``Created At``;
+      optional ``summary``.
+    - ``delete``: remove the row — REQUIRES ``confirmed=true`` (strict user
+      approval; without it the server refuses).
+    """
+    if type == "create":
+        return await plan_tools.create_registry_entry(
+            workspace_path=workspace_path, project_id=project_id, summary=summary
+        )
+    if type == "update":
+        if not uuid or not status:
+            return helpers.fail_obj(error="reg_update: uuid + status (active|paused|complete) required for update")
+        return await plan_tools.update_registry_status(
+            workspace_path=workspace_path, project_id=project_id, uuid=uuid, status=status, summary=summary or None
+        )
+    if type == "delete":
+        if not uuid:
+            return helpers.fail_obj(error="reg_update: uuid required for delete")
+        if not confirmed:
+            return helpers.fail_obj(
+                error=(
+                    "reg_update: deletion requires explicit user approval — "
+                    "ask the user, then call again with confirmed=true"
+                ),
+                needs_approval=True,
+                uuid=uuid,
+            )
+        return await plan_tools.delete_registry_entry(workspace_path=workspace_path, project_id=project_id, uuid=uuid)
+    return helpers.fail_obj(error="reg_update: type must be create, update, or delete")
+
+
 async def _ctx_info(
     workspace_path: str,
     mode: str = "snapshot",
@@ -806,6 +850,36 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "preconditions": ["workspace_valid", "plan_uuid_valid"],
         "mutates": True,
         "aliases": ["reg_switch_active_plan", "reg_mark_phase_complete", "reg_resolve_deferred_tasks"],
+    },
+    "reg_update": {
+        "group": "plan",
+        "summary": "Single registry.md CRUD: create / update status / delete a plan row.",
+        "doc": "type=create generates the UUID server-side (agent saves tokens) and adds an "
+        "Active row (⏹️) with Date + Created At. type=update moves the row to the correct "
+        "table by status (active|paused|complete), refreshes Date, never touches Created At, "
+        "and optionally updates summary. type=delete REMOVES the row but requires "
+        "confirmed=true (strict user approval — without it the server refuses).",
+        "handler": _reg_update,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project ID"},
+            "type": {"type": "string", "enum": ["create", "update", "delete"], "desc": "Registry operation"},
+            "summary": {"type": "string", "desc": "Summary for create, or new summary for update"},
+            "uuid": {"type": "string", "pattern": r"^[a-z0-9]{8}$", "desc": "Target plan UUID (update/delete)"},
+            "status": {"type": "string", "enum": ["active", "paused", "complete"], "desc": "Target status (update)"},
+            "confirmed": {
+                "type": "boolean",
+                "default": False,
+                "desc": "User approval for delete (required)",
+            },
+        },
+        "returns": (
+            "{success, created_uuid, table, date, created_at} | {updated_uuid, status, moved_from, moved_to, "
+            "date, created_at} | {deleted_uuid, deleted_from} | {needs_approval} on unconfirmed delete"
+        ),
+        "example": 'action_call(action="reg_update", params={"type": "create", "summary": "New plan"})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
     },
     # ── Workflow ──────────────────────────────────────────────────────────
     "wf": {

@@ -22,6 +22,8 @@ from .phase import (
 # ── Plan (registry, workflows, retrospective) ───────────────────────────────
 from .plan import (
     check_plan_completable,
+    create_registry_entry,
+    delete_registry_entry,
     execute_workflow,
     generate_retrospective_summary,
     get_next_eligible_task,
@@ -30,6 +32,7 @@ from .plan import (
     mark_phase_complete,
     resolve_deferred_tasks,
     switch_active_plan,
+    update_registry_status,
 )
 
 # ── Tasks (CRUD for tasks.md) ───────────────────────────────────────────────
@@ -64,4 +67,8 @@ __all__ = [
     "execute_workflow",
     "list_workflows",
     "generate_retrospective_summary",
+    # registry CRUD (reg_update)
+    "create_registry_entry",
+    "update_registry_status",
+    "delete_registry_entry",
 ]
