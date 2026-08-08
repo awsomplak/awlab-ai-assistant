@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "awlab-mcp-server"
+name = "awlab-ai-assistant"
 version = "3.0.1"
 description = "Deterministic MCP server for plan management, cross-session memory, and AI-assisted development workflows"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-awlab-mcp = "mcp_server.server:main"
+awlab-ai-assistant = "mcp_server.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
