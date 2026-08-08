@@ -67,6 +67,7 @@ RULE_ORDER = [
     "11-agent-memory-isolation.md",
     "12-agent-mcp-workspace-path.md",
     "13-file-hygiene.md",
+    "14-mcp-offline-cache.md",
 ]
 
 # Static fallback used only when mcp_server is not importable (never drifts in
@@ -79,7 +80,7 @@ _MCP_TOOLS_FALLBACK = """
                                     mem_*, graph_*, ctx_*, util_*, wf)
       action_help(action)           per-action usage / general help
 
-    The full action surface (16 actions) is driven by src/mcp_server/registry.py
+    The full action surface (20 actions) is driven by src/mcp_server/registry.py
     — a single source of truth, no separate servers / binaries.
 """
 
@@ -88,7 +89,7 @@ def _mcp_tools_text() -> str:
     """Generate the MCP-tools header from the REGISTRY (no drift).
 
     Reuses ``build_help`` from src/mcp_server/registry.py so the header always
-    lists the exact 16-action surface. Falls back to a static string only if
+    lists the exact 20-action surface. Falls back to a static string only if
     the package is not importable (e.g. before ``pip install -e .``).
     """
     try:
