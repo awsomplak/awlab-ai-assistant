@@ -15,42 +15,54 @@ responses include `executed`/`skipped` traces. Use `action_help(action)` for det
 
 ## graph
 - **graph_build** — Build/update the code knowledge graph into .ai/codegraph/ (AST-only, no LLM).
-  - Params: workspace_path, root, include_html, directed, project_id
+  - Params: workspace_path, root, family, include_html, directed, project_id
   - Example: `action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})`
 - **graph_explain** — Explain a graph node (details + direct neighbours). Auto-freshens first.
-  - Params: workspace_path, node, limit, root, project_id
+  - Params: workspace_path, node, limit, root, family, project_id
   - Example: `action_call(action="graph_explain", params={"workspace_path": "D:/Project/Foo", "node": "registry"})`
 - **graph_path** — Shortest path between two graph nodes. Auto-freshens first.
-  - Params: workspace_path, a, b, root
+  - Params: workspace_path, a, b, root, family
   - Example: `action_call(action="graph_path", params={"workspace_path": "D:/Project/Foo", "a": "action_call", "b": "registry"})`
 - **graph_query** — Search the code graph (labels / source files / types). Auto-freshens first.
-  - Params: workspace_path, query, limit, root, project_id
+  - Params: workspace_path, query, limit, root, family, project_id
   - Example: `action_call(action="graph_query", params={"workspace_path": "D:/Project/Foo", "query": "registry"})`
 - **graph_status** — Report code-graph freshness (exists? stale? changed files).
-  - Params: workspace_path, root
+  - Params: workspace_path, root, family
   - Example: `action_call(action="graph_status", params={"workspace_path": "D:/Project/Foo"})`
 
 ## memory
+- **mem_dedupe** — Merge same-named memory entities (keep data-bearing, archive dupes).
+  - Params: workspace_path, project_id, name, dry_run, store
+  - Example: `action_call(action="mem_dedupe", params={"name": "Bus Service"})`
+- **mem_list_entities** — List all memory entities (name/type/obs count) for auditing.
+  - Params: workspace_path, project_id, limit, store
+  - Example: `action_call(action="mem_list_entities", params={"limit": 200})`
 - **mem_read** — Read node details or the graph neighbourhood.
-  - Params: workspace_path, project_id, node, limit
+  - Params: workspace_path, project_id, node, limit, store
   - Example: `action_call(action="mem_read", params={"node": "MCPBridge"})`
-- **mem_remove** — Archive entities or delete observations/relations.
-  - Params: workspace_path, project_id, names, deletions, relations
-  - Example: `action_call(action="mem_remove", params={"names": ["stale-entity"]})`
+- **mem_remove** — Archive entities or delete observations/relations (type-safe).
+  - Params: workspace_path, project_id, names, entities, deletions, relations, store
+  - Example: `action_call(action="mem_remove", params={"entities": [{"name": "X", "entityType": "concept"}]})`
+- **mem_replay** — Replay the offline cache (pending.jsonl): re-apply queued mutations.
+  - Params: workspace_path, dry_run
+  - Example: `action_call(action="mem_replay", params={"dry_run": True})`
 - **mem_search** — Hybrid BM25+dense search over memory (optionally by entity type).
-  - Params: workspace_path, query, project_id, limit, use_dense, entity_type
+  - Params: workspace_path, query, project_id, limit, use_dense, entity_type, scope, context, store
   - Example: `action_call(action="mem_search", params={"query": "registry schema"})`
 - **mem_write** — Create/tag entities, add observations, or relate entities.
-  - Params: workspace_path, project_id, entities, observations, relations
+  - Params: workspace_path, project_id, entities, observations, relations, store
   - Example: `action_call(action="mem_write", params={"observations": [{"entityName": "A", "contents": ["x"]}]})`
 
 ## plan
 - **plan_status** — Read plan/registry status: active plan, next task, completeness, phase gate.
   - Params: workspace_path, project_id, plan_uuid, phase, format
   - Example: `action_call(action="plan_status", params={"phase": 2})`
-- **plan_update** — Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks.
+- **plan_update** — Mutate plan/registry: switch, mark phase complete, resolve deferred, run retrospective.
   - Params: workspace_path, project_id, mode, plan_uuid, phase_number
-  - Example: `action_call(action="plan_update", params={"mode": "switch", "plan_uuid": "mcptool1"})`
+  - Example: `action_call(action="plan_update", params={"mode": "mark_phase", "plan_uuid": "mcptool1", "phase_number": 2})`
+- **reg_update** — Single registry.md CRUD: create / update status / delete a plan row.
+  - Params: workspace_path, project_id, type, summary, uuid, status, confirmed
+  - Example: `action_call(action="reg_update", params={"type": "create", "summary": "New plan"})`
 
 ## task
 - **task_read** — Read a plan's tasks.md as structured/raw/minimal JSON.
@@ -67,5 +79,5 @@ responses include `executed`/`skipped` traces. Use `action_help(action)` for det
 
 ## workflow
 - **wf** — List or execute a workflow.
-  - Params: workspace_path, action, workflow_name, params
+  - Params: workspace_path, action, workflow_name, params, workflows_dir
   - Example: `action_call(action="wf", params={"action": "execute", "workflow_name": "scan-project"})`

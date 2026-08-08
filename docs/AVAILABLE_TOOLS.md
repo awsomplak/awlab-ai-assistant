@@ -43,9 +43,12 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 
 | Action | Summary |
 |--------|---------|
+| `mem_dedupe` | Merge same-named memory entities (keep data-bearing, archive dupes). |
+| `mem_list_entities` | List all memory entities (name/type/obs count) for auditing. |
 | `mem_read` | Read node details or the graph neighbourhood. |
-| `mem_remove` | Archive entities or delete observations/relations. |
-| `mem_search` | Hybrid BM25+dense search over memory (optionally by entity type). |
+| `mem_remove` | Archive entities or delete observations/relations (type-safe — refuses ambiguous names). |
+| `mem_replay` | Replay the offline cache (`.ai/memory-bank/pending.jsonl`) — re-apply mutations queued when the store/MCP was down; failed entries are kept for retry. `dry_run` previews. |
+| `mem_search` | Hybrid BM25+dense search over memory (optionally by entity type). store=patterns + scope/context for stack-scoped user patterns; store=family_<slug> for correlated-project memory. |
 | `mem_write` | Create/tag entities, add observations, or relate entities. |
 
 ### plan
@@ -54,16 +57,39 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 |--------|---------|
 | `plan_status` | Read plan/registry status: active plan, next task, completeness, phase gate. |
 | `plan_update` | Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks. |
+| `reg_update` | Single registry.md CRUD: `create` (server-generated UUID, Active ⏹️, Date + immutable Created At) / `update` (status active\|paused\|complete → move to correct table, refresh Date, keep Created At, optional summary) / `delete` (strict user approval via `confirmed=true`). |
 
 ### graph
 
 | Action | Summary |
 |--------|---------|
-| `graph_build` | Build/update the code knowledge graph into .ai/codegraph/ (AST-only, no LLM). |
+| `graph_build` | Build/update the code knowledge graph into .ai/codegraph/ (AST-only, no LLM). family=<slug> builds the MERGED family graph (per-member builds + member:: tag merge) — correct even across drives; runtime/API calls belong in memory relations. With include_html, family.html is generated + mirrored into every member's .ai/codegraph/ (graph.html stays each project's own). |
 | `graph_status` | Report code-graph freshness (exists? stale? changed files). |
 | `graph_query` | Search the code graph (labels / source files / types). Auto-freshens first. |
 | `graph_path` | Shortest path between two graph nodes. Auto-freshens first. |
 | `graph_explain` | Explain a graph node (details + direct neighbours). Auto-freshens first. |
+
+#### Indexed scope (read this before querying)
+
+- The graph is **AST-only** and indexes **file / function / class / component-level labels**.
+  Local/computed/ref/prop variables are **NOT** nodes.
+- When `graph_query` finds **no node** for a term, it falls back to a **whole-word source scan**
+  and returns file-level hits with `type: "identifier"` and `mode: "identifier"` — so a query for
+  a variable (e.g. `brakeBaselineDays`) never returns a dead end.
+- **Node identity is unified**: all graph actions accept BOTH a node `id` (as returned by
+  `graph_query`) and a label. `graph_path`/`graph_explain` resolve id → label → source-file path →
+  function-name → substring, so cross-file navigation works with labels, ids, or file paths.
+- `graph_path` finds a **symbol-level** path first; if none exists it falls back to a **module-level**
+  path over `imports_from`/`imports` edges (`mode: "module"`), and otherwise reports a rich
+  "no path" diagnostic with both source files.
+- **Vite/JS path-alias imports are indexed** (`@/stores/auth`, `@pages/...`, `~/components/...`).
+  graphifyy only resolves relative imports + tsconfig/jsconfig `paths`; the bridge adds a
+  post-build pass that reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or
+  array form, including `fileURLToPath(new URL(...))` replacements) and emits the missing
+  `imports_from`/`imports` edges — so `.vue` SFCs and any `@/`-importing file stay connected
+  in `graph_path` even when no `tsconfig.json` exists. Alias-resolved edges carry
+  `alias_resolved: true`; the pass is idempotent and also self-heals previously-built graphs
+  (no full rebuild needed).
 
 #### Graph freshness contract
 
@@ -100,4 +126,29 @@ whether a rebuild is in flight:
 
 | Action | Summary |
 |--------|---------|
-| `wf` | List or execute a workflow. |
+| `wf` | List or execute a workflow (workspace-free; shared `work-flows` dir, `workflows_dir` override). |
+
+---
+
+## Offline cache (`pending.jsonl`)
+
+When a store write fails or the MCP server is unreachable, intended mutations are
+**queued — never dropped** — to `.ai/memory-bank/pending.jsonl` (JSONL: one JSON
+object per line):
+
+- **Server-side (automatic):** `mem_write`/`mem_remove` store down or `task_update`
+  DB-sync down → the operation is queued automatically.
+- **Agent-side (MCP down):** append the intended `mem_write` / `mem_remove` /
+  `task_update` as one JSONL line with your own file tools, never claim success
+  (rule `14-mcp-offline-cache`).
+- **Replay:** `mem_replay` drains the queue — successful entries are removed,
+  failed ones kept for retry; `dry_run` previews first.
+
+## Project families
+
+Correlated projects at different paths share a merged code graph and a dedicated
+`family_<slug>` memory store. `project-families.json` (v2) declares members as
+`[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
+the declared id (reconciled automatically on family build), fresh members are
+seeded, and `graph_build` with `family=<slug>` produces the merged graph with
+`<project_id>::`-tagged nodes.

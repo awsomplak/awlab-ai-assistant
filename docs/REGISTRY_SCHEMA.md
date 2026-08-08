@@ -10,11 +10,14 @@
 1. **One source of truth** — `REGISTRY` drives tool description, `action_help`, and SKILL.md.
 2. **Server-owned orchestration** — the agent makes ONE call; the server guarantees the
    complete flow via `preconditions` + `pipeline`. No partial execution, ever.
-3. **Coarse, complete actions** — 36 partial tools → 16 actions (incl. `graph_*`).
+3. **Coarse, complete actions** — 36 partial tools → 20 actions (incl. `graph_*`, plus the
+   `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache
+   replay, and the `reg_update` single registry.md CRUD).
 4. **Reuse existing business logic as-is** — `src/mcp_server/tools/` handlers are called
    directly by name (`**params`). No logic rewrite.
-5. **Backward compatible** — all 36 old tool names become `aliases`, so current skills/rules
-   keep working during migration.
+5. **Backward compatible** — the 36 legacy tool names map onto the 20 actions (32 as `aliases`;
+   3 were dropped, 3 became canonical action names), so current skills/rules keep working during
+   migration.
 6. **Loud failure + transparent trace** — every response includes `executed`/`skipped`;
    a failure names the exact step that failed.
 
@@ -229,7 +232,7 @@ with an in-flight background rebuild (returns `rebuilding: true`, no duplicate
 build). Builds are serialized per project (a per-workspace lock); different
 projects build concurrently.
 
-## 9. Backward-Compat Alias Map (36 → 11)
+## 9. Backward-Compat Alias Map (36 → 20)
 
 | New action | Absorbed old tools |
 |-----------|--------------------|
@@ -243,6 +246,8 @@ projects build concurrently.
 | `mem_write` | `mem_create_entities`, `mem_tag_entity`, `mem_relate`, `mem_store` |
 | `mem_read` | `mem_fetch_node_details`, `mem_read_graph` |
 | `mem_remove` | `mem_archive_entities`, `mem_delete_observations`, `mem_delete_relations` |
+| `mem_list_entities` | — |
+| `mem_dedupe` | — |
 | `wf` | `wf_execute`, `wf_list` |
 
 **Kept as `ctx_info` sub-modes** (not dropped — code still routes them): `ctx_scan_project`

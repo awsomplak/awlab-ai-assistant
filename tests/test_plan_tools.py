@@ -1139,7 +1139,7 @@ async def test_execute_workflow_not_found(temp_project_dir):
 
 @pytest.mark.asyncio
 async def test_list_workflows_success(temp_project_dir):
-    """List workflows from the Cline/Workflows/ directory."""
+    """List workflows from the shared workflows directory (explicit override)."""
     workflows_dir = Path(temp_project_dir) / "Cline" / "Workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1154,7 +1154,7 @@ async def test_list_workflows_success(temp_project_dir):
         encoding="utf-8",
     )
 
-    result = await list_workflows(workspace_path=temp_project_dir)
+    result = await list_workflows(workspace_path=temp_project_dir, workflows_dir=workflows_dir)
 
     assert result["success"] is True
     assert result["count"] == 2
@@ -1166,11 +1166,40 @@ async def test_list_workflows_success(temp_project_dir):
 @pytest.mark.asyncio
 async def test_list_workflows_empty(temp_project_dir):
     """No workflows directory should return empty list."""
-    # Do NOT create Cline/Workflows/
-    result = await list_workflows(workspace_path=temp_project_dir)
+    # Explicit non-existent workflows dir
+    workflows_dir = Path(temp_project_dir) / "Cline" / "Workflows"
+    result = await list_workflows(workspace_path=temp_project_dir, workflows_dir=workflows_dir)
 
     assert result["success"] is False
     assert "not found" in result.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_workflows_workspace_free_shared_dir(temp_project_dir):
+    """Workflows are workspace-free: list + execute without workspace_path (shared-dir default)."""
+    workflows_dir = Path(temp_project_dir) / "shared" / "work-flows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    (workflows_dir / "shared-flow.md").write_text(
+        "# Shared Flow\n\ndescription: Shared steps\n\n## Step 1\n- `log` Shared step",
+        encoding="utf-8",
+    )
+
+    # list — no workspace_path needed
+    listed = await list_workflows(workflows_dir=workflows_dir)
+    assert listed["success"] is True
+    assert listed["count"] == 1
+    assert listed["workflows"][0]["name"] == "shared-flow"
+
+    # execute — no workspace_path needed
+    executed = await execute_workflow(workflow_name="shared-flow", workflows_dir=workflows_dir)
+    assert executed["success"] is True
+    assert executed["workflow"] == "shared-flow"
+    assert executed["steps"][0]["status"] == "passed"
+
+    # settings.workflows_dir resolves under the awlab config home
+    from mcp_server.config import settings as _settings
+
+    assert _settings.workflows_dir.parts[-2:] == ("agent-memory", "work-flows")
 
 
 # ── Tests: generate_retrospective_summary ────────────────────────────────────

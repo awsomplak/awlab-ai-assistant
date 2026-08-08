@@ -353,7 +353,7 @@ def parse_tasks_md(content: str) -> dict[str, Any]:
             else:
                 parent_path = str(current_phase["phase_number"])
             sibling = 1
-            for sib in (task_stack[-1]["subtasks"] if task_stack else current_phase["tasks"]):
+            for sib in task_stack[-1]["subtasks"] if task_stack else current_phase["tasks"]:
                 if sib.get("path", "").startswith(f"{parent_path}."):
                     sibling = max(sibling, int(sib["path"].split(".")[-1]) + 1)
             path = f"{parent_path}.{sibling}"

@@ -3,35 +3,18 @@ Server lifecycle — FastMCP app creation, config, and entry point.
 
 Contains:
 - FastMCP instance creation
-- _wrap() helper for bridge operations
 - main() entry point
 """
-
-import json
 
 from mcp.server.fastmcp import FastMCP
 
 from .._version import VERSION_STRING
 from ..config import settings
-from ..helpers import logger as logger  # module-level singleton (used by _wrap)
 from ..helpers.logger import Logger
 
 # ── App Instance ─────────────────────────────────────────────────────────────
 
 mcp = FastMCP("awlab-mcp")
-
-
-# ── Bridge Helpers ───────────────────────────────────────────────────────────
-
-
-def _wrap(fn) -> str:
-    """Execute a bridge operation and return JSON result."""
-    try:
-        result = fn()
-        return json.dumps({"success": True, "result": result})
-    except Exception as e:
-        logger.error(f"_wrap bridge operation failed: {e}")
-        return json.dumps({"success": False, "error": str(e)})
 
 
 # ── Shared runner — used by all server entry points ─────────────────────────

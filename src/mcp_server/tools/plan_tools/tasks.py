@@ -38,93 +38,6 @@ def _extract_old_status(content: str, task_path: str) -> str | None:
     return get_task_status(content, task_path)
 
 
-def _apply_task_mutation(
-    content: str,
-    task_path: str,
-    new_status: str,
-) -> tuple[str | None, str | None, dict[str, Any] | None]:
-    """
-    Validate transition and apply a status mutation.
-
-    Returns:
-        (updated_content, old_status, error_dict_or_None)
-    """
-    old_status = _extract_old_status(content, task_path)
-    if old_status is not None:
-        transition_check = validate_status_transition(old_status, new_status)
-        if not transition_check["valid"]:
-            return (
-                None,
-                old_status,
-                {
-                    "success": False,
-                    "error": transition_check["reason"],
-                    "old_status": old_status,
-                    "valid_targets": transition_check["valid_targets"],
-                },
-            )
-
-    try:
-        updated_content = update_task_status_in_md(content, task_path, new_status)
-    except Exception as e:
-        return None, old_status, {"success": False, "error": f"Failed to update task status: {e}"}
-
-    if updated_content is None:
-        return None, old_status, {"success": False, "error": f"Task '{task_path}' not found in plan"}
-    return updated_content, old_status, None
-
-
-def _write_with_pending_fallback(
-    tasks_path: str,
-    updated_content: str,
-    workspace_path: str | Path,
-    plan_uuid: str,
-    task_path: str,
-    new_status: str,
-    old_status: str | None,
-    pre_mutation_state: str,
-) -> dict[str, Any]:
-    """
-    Write updated content to disk with a pending-queue fallback.
-
-    Returns the final result dict for the update.
-    """
-    file_write_ok = write_utf8(path=tasks_path, content=updated_content)
-    if not file_write_ok:
-        pending_entry = {
-            "type": "update_task_status",
-            "plan_uuid": plan_uuid,
-            "task_path": task_path,
-            "new_status": new_status,
-            "old_status": old_status,
-            "pre_mutation_state": pre_mutation_state,
-        }
-        pending_ok = append_pending(workspace_path=workspace_path, entry=pending_entry)
-        return {
-            "success": False,
-            "error": "Failed to write tasks.md. Operation queued to pending.jsonl.",
-            "old_status": old_status,
-            "file_path": str(tasks_path),
-            "db_synced": False,
-            "pre_mutation_state": pre_mutation_state,
-            "pending_queued": pending_ok,
-        }
-
-    db_synced = sync_to_agent_recall(
-        workspace_path=workspace_path,
-        plan_uuid=plan_uuid,
-        updates=[{"task_path": task_path, "new_status": new_status}],
-    )
-    return {
-        "success": True,
-        "old_status": old_status,
-        "new_status": new_status,
-        "file_path": str(tasks_path),
-        "db_synced": db_synced,
-        "pre_mutation_state": pre_mutation_state,
-    }
-
-
 def _build_failure_response(
     success: bool,
     successful: list[dict[str, Any]],
@@ -296,12 +209,26 @@ async def update_task_status(
         project_id=project_id,
     )
 
+    # DB/store write failed → queue the sync so the progress is NOT lost
+    # (tasks.md is already updated; replay re-runs the DB sync only).
+    pending_queued = False
+    if not db_synced:
+        pending_queued = append_pending(
+            workspace_path=workspace_path,
+            entry={
+                "type": "sync_plan_progress",
+                "plan_uuid": plan_uuid,
+                "updates": [{"task_path": task_path, "new_status": new_status}],
+            },
+        )
+
     return {
         "success": True,
         "old_status": old_status,
         "new_status": new_status,
         "file_path": str(tasks_path),
         "db_synced": db_synced,
+        "pending_queued": pending_queued,
         "pre_mutation_state": pre_mutation_state,
     }
 
@@ -488,7 +415,7 @@ def _process_single_update(
         # Task missing — auto-create when a description is provided.
         if description:
             try:
-                updated, created_path = create_task_in_md(
+                updated, _ = create_task_in_md(
                     current_content,
                     task_path,
                     description=description,

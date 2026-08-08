@@ -8,6 +8,8 @@ All public functions accept a workspace_path (str | Path) as first parameter.
 """
 
 import re
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +25,8 @@ from .response import (
 ACTIVE_HEADER = "# Active Registry Plan"
 PAUSED_HEADER = "# Paused Registry Plan"
 COMPLETED_HEADER = "# Completed Registry Plan"
-TABLE_HEADER = "| UUID | Status | Date | Summary |"
-TABLE_SEPARATOR = "|------|--------|------|---------|"
+TABLE_HEADER = "| UUID | Status | Date | Created At | Summary |"
+TABLE_SEPARATOR = "|------|--------|------|-----------|---------|"
 
 TABLE_HEADER_PATTERN = re.compile(r"^\|?\s*(UUID|Status|Date|Summary)\s*\|")
 TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
@@ -50,15 +52,19 @@ def parse_table_rows(content: str) -> list[dict[str, str]]:
         if TABLE_SEPARATOR_PATTERN.match(stripped):
             continue
         if header_found and TABLE_ROW_PATTERN.match(stripped):
-            # Parse columns: split by | and trim
+            # Parse columns: split by | and trim. Canonical rows have 5 columns
+            # (uuid, status, date, created_at, summary); legacy 4-column rows
+            # (no Created At) are still accepted with created_at = date.
             parts = [p.strip() for p in stripped.split("|") if p.strip()]
             if len(parts) >= 4:
+                has_created = len(parts) >= 5
                 rows.append(
                     {
                         "uuid": parts[0].strip(),
                         "status": parts[1].strip(),
                         "date": parts[2].strip(),
-                        "summary": parts[3].strip(),
+                        "created_at": parts[3].strip() if has_created else parts[2].strip(),
+                        "summary": parts[4].strip() if has_created else parts[3].strip(),
                     }
                 )
     return rows
@@ -134,8 +140,9 @@ def parse_registry(workspace_path: str | Path) -> dict[str, Any]:
 
 
 def build_table_row(entry: dict[str, str]) -> str:
-    """Build a markdown table row from an entry dict."""
-    return f"| {entry['uuid']} | {entry['status']} | {entry['date']} | {entry['summary']} |"
+    """Build a markdown table row from an entry dict (incl. immutable Created At)."""
+    created_at = entry.get("created_at", entry.get("date", ""))
+    return f"| {entry['uuid']} | {entry['status']} | {entry['date']} | {created_at} | {entry['summary']} |"
 
 
 def rebuild_registry_content(
@@ -253,6 +260,105 @@ def switch_active_plan(workspace_path: str | Path, target_uuid: str) -> dict[str
         return ok_obj(new_active_uuid=target_uuid)
     else:
         return fail_obj(error="Failed to write registry.md")
+
+
+def _new_uuid() -> str:
+    """Generate an 8-char lowercase alphanumeric UUID (matches ``^[a-z0-9]{8}$``)."""
+    return uuid.uuid4().hex[:8]
+
+
+def create_registry_entry(workspace_path: str | Path, summary: str = "") -> dict[str, Any]:
+    """Create a new registry row (server generates the UUID; Active table, ⏹️).
+
+    Sets both ``date`` and ``created_at`` to now; ``created_at`` is immutable
+    thereafter. ``rebuild_registry_content`` reformats registry.md.
+    """
+    registry_path: Path = settings.get_registry_path(workspace_path=workspace_path)
+    if registry_path.is_file():
+        registry = parse_registry(workspace_path=workspace_path)
+    else:
+        registry = {"active": [], "paused": [], "completed": []}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    entry = {"uuid": _new_uuid(), "status": "⏹️", "date": now, "created_at": now, "summary": summary}
+    registry["active"].insert(0, entry)
+    new_content = rebuild_registry_content(registry["active"], registry["paused"], registry["completed"])
+    if write_file_safe(registry_path, new_content):
+        return ok_obj(created_uuid=entry["uuid"], table="active", date=now, created_at=now, summary=summary)
+    return fail_obj(error="Failed to write registry.md")
+
+
+_STATUS_MAP = {
+    "active": ("⏹️", "active"),
+    "paused": ("⏸️", "paused"),
+    "complete": ("✅", "completed"),
+}
+
+
+def update_registry_status(
+    workspace_path: str | Path,
+    uuid: str,
+    status: str,
+    summary: str | None = None,
+) -> dict[str, Any]:
+    """Update a registry row's status: move to the correct table + refresh ``Date``.
+
+    ``created_at`` is NEVER updated. ``summary`` is updated only when provided.
+    ``Date`` reflects the last status change (creation counts as the first).
+    """
+    if status not in _STATUS_MAP:
+        return fail_obj(error=f"Invalid status '{status}'. Valid: active, paused, complete")
+    registry_path: Path = settings.get_registry_path(workspace_path=workspace_path)
+    if not registry_path.is_file():
+        return fail_obj(error="registry.md is not found")
+    registry = parse_registry(workspace_path=workspace_path)
+
+    entry: dict[str, str] | None = None
+    source: str | None = None
+    for table in ("active", "paused", "completed"):
+        for e in registry[table]:
+            if e["uuid"] == uuid:
+                entry, source = e, table
+                break
+        if entry is not None:
+            break
+    if entry is None or source is None:
+        return fail_obj(error=f"Plan with UUID '{uuid}' not found in registry")
+
+    symbol, target = _STATUS_MAP[status]
+    registry[source] = [e for e in registry[source] if e["uuid"] != uuid]
+    entry["status"] = symbol
+    entry["date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    if summary is not None:
+        entry["summary"] = summary
+    registry[target].insert(0, entry)
+
+    new_content = rebuild_registry_content(registry["active"], registry["paused"], registry["completed"])
+    if write_file_safe(registry_path, new_content):
+        return ok_obj(
+            updated_uuid=uuid,
+            status=status,
+            moved_from=source,
+            moved_to=target,
+            date=entry["date"],
+            created_at=entry.get("created_at", entry["date"]),
+        )
+    return fail_obj(error="Failed to write registry.md")
+
+
+def delete_registry_entry(workspace_path: str | Path, uuid: str) -> dict[str, Any]:
+    """Delete a registry row from whichever table holds it."""
+    registry_path: Path = settings.get_registry_path(workspace_path=workspace_path)
+    if not registry_path.is_file():
+        return fail_obj(error="registry.md is not found")
+    registry = parse_registry(workspace_path=workspace_path)
+    for table in ("active", "paused", "completed"):
+        if any(e["uuid"] == uuid for e in registry[table]):
+            registry[table] = [e for e in registry[table] if e["uuid"] != uuid]
+            new_content = rebuild_registry_content(registry["active"], registry["paused"], registry["completed"])
+            if write_file_safe(registry_path, new_content):
+                return ok_obj(deleted_uuid=uuid, deleted_from=table)
+            return fail_obj(error="Failed to write registry.md")
+    return fail_obj(error=f"Plan with UUID '{uuid}' not found in registry")
 
 
 # ── Convenience wrappers that accept workspace_path ─────────────────────────

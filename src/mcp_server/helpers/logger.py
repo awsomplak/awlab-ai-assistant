@@ -94,23 +94,6 @@ class Logger:
         """Return a tool-scoped logger for structured tracing."""
         return _ToolLog(self, name)
 
-    # ── Log File Management ───────────────────────────────────────────────
-
-    def get_log_path(self, date: datetime | None = None) -> Path:
-        """Return the log file path for a given date (default: today)."""
-        if date is None:
-            date = datetime.now()
-        return self._log_dir / f"{date.strftime('%Y-%m-%d')}.log"
-
-    def tail(self, n: int = 50) -> list[str]:
-        """Return the last ``n`` lines of today's log."""
-        path = self.get_log_path()
-        if not path.exists():
-            return []
-        with open(path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        return [line.rstrip("\n") for line in lines[-n:]]
-
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _write(self, level: str, message: str, tool: str = "", exc_info: bool = False) -> None:

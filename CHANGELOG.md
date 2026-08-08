@@ -1,5 +1,5 @@
 # Changelog
-## [3.0.1] - 2026-08-01
+## [3.0.1] - 2026-08-08
 
 ### Added
 - **Code knowledge graph (graph)**: per-project structural graph via `graphifyy` (AST-only, no LLM) — `graph_build`, `graph_status`, `graph_query`, `graph_path`, `graph_explain` under a single `graph` action group. The graph html will genereted at `{project_root}/.ai/codegraph/graph.html`.
@@ -8,20 +8,32 @@
 - **Background non-blocking graph rebuild**: heavy stale/first builds run in a background thread so reads never block; small incremental rebuilds stay synchronous for accuracy.
 - **Graph freshness contract**: every graph read (`graph_query`/`graph_path`/`graph_explain`) returns `graph_fresh`, `graph_exists`, `graph_rebuilding`, `graph_built_at`; explicit `graph_build` coalesces with an in-flight background rebuild.
 - **Environment-variable documentation** (`docs/INSTALL.md`): `AWLAB_ENV`, `LOG_ENABLED`, `LOG_LEVEL`, `DB_PATH`, `GRAPH_PARALLEL` with resolution order (env → config.json → default).
+- **Project families (schema v2)** — `project-families.json` members are now `[{path, project_id}]` objects (no role key; `project_id` is the stable member identity, so multiple same-role members like 2 frontends/plugins work). Family keys support `-` (`eka-warehouse`); the legacy `{slug: [paths]}` shape is still accepted.
+- **Project-id resolution & reconciliation** — a member's own `.ai/project-id` file is authoritative over the declared `project_id` (then `<slug>-<dir>` derived). `sync_family_project_ids()` reconciles the family JSON to each project's file when they differ (e.g. `eka-warehouse` vs `eka_warehouse`) and runs a duplicate checker (same `project_id` on different paths → the later member derives a distinct id + the conflict is reported). Fresh members are seeded with a tiny `.ai/project-id` marker on family build. Family graph `repo::` tags = resolved member `project_id`.
+- **Offline cache / `mem_replay`** — a new `mem_replay` action (19th) drains the offline cache at `.ai/memory-bank/pending.jsonl` (JSONL — one JSON object per line). Mutations are queued there instead of dropped when a store write fails (`mem_write`/`mem_remove` store down, `task_update` DB-sync down) or when the MCP server is unreachable. Successful entries are removed, failed ones kept for retry; `dry_run` previews.
+- **`14-mcp-offline-cache` rule** — agent-side protocol: when the MCP server is down, queue intended `mem_write`/`mem_remove`/`task_update` to `pending.jsonl` with your own file tools, never claim success, and replay via `mem_replay` on recovery. Compiled into all agent profiles (14 rules).
+- **`reg_update` — single registry.md CRUD** — `create` (server-generated UUID, no agent UUID thinking; Active ⏹️) / `update` (status `active|paused|complete` → move the row to the correct table, refresh `Date`, keep the immutable `Created At` column, optional summary) / `delete` (strict user approval via `confirmed=true`; the server refuses without it). registry.md now has an immutable `Created At` column (legacy 4-column rows still parse). Replaces the one-off plan-complete path — one registry.md action.
+- **Vite/JS path-alias import indexing** — a post-build pass reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or array form, string or `fileURLToPath(new URL(...))` replacements) and emits the missing `imports_from`/`imports` edges for `@/...`, `@pages/...`, `~/...` imports that graphifyy cannot resolve (it only reads tsconfig/jsconfig `paths`). `.vue` SFCs and any alias-importing file now stay connected in `graph_path` even with no `tsconfig.json`. Handles multi-segment keys via longest-prefix match, is idempotent, and self-heals previously-built graphs on their next no-op read.
 
 ### Changed
-- **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **16 actions** via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-mcp.exe`; legacy 3-server files removed.
+- **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **20 actions** (incl. `graph_*`, the `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache replay, and the `reg_update` single registry.md CRUD) via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-mcp.exe`; legacy 3-server files removed.
 - **Agentic orchestration**: `ctx_info mode="context"` assembles plan + next task + code + memory in one server-owned call and atomically regenerates `.ai/memory-bank/context.md`; `graph_query`/`graph_explain` return `related_memory` (code ↔ memory correlation).
 - **Consolidated `task_update`**: multi-level dotted paths, transition validation with `valid_targets`, auto-create, atomic rollback, and executed/skipped/created trace.
 - **Strict plan/task numbering**: phases and task paths are sequential positive integers only (no decimals/letters) — parsing depends on it.
 - **`GRAPH_PARALLEL` config** (default off): sequential extraction is proven faster at realistic project scale and avoids the frozen-exe pool hang; opt in for very large corpora via `GRAPH_PARALLEL=1`.
 - **Profiles compiled directly to `dist/profiles/`** (dropped the `assets/profiles/` intermediate).
 - **Frozen-exe graph extraction** runs single-process sequential (`ProcessPoolExecutor` hangs in the onefile exe).
+- **Rules 13 → 14** — the offline-cache rule is compiled into the cline / copilot / claude / hermes profiles.
+- **Family project-id resolution is file-authoritative** — `family_member_id()` precedence is now `.ai/project-id` file > declared `project_id` > `<slug>-<dir>` (previously declared-first).
 
 ### Fixed
 - **Frozen exe graph-build deadlock**: `to_json` no longer shells out to `git` (pure file read of `.git/HEAD`/refs) — the subprocess deadlock that hung the onefile exe is gone.
 - **Path node resolution**: `any`/`path` global placeholders remapped to module-scoped `_py_any`/`_py_path`; dangling edges cleaned on merge.
 - **`_find_node_id` ambiguity**: exact-match pass on function names (strip `()`).
+- **Family declared-id lookup on Windows** — `family_member_project_ids()` now normalizes member-path keys via `Path.resolve()`, so forward-slash paths in a live `project-families.json` (`D:/Project/...`) no longer fall through to the derived `<slug>-<dir>` id when a declared id exists.
+
+### Builds
+- `build.094 → build.096` (`awlab-mcp-server v3.0.1+build.096`) — family schema v2 + reconciliation/seeding, offline cache + `mem_replay`, and the path-normalization fix. 319 tests pass, lint + format + dead-code clean. Validated live on the EkaMira `eka-warehouse` family (1277 nodes / 1256 edges, tags `eka_warehouse::` + `eka-warehouse-backend::`).
 
 ## [3.0.0] - 2026-07-01
 

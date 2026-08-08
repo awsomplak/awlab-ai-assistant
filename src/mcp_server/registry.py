@@ -19,6 +19,7 @@ Principles (see docs/REGISTRY_SCHEMA.md):
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -46,6 +47,21 @@ from .helpers.graphify_bridge import (
     query_graph as _graph_query,
 )
 from .tools import context_tools, file_tools, memory_tools, plan_tools, utils_tools
+from .tools.plan_tools.io import (
+    append_pending as _pending_append,
+)
+from .tools.plan_tools.io import (
+    pending_path as _pending_path,
+)
+from .tools.plan_tools.io import (
+    read_pending as _pending_read,
+)
+from .tools.plan_tools.io import (
+    replace_pending as _pending_replace,
+)
+from .tools.plan_tools.io import (
+    sync_to_agent_recall as _pending_sync,
+)
 
 # ══════════════════════════════════════════════════════════════════════════
 # ── Schema constants & validation ─────────────────────────────────────────
@@ -154,18 +170,87 @@ async def _plan_update(
     plan_uuid: str = "",
     phase_number: int | None = None,
 ) -> dict[str, Any]:
-    """Merge reg_switch_active_plan / reg_mark_phase_complete / reg_resolve_deferred_tasks."""
+    """Merge reg_switch_active_plan / reg_mark_phase_complete / reg_resolve_deferred_tasks.
+
+    Also routes ``mode="retrospective"`` (extract + store learned patterns) and
+    AUTO-TRIGGERS the retrospective when the LAST phase completes — the agent
+    grows with the user (patterns land in the dedicated user-patterns store).
+    """
+    if mode == "retrospective":
+        if not plan_uuid:
+            return helpers.fail_obj(error="plan_update: plan_uuid required for retrospective")
+        return await plan_tools.generate_retrospective_summary(
+            workspace_path=workspace_path, project_id=project_id, plan_uuid=plan_uuid
+        )
     if mode == "switch" or (not mode and plan_uuid and phase_number is None):
         return await plan_tools.switch_active_plan(workspace_path=workspace_path, project_id=project_id, uuid=plan_uuid)
     if mode == "mark_phase" or (not mode and phase_number is not None):
         if phase_number is None:
             return helpers.fail_obj(error="plan_update: phase_number required for mark_phase")
-        return await plan_tools.mark_phase_complete(
+        result = await plan_tools.mark_phase_complete(
             workspace_path=workspace_path, plan_uuid=plan_uuid, phase_num=phase_number
         )
+        # Auto-learn: when the LAST phase completes, run the retrospective so the
+        # agent grows with the user (best-effort — never breaks the response).
+        if isinstance(result, dict) and result.get("success") and result.get("next_phase") is None:
+            try:
+                retro = await plan_tools.generate_retrospective_summary(
+                    workspace_path=workspace_path, project_id=project_id, plan_uuid=plan_uuid
+                )
+                result["auto_learned"] = {
+                    "patterns_extracted": retro.get("patterns_extracted", 0),
+                    "stored_patterns": (retro.get("observations") or {}).get("stored_patterns", []),
+                }
+            except Exception:  # noqa: BLE001 — best-effort auto-learning
+                pass
+        return result
     return await plan_tools.resolve_deferred_tasks(
         workspace_path=workspace_path, plan_uuid=plan_uuid, phase_number=phase_number
     )
+
+
+async def _reg_update(
+    workspace_path: str,
+    project_id: str | None = None,
+    type: str = "",
+    summary: str = "",
+    uuid: str = "",
+    status: str = "",
+    confirmed: bool = False,
+) -> dict[str, Any]:
+    """Single registry.md CRUD: create / update status / delete a plan row.
+
+    - ``create``: server generates the UUID (Active, ⏹️) — agent saves tokens.
+    - ``update``: move the row to the correct table by status
+      (active|paused|complete), refresh ``Date``, never touch ``Created At``;
+      optional ``summary``.
+    - ``delete``: remove the row — REQUIRES ``confirmed=true`` (strict user
+      approval; without it the server refuses).
+    """
+    if type == "create":
+        return await plan_tools.create_registry_entry(
+            workspace_path=workspace_path, project_id=project_id, summary=summary
+        )
+    if type == "update":
+        if not uuid or not status:
+            return helpers.fail_obj(error="reg_update: uuid + status (active|paused|complete) required for update")
+        return await plan_tools.update_registry_status(
+            workspace_path=workspace_path, project_id=project_id, uuid=uuid, status=status, summary=summary or None
+        )
+    if type == "delete":
+        if not uuid:
+            return helpers.fail_obj(error="reg_update: uuid required for delete")
+        if not confirmed:
+            return helpers.fail_obj(
+                error=(
+                    "reg_update: deletion requires explicit user approval — "
+                    "ask the user, then call again with confirmed=true"
+                ),
+                needs_approval=True,
+                uuid=uuid,
+            )
+        return await plan_tools.delete_registry_entry(workspace_path=workspace_path, project_id=project_id, uuid=uuid)
+    return helpers.fail_obj(error="reg_update: type must be create, update, or delete")
 
 
 async def _ctx_info(
@@ -200,6 +285,7 @@ async def _memory_inventory(
     workspace_path: str,
     project_id: str | None = None,
     limit: int = 100,
+    store: str = "project",
 ) -> dict[str, Any]:
     """Return a memory inventory (what is stored) instead of an empty search.
 
@@ -208,8 +294,11 @@ async def _memory_inventory(
     and summarizes entities by type with observation counts — the agent can then
     ask targeted queries or call ``mem_read`` on specific entities.
     """
+    patterns, family = helpers.store_target(store)
     try:
-        graph = helpers.read_graph(workspace_path=workspace_path, project_id=project_id, limit=limit)
+        graph = helpers.read_graph(
+            workspace_path=workspace_path, project_id=project_id, limit=limit, patterns=patterns, family=family
+        )
     except Exception as e:  # noqa: BLE001
         return {"success": False, "error": f"memory inventory unavailable: {e}"}
 
@@ -228,10 +317,11 @@ async def _memory_inventory(
     return {
         "success": True,
         "mode": "inventory",
+        "store": store,
         "total_entities": len(entities),
         "total_relations": len(relations),
         "by_type": by_type,
-        "entities": summary[: limit],
+        "entities": summary[:limit],
     }
 
 
@@ -333,88 +423,300 @@ async def _util_info(
     return {"version": await utils_tools.get_server_version(), "environment": await utils_tools.get_environment()}
 
 
+# ── Offline cache (MCP-down / store-down resilience) ───────────────────────
+
+
+def _offline_cached(action: str):
+    """Queue a failed mutation to the offline cache (pending.jsonl) instead of dropping it.
+
+    Wraps a mutation handler: on any exception it appends the original params
+    (as a JSONL entry) to the offline cache and returns a loud error with
+    ``queued``/``pending_path``. ``mem_replay`` re-applies it once the store is
+    back. The raw function stays reachable via ``__wrapped__`` (replay uses it
+    so a re-queued failure can never re-queue itself).
+    """
+
+    def deco(fn: Callable[..., Awaitable[dict[str, Any]]]) -> Callable[..., Awaitable[dict[str, Any]]]:
+        @functools.wraps(fn)
+        async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            try:
+                return await fn(*args, **kwargs)
+            except Exception as e:  # noqa: BLE001 — queue-and-surface, never drop
+                entry: dict[str, Any] = {"type": action}
+                for k, v in kwargs.items():
+                    if v is not None:
+                        entry[k] = v
+                wp = kwargs.get("workspace_path", "")
+                queued = _pending_append(workspace_path=wp, entry=entry)
+                return helpers.fail_obj(
+                    error=f"{action} failed: {e}",
+                    queued=queued,
+                    pending_path=str(_pending_path(wp)),
+                )
+
+        return wrapper
+
+    return deco
+
+
+@_offline_cached("mem_write")
 async def _mem_write(
     workspace_path: str,
     project_id: str | None = None,
     entities: list[dict[str, Any]] | None = None,
     observations: list[dict[str, Any]] | None = None,
     relations: list[dict[str, Any]] | None = None,
+    store: str = "project",
 ) -> dict[str, Any]:
     """Merge mem_create_entities / mem_tag_entity / mem_relate / mem_store.
 
-    Ensures every entity referenced by ``observations`` exists (auto-creates in
-    the current scope if missing — mem_store behaviour), so an observation never
-    silently drops. ``create_entities`` is idempotent: re-creating an existing
-    entity is a no-op (updated), never a duplicate.
+    Ensures every entity referenced by ``observations`` AND ``relations`` exists
+    — REUSING an existing same-named entity (any type) instead of always
+    auto-creating a new one, so no empty duplicate entities are spawned (the
+    auto-create used to hardcode ``entityType: "concept"`` and ``create_entities``
+    matches on ``(name, type)``, which created ``X :: concept`` beside ``X :: feature``).
     """
-    result: dict[str, Any] = {"success": True, "created": [], "observations": [], "relations": []}
+    patterns, family = helpers.store_target(store)
+    result: dict[str, Any] = {
+        "success": True,
+        "store": store,
+        "created": {"created": 0, "updated": 0, "blocked": []},
+        "observations": [],
+        "relations": [],
+    }
+    # Aggregate explicit + auto-ensured entity writes into one created summary.
+    created_agg: dict[str, Any] = {"created": 0, "updated": 0, "blocked": []}
     if entities:
-        result["created"] = helpers.create_entities(
-            workspace_path=workspace_path, project_id=project_id, entities=entities
+        r0 = helpers.create_entities(
+            workspace_path=workspace_path,
+            project_id=project_id,
+            entities=entities,
+            patterns=patterns,
+            family=family,
         )
+        created_agg["created"] += int(r0.get("created", 0))
+        created_agg["updated"] += int(r0.get("updated", 0))
+        created_agg["blocked"] += list(r0.get("blocked", []))
+
+    # Collect every name referenced by observations and relations so the store
+    # is never polluted with empty duplicates.
+    referenced: list[str] = []
     if observations:
-        # Ensure all observation targets exist in the current scope (idempotent).
-        ensure = [
-            {"name": n, "entityType": "concept", "observations": []}
-            for n in dict.fromkeys(o.get("entityName", "") for o in observations if o.get("entityName"))
-        ]
-        if ensure:
-            result["created"] = helpers.create_entities(
-                workspace_path=workspace_path, project_id=project_id, entities=ensure
-            )
+        referenced += [o.get("entityName", "") for o in observations if o.get("entityName")]
+    if relations:
+        for r in relations:
+            referenced += [r.get("from", ""), r.get("to", "")]
+    referenced = list(dict.fromkeys(n for n in referenced if n))
+    reused: list[str] = []
+    if referenced:
+        ensured = helpers.ensure_entities(
+            workspace_path=workspace_path,
+            project_id=project_id,
+            names=referenced,
+            entity_type="concept",
+            patterns=patterns,
+            family=family,
+        )
+        inner = ensured.get("created")
+        if isinstance(inner, dict):
+            created_agg["created"] += int(inner.get("created", 0))
+            created_agg["updated"] += int(inner.get("updated", 0))
+            created_agg["blocked"] += list(inner.get("blocked", []))
+        created_agg["blocked"] += list(ensured.get("blocked", []))
+        reused = ensured.get("reused", [])
+    result["created"] = created_agg
+    if reused:
+        result["reused"] = reused
+
+    if observations:
         result["observations"] = helpers.add_observations(
-            workspace_path=workspace_path, project_id=project_id, observations=observations
+            workspace_path=workspace_path,
+            project_id=project_id,
+            observations=observations,
+            patterns=patterns,
+            family=family,
         )
     if relations:
         result["relations"] = helpers.create_relations(
-            workspace_path=workspace_path, project_id=project_id, relations=relations
+            workspace_path=workspace_path,
+            project_id=project_id,
+            relations=relations,
+            patterns=patterns,
+            family=family,
         )
     return result
 
 
 async def _mem_read(
-    workspace_path: str, project_id: str | None = None, node: str = "", limit: int = 50
+    workspace_path: str,
+    project_id: str | None = None,
+    node: str = "",
+    limit: int = 50,
+    store: str = "project",
 ) -> dict[str, Any]:
     """Merge mem_fetch_node_details / mem_read_graph."""
+    patterns, family = helpers.store_target(store)
     if node:
         return {
             "success": True,
-            "nodes": helpers.open_nodes(workspace_path=workspace_path, project_id=project_id, names=[node]),
+            "nodes": helpers.open_nodes(
+                workspace_path=workspace_path, project_id=project_id, names=[node], patterns=patterns, family=family
+            ),
+            "store": store,
         }
     return {
         "success": True,
-        "graph": helpers.read_graph(workspace_path=workspace_path, project_id=project_id, limit=limit),
+        "graph": helpers.read_graph(
+            workspace_path=workspace_path, project_id=project_id, limit=limit, patterns=patterns, family=family
+        ),
+        "store": store,
     }
 
 
+@_offline_cached("mem_remove")
 async def _mem_remove(
     workspace_path: str,
     project_id: str | None = None,
     names: list[str] | None = None,
+    entities: list[dict[str, Any]] | None = None,
     deletions: list[dict[str, Any]] | None = None,
     relations: list[dict[str, Any]] | None = None,
+    store: str = "project",
 ) -> dict[str, Any]:
-    """Merge mem_archive_entities / mem_delete_observations / mem_delete_relations."""
-    result: dict[str, Any] = {"success": True}
-    if names:
-        result["archived"] = helpers.delete_entities(workspace_path=workspace_path, project_id=project_id, names=names)
+    """Merge mem_archive_entities / mem_delete_observations / mem_delete_relations.
+
+    Type-safe archiving: bare ``names`` are refused when ambiguous (same name,
+    multiple entityTypes) with a candidate list; ``entities=[{name, entityType}]``
+    specs archive exactly the right one — never the data-bearing entity.
+    ``store="patterns"`` routes to the dedicated user-patterns store.
+    """
+    patterns, family = helpers.store_target(store)
+    result: dict[str, Any] = {"success": True, "store": store}
+    if names or entities:
+        result["archived"] = helpers.delete_entities(
+            workspace_path=workspace_path,
+            project_id=project_id,
+            names=names,
+            entities=entities,
+            patterns=patterns,
+            family=family,
+        )
     if deletions:
-        result["deleted_observations"] = helpers.delete_observations(workspace_path=workspace_path, deletions=deletions)
+        result["deleted_observations"] = helpers.delete_observations(
+            workspace_path=workspace_path, deletions=deletions, patterns=patterns, family=family
+        )
     if relations:
-        result["deleted_relations"] = helpers.delete_relations(workspace_path=workspace_path, relations=relations)
+        result["deleted_relations"] = helpers.delete_relations(
+            workspace_path=workspace_path, relations=relations, patterns=patterns, family=family
+        )
     return result
 
 
-async def _wf(
-    workspace_path: str, action: str = "list", workflow_name: str = "", params: str | None = None
+async def _mem_dedupe(
+    workspace_path: str,
+    project_id: str | None = None,
+    name: str = "",
+    dry_run: bool = True,
+    store: str = "project",
 ) -> dict[str, Any]:
-    """Merge wf_list / wf_execute."""
+    """Dedupe adapter — merge same-named entities (see helpers.dedupe_entities).
+
+    dry_run=True (default) returns the plan without mutating.
+    ``store="patterns"`` routes to the dedicated user-patterns store.
+    """
+    patterns, family = helpers.store_target(store)
+    return helpers.dedupe_entities(
+        workspace_path=workspace_path,
+        project_id=project_id,
+        name=name,
+        dry_run=dry_run,
+        patterns=patterns,
+        family=family,
+    )
+
+
+async def _mem_replay(
+    workspace_path: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Drain the offline cache (pending.jsonl): re-apply queued mutations.
+
+    Each entry is dispatched by ``type``: ``mem_write``/``mem_remove`` re-run
+    the raw store operation; ``update_task_status`` re-runs the task update;
+    ``sync_plan_progress`` re-runs the agent-recall DB sync. Successful entries
+    are removed from the queue; failed ones are kept for a later retry.
+    ``dry_run=True`` previews the queue without applying.
+    """
+    entries = _pending_read(workspace_path)
+    if dry_run or not entries:
+        return {
+            "success": True,
+            "dry_run": bool(dry_run),
+            "count": len(entries),
+            "pending": entries,
+            "pending_path": str(_pending_path(workspace_path)),
+        }
+
+    succeeded: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    raw_write = getattr(_mem_write, "__wrapped__", _mem_write)
+    raw_remove = getattr(_mem_remove, "__wrapped__", _mem_remove)
+    for idx, entry in enumerate(entries):
+        etype = str(entry.get("type", ""))
+        # ``type`` is queue metadata — never part of the handler's params.
+        clean = {k: v for k, v in entry.items() if k != "type"}
+        try:
+            if etype == "mem_write":
+                await raw_write(**clean)
+            elif etype == "mem_remove":
+                await raw_remove(**clean)
+            elif etype == "update_task_status":
+                await plan_tools.update_task_status(
+                    workspace_path=workspace_path,
+                    plan_uuid=entry.get("plan_uuid", ""),
+                    task_path=entry.get("task_path", ""),
+                    new_status=entry.get("new_status", ""),
+                )
+            elif etype == "sync_plan_progress":
+                _pending_sync(
+                    workspace_path=workspace_path,
+                    plan_uuid=entry.get("plan_uuid", ""),
+                    updates=entry.get("updates"),
+                )
+            else:
+                raise ValueError(f"unknown pending entry type '{etype}'")
+            succeeded.append({"index": idx, "type": etype})
+        except Exception as e:  # noqa: BLE001 — keep the entry for a later retry
+            failed.append({"index": idx, "type": etype, "error": str(e)})
+            remaining.append(entry)
+    _pending_replace(workspace_path, remaining)
+    return {
+        "success": True,
+        "processed": len(succeeded),
+        "succeeded": succeeded,
+        "failed": failed,
+        "pending_left": len(remaining),
+        "pending_path": str(_pending_path(workspace_path)),
+    }
+
+
+async def _wf(
+    workspace_path: str = "",
+    action: str = "list",
+    workflow_name: str = "",
+    params: str | None = None,
+    workflows_dir: str | None = None,
+) -> dict[str, Any]:
+    """Merge wf_list / wf_execute. Workflows are workspace-free; workspace_path optional."""
+    wf_dir = Path(workflows_dir) if workflows_dir else None
+    ws = workspace_path or None
     if action == "execute":
         parsed = json.loads(params) if params else None
         return await plan_tools.execute_workflow(
-            workspace_path=workspace_path, workflow_name=workflow_name, params=parsed
+            workspace_path=ws, workflow_name=workflow_name, params=parsed, workflows_dir=wf_dir
         )
-    return await plan_tools.list_workflows(workspace_path=workspace_path)
+    return await plan_tools.list_workflows(workspace_path=ws, workflows_dir=wf_dir)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -475,9 +777,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "format": {"type": "string", "enum": ["markdown"], "desc": "Format mode (uses phases)"},
             "phases": {"type": "array", "items": {"type": "object"}, "desc": "Phase dicts for format mode"},
         },
-        "returns": (
-            "{success, successful, executed, skipped, created, failed, db_synced, pre_mutation_state}"
-        ),
+        "returns": ("{success, successful, executed, skipped, created, failed, db_synced, pre_mutation_state}"),
         "example": (
             'action_call(action="task_update", params={"updates": [{"task_path": "1.2", "new_status": "[x]"}]})'
         ),
@@ -520,39 +820,82 @@ REGISTRY: dict[str, dict[str, Any]] = {
     },
     "plan_update": {
         "group": "plan",
-        "summary": "Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks.",
-        "doc": "mode=switch | mark_phase | resolve. When mode omitted, infers: plan_uuid without "
-        "phase_number → switch; phase_number → mark_phase; else resolve deferred.",
+        "summary": "Mutate plan/registry: switch, mark phase complete, resolve deferred, run retrospective.",
+        "doc": "mode=switch | mark_phase | resolve | retrospective. When mode omitted, infers: "
+        "plan_uuid without phase_number → switch; phase_number → mark_phase; else resolve "
+        "deferred. mode=retrospective extracts + stores learned patterns from a completed "
+        "plan. AUTO-LEARNING: marking the LAST phase complete automatically runs the "
+        "retrospective (patterns land in the dedicated user-patterns store — the agent "
+        "grows with the user).",
         "handler": _plan_update,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "project_id": {"type": "string", "desc": "Optional project ID"},
             "mode": {
                 "type": "string",
-                "enum": ["switch", "mark_phase", "resolve"],
+                "enum": ["switch", "mark_phase", "resolve", "retrospective"],
                 "desc": "Operation (inferred if omitted)",
             },
             "plan_uuid": {"type": "string", "pattern": r"^[a-z0-9]{8}$", "desc": "Target plan UUID"},
             "phase_number": {"type": "integer", "desc": "Phase number (mark_phase)"},
         },
-        "returns": "{success, ...}",
-        "example": 'action_call(action="plan_update", params={"mode": "switch", "plan_uuid": "mcptool1"})',
+        "returns": (
+            "{success, ...} | {success, patterns_extracted, plan_summary, suggested_patterns} "
+            "for retrospective; auto_learned set when last phase auto-learns"
+        ),
+        "example": (
+            'action_call(action="plan_update", params={"mode": "mark_phase", '
+            '"plan_uuid": "mcptool1", "phase_number": 2})'
+        ),
         "preconditions": ["workspace_valid", "plan_uuid_valid"],
         "mutates": True,
         "aliases": ["reg_switch_active_plan", "reg_mark_phase_complete", "reg_resolve_deferred_tasks"],
+    },
+    "reg_update": {
+        "group": "plan",
+        "summary": "Single registry.md CRUD: create / update status / delete a plan row.",
+        "doc": "type=create generates the UUID server-side (agent saves tokens) and adds an "
+        "Active row (⏹️) with Date + Created At. type=update moves the row to the correct "
+        "table by status (active|paused|complete), refreshes Date, never touches Created At, "
+        "and optionally updates summary. type=delete REMOVES the row but requires "
+        "confirmed=true (strict user approval — without it the server refuses).",
+        "handler": _reg_update,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project ID"},
+            "type": {"type": "string", "enum": ["create", "update", "delete"], "desc": "Registry operation"},
+            "summary": {"type": "string", "desc": "Summary for create, or new summary for update"},
+            "uuid": {"type": "string", "pattern": r"^[a-z0-9]{8}$", "desc": "Target plan UUID (update/delete)"},
+            "status": {"type": "string", "enum": ["active", "paused", "complete"], "desc": "Target status (update)"},
+            "confirmed": {
+                "type": "boolean",
+                "default": False,
+                "desc": "User approval for delete (required)",
+            },
+        },
+        "returns": (
+            "{success, created_uuid, table, date, created_at} | {updated_uuid, status, moved_from, moved_to, "
+            "date, created_at} | {deleted_uuid, deleted_from} | {needs_approval} on unconfirmed delete"
+        ),
+        "example": 'action_call(action="reg_update", params={"type": "create", "summary": "New plan"})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
     },
     # ── Workflow ──────────────────────────────────────────────────────────
     "wf": {
         "group": "workflow",
         "summary": "List or execute a workflow.",
         "doc": "action=list (default) lists available workflows; action=execute runs a named "
-        "workflow with optional JSON params.",
+        "workflow with optional JSON params. Workflows are workspace-free step definitions "
+        "loaded from the shared work-flows dir (~/.awlab-id/agent-memory/work-flows); "
+        "workspace_path is optional. Pass workflows_dir to override the location.",
         "handler": _wf,
         "params": {
-            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "workspace_path": {"type": "string", "desc": "Optional project root (workflows are workspace-free)"},
             "action": {"type": "string", "enum": ["list", "execute"], "default": "list"},
             "workflow_name": {"type": "string", "desc": "Workflow filename without .md"},
             "params": {"type": "string", "desc": "Optional JSON string of workflow params"},
+            "workflows_dir": {"type": "string", "desc": "Optional override for the workflows directory"},
         },
         "returns": "{success, workflows|result}",
         "example": 'action_call(action="wf", params={"action": "execute", "workflow_name": "scan-project"})',
@@ -611,7 +954,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "doc": "Search the knowledge graph with hybrid BM25+dense ranking over name + "
         "observations. Set entity_type to filter by the exact entityType field — "
         "this is how you list patterns (entity_type='pattern'). With entity_type set "
-        "and query empty, lists ALL entities of that type deterministically.",
+        "and query empty, lists ALL entities of that type deterministically. "
+        "store='patterns' searches the dedicated cross-project user-patterns store, "
+        "scoped by `scope` (stack|project|all) with optional `context` area filter — "
+        "results carry full provenance (stack/context/source_project/confidence).",
         "handler": memory_tools.search_memory,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
@@ -620,8 +966,21 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "limit": {"type": "integer", "default": 10, "desc": "Max results"},
             "use_dense": {"type": "boolean", "default": False, "desc": "Enable BM25+dense re-rank"},
             "entity_type": {"type": "string", "desc": "Exact entityType filter (e.g. 'pattern')"},
+            "scope": {
+                "type": "string",
+                "enum": ["stack", "project", "all"],
+                "default": "stack",
+                "desc": "Pattern retrieval scope (store='patterns'): stack (auto-detected) | project | all",
+            },
+            "context": {"type": "string", "desc": "Optional pattern area filter (matches context/value)"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
         },
-        "returns": "{success, data:[...], filtered_by?}",
+        "returns": "{success, data:[...], filtered_by?, store, scope}",
         "example": 'action_call(action="mem_search", params={"query": "registry schema"})',
         "preconditions": ["workspace_valid"],
         "aliases": ["mem_list_patterns"],
@@ -630,7 +989,8 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "group": "memory",
         "summary": "Create/tag entities, add observations, or relate entities.",
         "doc": "Pass entities, observations, and/or relations in one call. Observations "
-        "auto-create their entity if missing.",
+        "auto-create their entity if missing. store='patterns' writes to the dedicated "
+        "cross-project user-patterns store.",
         "handler": _mem_write,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
@@ -638,8 +998,14 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "entities": {"type": "array", "items": {"type": "object"}, "desc": "[{name, entityType, observations}]"},
             "observations": {"type": "array", "items": {"type": "object"}, "desc": "[{entityName, contents}]"},
             "relations": {"type": "array", "items": {"type": "object"}, "desc": "[{from, to, relationType}]"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
         },
-        "returns": "{success, created, observations, relations}",
+        "returns": "{success, store, created, observations, relations}",
         "example": 'action_call(action="mem_write", params={"observations": [{"entityName": "A", "contents": ["x"]}]})',
         "preconditions": ["workspace_valid"],
         "mutates": True,
@@ -655,6 +1021,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "project_id": {"type": "string", "desc": "Optional project scope"},
             "node": {"type": "string", "desc": "Node name to fetch details for"},
             "limit": {"type": "integer", "default": 50, "desc": "Max graph nodes"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
         },
         "returns": "{success, node|graph}",
         "example": 'action_call(action="mem_read", params={"node": "MCPBridge"})',
@@ -663,22 +1035,109 @@ REGISTRY: dict[str, dict[str, Any]] = {
     },
     "mem_remove": {
         "group": "memory",
-        "summary": "Archive entities or delete observations/relations.",
-        "doc": "names → archive entities; deletions → remove observations; relations → remove "
-        "relations. Pass any combination in one call.",
+        "summary": "Archive entities or delete observations/relations (type-safe).",
+        "doc": "names → archive entities by name (REFUSED with a candidate list when the name "
+        "matches multiple entityTypes — never guess); entities → precise [{name, entityType}] "
+        "specs that archive exactly one; deletions → remove observations; relations → remove "
+        "relations. Pass any combination in one call. store='patterns' routes to the "
+        "dedicated user-patterns store.",
         "handler": _mem_remove,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "project_id": {"type": "string", "desc": "Optional project scope"},
-            "names": {"type": "array", "items": {"type": "string"}, "desc": "Entities to archive"},
+            "names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "desc": "Entities to archive by name (must be unambiguous)",
+            },
+            "entities": {
+                "type": "array",
+                "items": {"type": "object"},
+                "desc": "[{name, entityType}] — archive the exact entity (safe when a name is ambiguous)",
+            },
             "deletions": {"type": "array", "items": {"type": "object"}, "desc": "[{entityName, observations}]"},
             "relations": {"type": "array", "items": {"type": "object"}, "desc": "[{from, to, relationType}]"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
         },
-        "returns": "{success, archived, deleted_observations, deleted_relations}",
-        "example": 'action_call(action="mem_remove", params={"names": ["stale-entity"]})',
+        "returns": "{success, store, archived, deleted_observations, deleted_relations}",
+        "example": ('action_call(action="mem_remove", params={"entities": [{"name": "X", "entityType": "concept"}]})'),
         "preconditions": ["workspace_valid"],
         "mutates": True,
         "aliases": ["mem_archive_entities", "mem_delete_observations", "mem_delete_relations"],
+    },
+    "mem_list_entities": {
+        "group": "memory",
+        "summary": "List all memory entities (name/type/obs count) for auditing.",
+        "doc": "Deterministic inventory of the whole store: total entities/relations, counts by "
+        "entityType, and every entity as {name, entityType, observation_count}. Use to audit "
+        "duplicates/staleness or discover what is stored before querying. store='patterns' "
+        "inventories the dedicated user-patterns store.",
+        "handler": _memory_inventory,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project scope"},
+            "limit": {"type": "integer", "default": 100, "desc": "Max entities returned"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
+        },
+        "returns": (
+            "{success, mode='inventory', store, total_entities, total_relations, by_type, "
+            "entities:[{name, entityType, observation_count}]}"
+        ),
+        "example": 'action_call(action="mem_list_entities", params={"limit": 200})',
+        "preconditions": ["workspace_valid"],
+    },
+    "mem_dedupe": {
+        "group": "memory",
+        "summary": "Merge same-named memory entities (keep data-bearing, archive dupes).",
+        "doc": "For every name with multiple entities (optionally only `name`): picks the keeper "
+        "(most observations), moves the others' observations into it, and archives the rest. "
+        "dry_run=true (default) returns the plan without mutating — run it first, then "
+        "dry_run=false to apply. store='patterns' dedupes the user-patterns store.",
+        "handler": _mem_dedupe,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project scope"},
+            "name": {"type": "string", "desc": "Only merge this exact name (default: all names)"},
+            "dry_run": {"type": "boolean", "default": True, "desc": "Preview without mutating"},
+            "store": {
+                "type": "string",
+                "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
+                "default": "project",
+                "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
+            },
+        },
+        "returns": "{success, store, dry_run, groups:[{name, keeper, duplicates}], moved_observations, archived}",
+        "example": 'action_call(action="mem_dedupe", params={"name": "Bus Service"})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
+    },
+    "mem_replay": {
+        "group": "memory",
+        "summary": "Replay the offline cache (pending.jsonl): re-apply queued mutations.",
+        "doc": "Drains the offline cache at .ai/memory-bank/pending.jsonl (one JSON "
+        "object per line). Entries are queued when a store write fails (mem_write/mem_remove "
+        "store down, task_update DB sync down) or by an agent directly when the MCP server is "
+        "unreachable (rule 14-mcp-offline-cache). Successful entries are removed; failed ones "
+        "are kept for a later retry. dry_run=true previews the queue without applying.",
+        "handler": _mem_replay,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "dry_run": {"type": "boolean", "default": False, "desc": "Preview queued entries without applying"},
+        },
+        "returns": "{success, processed, succeeded, failed, pending_left, pending_path}",
+        "example": 'action_call(action="mem_replay", params={"dry_run": True})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
     },
     # ── Graph (code knowledge graph) ────────────────────────────────────
     "graph_build": {
@@ -692,6 +1151,13 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
+            "family": {
+                "type": "string",
+                "desc": (
+                    "Family slug — build the MERGED family graph "
+                    "(per-member builds + member:: tag merge; works across drives)"
+                ),
+            },
             "include_html": {"type": "boolean", "default": True, "desc": "Also export graph.html"},
             "directed": {"type": "boolean", "default": False, "desc": "Directed graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for feedback-memory scoping"},
@@ -714,6 +1180,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
+            "family": {
+                "type": "string",
+                "desc": "Family slug — report on the merged family graph (member:: tagged nodes)",
+            },
         },
         "returns": "{exists, fresh, built_at, nodes, edges, changed_files}",
         "example": 'action_call(action="graph_status", params={"workspace_path": "D:/Project/Foo"})',
@@ -724,6 +1194,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "summary": "Search the code graph (labels / source files / types). Auto-freshens first.",
         "doc": (
             "Search graph nodes by label / source file / type (case-insensitive, ranked). "
+            "The graph is AST-only and indexes file/function/component labels; when no node "
+            "matches, this falls back to a whole-word source scan and returns file-level "
+            "identifier hits (mode='identifier') so variable queries never dead-end. "
             "The graph_fresh precondition rebuilds the graph first if source files changed. "
             "Result includes freshness metadata: graph_fresh / graph_exists / "
             "graph_rebuilding / graph_built_at — when graph_rebuilding is true the read "
@@ -735,10 +1208,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "query": {"type": "string", "required": True, "desc": "Search term"},
             "limit": {"type": "integer", "default": 10, "desc": "Max results"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
+            "family": {"type": "string", "desc": "Family slug — query the merged family graph (member:: tagged nodes)"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
         },
         "returns": (
-            "{success, count, results:[{id, label, type, source_file}], "
+            "{success, count, mode, results:[{id, label, type, source_file}], "
             "related_memory:[{name, observations}], graph_fresh, graph_exists, "
             "graph_rebuilding, graph_built_at}"
         ),
@@ -762,11 +1236,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "a": {"type": "string", "required": True, "desc": "From node label"},
             "b": {"type": "string", "required": True, "desc": "To node label"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
+            "family": {"type": "string", "desc": "Family slug — path over the merged family graph"},
         },
-        "returns": (
-            "{success, path:[labels], hops, graph_fresh, graph_exists, "
-            "graph_rebuilding, graph_built_at}"
-        ),
+        "returns": ("{success, path:[labels], hops, graph_fresh, graph_exists, graph_rebuilding, graph_built_at}"),
         "example": (
             'action_call(action="graph_path", '
             'params={"workspace_path": "D:/Project/Foo", "a": "action_call", "b": "registry"})'
@@ -788,6 +1260,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "node": {"type": "string", "required": True, "desc": "Node label"},
             "limit": {"type": "integer", "default": 30, "desc": "Max neighbours"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
+            "family": {"type": "string", "desc": "Family slug — explain a node in the merged family graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
         },
         "returns": (
@@ -853,7 +1326,8 @@ async def _pre_graph_dir_ready(workspace_path: str, params: dict, state: dict) -
 async def _pre_graph_fresh(workspace_path: str, params: dict, state: dict) -> tuple[bool, str, dict, bool]:
     # background=True: a heavy stale rebuild runs in a background thread so the
     # graph read returns immediately (small incremental rebuilds stay sync).
-    result = _graph_ensure_fresh(workspace_path, background=True)
+    # family=<slug> keeps the merged family graph fresh (per-member builds + merge).
+    result = _graph_ensure_fresh(workspace_path, background=True, family=params.get("family"))
     ok = bool(result.get("success"))
     if not ok:
         return ok, result.get("error", "graph_fresh failed"), {"graph_fresh": result}, False

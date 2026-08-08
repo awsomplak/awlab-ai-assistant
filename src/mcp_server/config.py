@@ -132,6 +132,16 @@ class _Settings:
         return path
 
     @cached_property
+    def workflows_dir(self) -> Path:
+        """Shared workflows directory: ``~/.awlab-id/agent-memory/work-flows``.
+
+        Non-Cline agents publish here; the ``wf`` action loads from here by default.
+        """
+        path = self.config_home / "work-flows"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @cached_property
     def user_home(self) -> Path:
         """The current user's home directory."""
         if self._user_home is not None:

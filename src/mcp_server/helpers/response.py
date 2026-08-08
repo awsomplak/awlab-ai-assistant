@@ -84,4 +84,3 @@ def _json_converter(obj):
         return list(obj)  # Converts sets to arrays
     # return str(obj)             # Fallback string representation
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
