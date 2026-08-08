@@ -16,15 +16,21 @@ No LLM pass — structural graph only.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import re
+import shutil
 import threading
+import time
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from .agent_recall import family_member_id, family_members, seed_member_project_id, sync_family_project_ids
 from .response import fail_obj, ok_obj
 
 
@@ -93,20 +99,24 @@ def _background_rebuild(workspace_path: str | Path, root: Path) -> bool:
 
 def _rebuild_in_flight(workspace_path: str | Path, root: str | Path | None = None) -> bool:
     """True if a background rebuild is currently running for this project."""
-    key = str(Path(root or workspace_path).resolve())
+    key = str(_resolve_root(workspace_path, root))
     with _BUILD_LOCKS_GUARD:
         t = _BACKGROUND_THREADS.get(key)
     return t is not None and t.is_alive()
 
 
-def _graph_freshness(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any]:
+def _graph_freshness(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    family: str | None = None,
+) -> dict[str, Any]:
     """Freshness metadata attached to every graph read result.
 
     This is what lets the AGENT tell whether the data it just read is current and
     whether a background rebuild is in flight — without it, a stale read looks
     identical to a fresh one and the agent silently acts on outdated structure.
     """
-    st = graph_status(workspace_path, root)
+    st = graph_status(workspace_path, root, family=family)
     return {
         "graph_fresh": bool(st.get("fresh", False)),
         "graph_exists": bool(st.get("exists", False)),
@@ -120,6 +130,7 @@ _NOISE_DIRS = {
     ".git",
     ".venv",
     "venv",
+    "vendor",
     "node_modules",
     "dist",
     "build",
@@ -134,6 +145,42 @@ _NOISE_DIRS = {
     "*.egg-info",
 }
 
+# Generated dependency LOCK files — committed for reproducible builds but NOT
+# source for the code graph (huge, machine-written, no structure value). Unlike
+# .gitignore junk they are typically COMMITTED, so they need an explicit
+# always-on exclusion (never relaxed by gitignore).
+_LOCK_FILES = {
+    # JS / Node
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lock",
+    "bun.lockb",
+    "deno.lock",
+    # Python
+    "poetry.lock",
+    "Pipfile.lock",
+    "uv.lock",
+    "pdm.lock",
+    # PHP
+    "composer.lock",
+    # Go / Rust / Ruby
+    "go.sum",
+    "Gopkg.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    # .NET / Java
+    "packages.lock.json",
+    "paket.lock",
+    "gradle.lockfile",
+}
+
+
+def _is_lock_file(name: str) -> bool:
+    """True for generated dependency lock files (never graph source)."""
+    return name in _LOCK_FILES
+
 
 def _is_noise_relpath(rel: str) -> bool:
     """True if a forward-slash relpath lives under a noise directory.
@@ -142,25 +189,34 @@ def _is_noise_relpath(rel: str) -> bool:
     ``_NOISE_DIRS``) so scratch/temp and dependency dirs never reach ``extract``.
     """
     parts = rel.split("/")
-    return any(
-        p in _NOISE_DIRS or p.endswith(".egg-info") for p in parts[:-1]
-    )
+    return any(p in _NOISE_DIRS or p.endswith(".egg-info") for p in parts[:-1])
 
 
-def _source_manifest(root: Path) -> dict[str, str]:
-    """Return {relpath: '<mtime_ns>:<size>'} for all source files under root (noise excluded).
+def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -> dict[str, str]:
+    """Return {relpath: '<mtime_ns>:<size>'} for all source files under root.
 
     Uses ``st_mtime_ns`` (nanosecond) so two writes within the same wall-clock
     second are still detected as changed — whole-second ``st_mtime`` misses
     rapid edits, which silently skips incremental rebuilds.
+
+    When ``exclusions`` (project .gitignore rules) is given, matching dirs are
+    pruned during the walk and matching files skipped — so freshness is computed
+    over the SAME file set the graph actually indexes (gitignored output churn
+    never triggers false stale). Defaults to ``_NOISE_DIRS`` only.
     """
     manifest: dict[str, str] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _NOISE_DIRS and not (d.endswith(".egg-info"))]
+        if exclusions is not None:
+            rel_dir = str(Path(dirpath).relative_to(root)).replace("\\", "/")
+            parent = "" if rel_dir == "." else rel_dir
+            dirnames[:] = [d for d in dirnames if not exclusions.excludes_dir(parent, d)]
         for name in filenames:
-            if name.endswith((".pyc", ".pyo")):
+            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name):
                 continue
             path = Path(dirpath) / name
+            if exclusions is not None and _gitignored(root, path, exclusions):
+                continue
             try:
                 st = path.stat()
                 rel = str(path.relative_to(root)).replace("\\", "/")
@@ -168,6 +224,116 @@ def _source_manifest(root: Path) -> dict[str, str]:
             except OSError:
                 continue
     return manifest
+
+
+# ── Project .gitignore-aware exclusion (ADDITIVE to _NOISE_DIRS) ───────────
+
+
+@dataclass
+class _ProjectExclusions:
+    """Project-derived exclusion rules (parsed from .gitignore files).
+
+    gitignore is a SUPPLEMENT on top of the ALWAYS-applied ``_NOISE_DIRS`` safety
+    net — it can exclude MORE (project junk: dist/, build/, coverage/, ...) but
+    can NEVER re-include a ``_NOISE_DIRS`` path. Only positive patterns are
+    applied (``!`` negations are ignored — conservative), and a blank-detection
+    guard keeps gitignore from ever emptying the source set.
+    """
+
+    dir_names: set[str] = field(default_factory=set)  # any-level directory names (O(1) prune)
+    dir_paths: set[str] = field(default_factory=set)  # anchored relative dir paths (fwd-slash)
+    name_globs: list[str] = field(default_factory=list)  # basename globs (e.g. *.log)
+    path_globs: list[str] = field(default_factory=list)  # relative-path globs
+
+    def excludes_dir(self, parent_rel: str, name: str) -> bool:
+        """True when a directory (name under parent_rel) should be pruned."""
+        if name in self.dir_names:
+            return True
+        if parent_rel:
+            return f"{parent_rel}/{name}" in self.dir_paths
+        return name in self.dir_paths
+
+    def excludes_file(self, rel: str, name: str) -> bool:
+        """True when a file (rel path + basename) should be excluded."""
+        if name in self.dir_names:
+            return True
+        if any(fnmatch.fnmatch(name, g) for g in self.name_globs):
+            return True
+        return any(fnmatch.fnmatch(rel, g) for g in self.path_globs)
+
+
+def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> None:
+    """Parse one .gitignore into the exclusion set (base_rel = dir rel to scan root)."""
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue  # skip blanks, comments, and negations (conservative)
+        dir_only = line.endswith("/")
+        if dir_only:
+            line = line[:-1].strip()
+        anchored = line.startswith("/")
+        if anchored:
+            line = line[1:].strip()
+        if not line:
+            continue
+        if anchored or "/" in line:
+            rel = f"{base_rel}/{line}" if base_rel else line
+            rel = rel.strip("/")
+            if dir_only:
+                ex.dir_paths.add(rel)
+            else:
+                ex.path_globs.append(rel)
+        else:
+            ex.dir_names.add(line)  # plain name → prunes a dir OR excludes a file with that name
+            if any(ch in line for ch in "*?["):
+                ex.name_globs.append(line)
+
+
+_EXCLUSION_CACHE: dict[str, tuple[float, _ProjectExclusions]] = {}
+_EXCLUSION_TTL = 30.0  # seconds — re-walk after this so gitignore edits are picked up
+
+
+def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
+    """Load all .gitignore-derived exclusions under scan_root (cached with a TTL).
+
+    The walk prunes ``_NOISE_DIRS`` so dependency/junk subtrees are never
+    traversed just to read gitignores — this keeps the extra pass cheap while
+    the returned dir-name set makes later scans skip even more.
+    """
+    key = str(Path(scan_root).resolve())
+    now = time.monotonic()
+    cached = _EXCLUSION_CACHE.get(key)
+    if cached is not None and now - cached[0] < _EXCLUSION_TTL:
+        return cached[1]
+    ex = _ProjectExclusions()
+    root = Path(scan_root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _NOISE_DIRS and not d.endswith(".egg-info")]
+        rel_dir = str(Path(dirpath).relative_to(root)).replace("\\", "/")
+        if ".gitignore" in filenames:
+            try:
+                content = (Path(dirpath) / ".gitignore").read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                content = ""
+            _parse_gitignore(ex, content, "" if rel_dir == "." else rel_dir)
+    _EXCLUSION_CACHE[key] = (now, ex)
+    return ex
+
+
+def _gitignored(scan_root: Path, path: Path, ex: _ProjectExclusions) -> bool:
+    """True when a file path is excluded by project gitignore rules (dirs included)."""
+    try:
+        rel = str(path.relative_to(scan_root)).replace("\\", "/")
+    except ValueError:
+        return False
+    parts = rel.split("/")
+    name = parts[-1]
+    if ex.excludes_file(rel, name):
+        return True
+    for i in range(1, len(parts)):
+        if ex.excludes_dir("/".join(parts[: i - 1]) if i > 1 else "", parts[i - 1]):
+            return True
+    return False
 
 
 def _graphify_imports() -> dict[str, Any] | None:
@@ -205,6 +371,208 @@ def _graphify_imports() -> dict[str, Any] | None:
 
 def _codegraph_dir(root: Path) -> Path:
     return root / ".ai" / "codegraph"
+
+
+def _resolve_root(workspace_path: str | Path, root: str | Path | None = None) -> Path:
+    """Resolve the scan root: absolute as-is, relative joined to workspace_path.
+
+    A relative ``root`` (e.g. ``"src"``) MUST resolve against ``workspace_path``
+    — never the server CWD, which is arbitrary (frozen exe / stdio server).
+    Without this, ``graph_build root="src"`` scans the wrong directory (or
+    fails with "no supported source files detected").
+    """
+    base = Path(workspace_path).resolve()
+    if root is None:
+        return base
+    r = Path(root)
+    return r.resolve() if r.is_absolute() else (base / r).resolve()
+
+
+def _resolve_graph_root(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    family: str | None = None,
+) -> Path:
+    """Resolve the graph root for an op, honoring a project family.
+
+    Family ops target the family's MERGED graph directory (config home — works
+    across drives, no common ancestor required). Non-family ops target the
+    WORKSPACE root's ``.ai/codegraph`` — ``root`` only scopes the scan, never
+    the output location (so ``root="src"`` cannot drop ``.ai`` inside ``src/``).
+    """
+    if family:
+        return _family_codegraph_dir(family)
+    return _resolve_root(workspace_path)
+
+
+# ── Family graph (graphify native global-graph mechanism) ─────────────────
+
+
+def _family_codegraph_dir(slug: str) -> Path:
+    """Where the merged family graph lives (config home — correct across drives)."""
+    return settings.config_home / "codegraph" / f"family_{slug}"
+
+
+def _load_nx_graph(graph_path: Path):
+    """Load a graph.json as a networkx Graph (graphify node-link format)."""
+    from networkx.readwrite import json_graph as _jg
+
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    if "links" not in data and "edges" in data:
+        data = dict(data, links=data["edges"])
+    try:
+        return _jg.node_link_graph(data, edges="links")
+    except TypeError:
+        return _jg.node_link_graph(data)
+
+
+def _build_family_graph(
+    slug: str,
+    *,
+    include_html: bool = False,
+    directed: bool = False,
+    out_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build the FAMILY graph via graphify's native global-graph mechanism.
+
+    Each member project is built with its OWN root (correct per-project
+    ``source_file`` paths — never a synthetic/wrong root), then prefixed with a
+    stable member tag via ``prefix_graph_for_global`` and merged into ONE graph
+    at ``<config_home>/codegraph/family_<slug>/.ai/codegraph/graph.json``.
+
+    ``out_dir`` (sandbox) redirects ALL output to a custom directory — member
+    graphs to ``<out_dir>/members/<tag>/`` and the merged family to
+    ``<out_dir>/family/`` — so nothing is written into the member projects
+    (ideal for large real-world projects or disposable inspections).
+
+    Correct across drives (D:/frontend + E:/backend): per-project paths stay
+    clean; node IDs are tagged ``member::local``; every node carries a ``repo``
+    attribute. Cross-project EDGES only form for static coupling graphify can
+    see (built per-project in isolation); runtime/API calls belong in memory
+    relations, not graph edges.
+
+    Two visualizations: each member's ``graph.html`` stays its OWN per-project
+    graph (built with include_html=True), while the combined ``family.html`` is
+    generated in the family dir AND mirrored into every member's
+    ``.ai/codegraph/family.html`` (or ``<out_dir>/members/<tag>/family.html``
+    under a sandbox) so opening ``family.html`` from any member shows the same
+    merged graph (to_html embeds the graph data inline, so the copy is
+    self-contained).
+    """
+    g = _graphify_imports()
+    if g is None:
+        return fail_obj(error="graphifyy is not installed")
+    # Reconcile declared member project_ids to each project's own .ai/project-id
+    # (the project is authoritative) + check for duplicate ids with different paths.
+    sync_family_project_ids(slug)
+    members = family_members(slug)
+    if not members:
+        return fail_obj(error=f"family '{slug}' has no declared members")
+
+    import networkx as nx
+    from graphify.build import prefix_graph_for_global
+
+    combined_parts: list[nx.Graph] = []
+    member_manifests: dict[str, dict[str, Any]] = {}
+    member_out_dirs: dict[str, Path] = {}
+    sandbox = Path(out_dir) if out_dir is not None else None
+    for member in members:
+        # Stable member identity (.ai/project-id authoritative > declared > derived),
+        # used as the repo:: tag. Seed the marker for fresh projects (identity only).
+        tag = family_member_id(slug, member)
+        seed_member_project_id(slug, member)
+        if sandbox is not None:
+            m_out = sandbox / "members" / tag
+            res = build_graph(member, include_html=True, out_dir=m_out)
+            graph_json = m_out / "graph.json"
+            member_out_dirs[tag] = m_out
+        else:
+            res = build_graph(member, include_html=True)
+            graph_json = _codegraph_dir(Path(member)) / "graph.json"
+            member_out_dirs[tag] = _codegraph_dir(Path(member))
+        if not res.get("success"):
+            return fail_obj(error=f"family member graph build failed ({tag}): {res.get('error')}")
+        if not graph_json.is_file():
+            return fail_obj(error=f"family member graph missing for '{tag}'")
+        combined_parts.append(prefix_graph_for_global(_load_nx_graph(graph_json), tag))
+        member_manifests[tag] = {
+            "member": str(Path(member).resolve()),
+            "source_manifest": _source_manifest(Path(member)),
+        }
+
+    combined = nx.compose_all(combined_parts)
+    communities = g["cluster"](combined)
+    if sandbox is not None:
+        fam_out = sandbox / "family"
+    else:
+        fam_out = _codegraph_dir(_family_codegraph_dir(slug))
+    fam_out.mkdir(parents=True, exist_ok=True)
+    graph_path = fam_out / "graph.json"
+    g["to_json"](
+        combined,
+        communities,
+        str(graph_path),
+        force=True,
+        built_at_commit=_git_head_safe(fam_out),
+    )
+    artifacts = {"graph.json": str(graph_path), "family.html": ""}
+    if include_html:
+        fam_html = fam_out / "family.html"
+        g["to_html"](combined, communities, str(fam_html))
+        artifacts["family.html"] = str(fam_html)
+        # Mirror the merged visualization into every member location (project
+        # .ai/codegraph, or the sandbox member dir) so opening family.html from
+        # any member shows the SAME combined graph.
+        for tag, member_out in member_out_dirs.items():
+            member_out.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(fam_html, member_out / "family.html")
+    built_at = datetime.now(timezone.utc).isoformat()
+    (fam_out / ".build_state.json").write_text(
+        json.dumps(
+            {
+                "built_at": built_at,
+                "family": slug,
+                "members": {t: m["member"] for t, m in member_manifests.items()},
+                "source_manifest": {t: m["source_manifest"] for t, m in member_manifests.items()},
+                "nodes": combined.number_of_nodes(),
+                "edges": combined.number_of_edges(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _ensure_readme(fam_out)
+    return ok_obj(
+        out_dir=str(fam_out),
+        artifacts=artifacts,
+        nodes=combined.number_of_nodes(),
+        edges=combined.number_of_edges(),
+        built_at=built_at,
+        members=len(members),
+        family_html_mirrored_to_members=bool(include_html),
+    )
+
+
+def _family_status(slug: str) -> dict[str, Any]:
+    """Family graph status: exists + fresh (every member's per-project graph fresh)."""
+    out_dir = _codegraph_dir(_family_codegraph_dir(slug))
+    state_path = out_dir / ".build_state.json"
+    if not state_path.is_file() or not (out_dir / "graph.json").is_file():
+        return ok_obj(exists=False, fresh=False, error="no family graph built (run graph_build family=<slug>)")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ok_obj(exists=False, fresh=False, error="corrupt family build state")
+    members = family_members(slug)
+    fresh = bool(members) and all(bool(graph_status(m).get("fresh")) for m in members)
+    return ok_obj(
+        exists=True,
+        fresh=fresh,
+        built_at=state.get("built_at"),
+        nodes=state.get("nodes"),
+        edges=state.get("edges"),
+        members=list((state.get("members") or {}).keys()),
+    )
 
 
 def _load_manifest(out_dir: Path) -> dict[str, Any] | None:
@@ -253,16 +621,18 @@ def _write_feedback(
     if not changed:
         return
     try:
-        from .agent_recall import add_observations, create_entities
+        from .agent_recall import add_observations, ensure_entities
 
         preview = changed[:10]
         note = f"graphify: {len(changed)} file(s) changed at {datetime.now(timezone.utc).isoformat()}: " + ", ".join(
             preview
         )
-        create_entities(
+        # Reuse an existing same-named entity — never spawn an empty duplicate.
+        ensure_entities(
             workspace_path=workspace_path,
             project_id=project_id,
-            entities=[{"name": "graphify_feedback", "entityType": "concept", "observations": []}],
+            names=["graphify_feedback"],
+            entity_type="concept",
         )
         add_observations(
             workspace_path=workspace_path,
@@ -332,7 +702,6 @@ def _merge_extractions(
     prev_graph: dict[str, Any] | None,
     fresh: dict[str, Any],
     changed: list[str],
-    all_files: list[str],
 ) -> dict[str, Any]:
     """Merge fresh extraction results with the prior graph's unchanged nodes.
 
@@ -369,14 +738,8 @@ def _merge_extractions(
     # ``path``) UNLESS they already exist in prev_graph (per-module ``_py_any``/
     # ``_py_path`` counterparts are carried over via kept_nodes). This prevents
     # an extra global ``any`` node from drifting in on incremental builds.
-    prev_placeholder_ids = {
-        str(n.get("id") or "") for n in prev_nodes if not n.get("source_file")
-    }
-    fresh_nodes = [
-        n
-        for n in fresh_nodes
-        if n.get("source_file") or str(n.get("id") or "") in prev_placeholder_ids
-    ]
+    prev_placeholder_ids = {str(n.get("id") or "") for n in prev_nodes if not n.get("source_file")}
+    fresh_nodes = [n for n in fresh_nodes if n.get("source_file") or str(n.get("id") or "") in prev_placeholder_ids]
 
     # Dedup by (source_file, id): fresh wins over carried-over.
     seen: set[tuple[str, str]] = set()
@@ -430,17 +793,21 @@ def build_graph(
     include_html: bool = True,
     directed: bool = False,
     project_id: str | None = None,
+    out_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Build the code knowledge graph (serialized per project).
 
     Thin lock wrapper around :func:`_build_graph_impl`: builds for the same
     project are serialized so a synchronous ``graph_build`` and a background
     auto-rebuild can never race on ``graph.json``; different projects use
-    separate locks and build concurrently.
+    separate locks and build concurrently. ``out_dir`` redirects the graph
+    artifacts (graph.json/html, .build_state.json) to a custom directory — the
+    scan root stays ``root`` (useful for sandboxed family builds or keeping
+    large projects untouched). Output defaults to the WORKSPACE root's
+    ``.ai/codegraph`` regardless of ``root`` (which only scopes the scan).
     """
-    root = Path(root or workspace_path).resolve()
-    with _build_lock(root):
-        return _build_graph_impl(workspace_path, root, include_html, directed, project_id)
+    with _build_lock(_resolve_root(workspace_path)):
+        return _build_graph_impl(workspace_path, root, include_html, directed, project_id, out_dir)
 
 
 def graph_build_action(
@@ -449,19 +816,24 @@ def graph_build_action(
     include_html: bool = True,
     directed: bool = False,
     project_id: str | None = None,
+    family: str | None = None,
 ) -> dict[str, Any]:
     """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
 
     If a background rebuild is already running for this project, return
     immediately with ``{rebuilding: True}`` instead of starting a duplicate build
     (which would block the request and double-build). The graph will be fresh
-    shortly; the agent can confirm via ``graph_status``.
+    shortly; the agent can confirm via ``graph_status``. ``family`` builds the
+    merged family graph (native global-graph mechanism) instead.
     """
+    if family:
+        return _build_family_graph(family, include_html=include_html, directed=directed)
+    out_root = _resolve_root(workspace_path)
     if _rebuild_in_flight(workspace_path, root):
         return ok_obj(
             success=True,
             rebuilding=True,
-            out_dir=str(_codegraph_dir(Path(root or workspace_path).resolve())),
+            out_dir=str(_codegraph_dir(out_root)),
             note="graph rebuild already in progress — will be fresh shortly; no new build started",
         )
     return build_graph(workspace_path, root, include_html=include_html, directed=directed, project_id=project_id)
@@ -473,8 +845,9 @@ def _build_graph_impl(
     include_html: bool = True,
     directed: bool = False,
     project_id: str | None = None,
+    out_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Build the code knowledge graph into ``<root>/.ai/codegraph/`` (AST-only, no LLM).
+    """Build the code knowledge graph (AST-only, no LLM).
 
     **Incremental**: when a previous graph + manifest exist, only files whose
     mtime/size changed are re-extracted; the unchanged corpus is passed to
@@ -493,34 +866,52 @@ def _build_graph_impl(
     if g is None:
         return fail_obj(error="graphifyy is not installed")
 
-    root = Path(root or workspace_path).resolve()
-    out_dir = _codegraph_dir(root)
+    scan_root = _resolve_root(workspace_path, root)
+    out_root = _resolve_root(workspace_path)
+    out_dir = _codegraph_dir(out_root) if out_dir is None else Path(out_dir)
+    # Cache follows the OUTPUT location: default → <workspace_root>/.ai/codegraph/
+    # (never the scan sub-root, so root="src" cannot drop .ai inside src/); under a
+    # sandbox → <out_dir>/cache so NOTHING is written into the scanned project.
+    cache_root = out_root if out_dir is None else out_dir / "cache"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Capture the previous manifest BEFORE overwriting (for feedback + diff).
     prev_manifest = _load_manifest(out_dir)
-    cur_manifest = _source_manifest(root)
+    exclusions = _gitignore_exclusions(scan_root)
+    cur_manifest = _source_manifest(scan_root, exclusions)
     changed = _changed_files(prev_manifest, cur_manifest)
 
     try:
-        detected = g["detect"](root, cache_root=root)
+        detected = g["detect"](scan_root, cache_root=cache_root)
 
-        def _noise_free(path: Path) -> bool:
+        def _default_noise_free(path: Path) -> bool:
+            if _is_lock_file(path.name):
+                return False  # generated dependency lock files — never graph source
             try:
-                rel = path.relative_to(root)
+                rel = path.relative_to(scan_root)
             except ValueError:
-                return False  # outside root — not a source file
+                return False  # outside scan root — not a source file
             return not _is_noise_relpath(str(rel).replace("\\", "/"))
 
         # graphify's detect does not honour our _NOISE_DIRS — filter scratch/temp
         # and dependency dirs (e.g. .ai/temp) out of the file list BEFORE extract.
-        files = [
-            Path(f)
-            for lst in detected.get("files", {}).values()
-            for f in lst
-            if _noise_free(Path(f))
-        ]
+        files_all = [Path(f) for lst in detected.get("files", {}).values() for f in lst if _default_noise_free(Path(f))]
+        # Apply project .gitignore exclusions (additive; never relaxes _NOISE_DIRS).
+        files = [f for f in files_all if not _gitignored(scan_root, f, exclusions)]
+        if not files and files_all:
+            # BLANK-DETECTION GUARD: gitignore would empty the source set — fall
+            # back to the default noise rules so a misconfigured .gitignore can
+            # never produce "no supported source files detected".
+            files = files_all
+            gitignore_fallback = True
+        else:
+            gitignore_fallback = False
         if not files:
+            ig = detected.get("ignored") or []
+            if isinstance(ig, list) and ig:
+                return fail_obj(
+                    error=f"no supported source files detected ({len(ig)} file(s) ignored by .gitignore/graphifyignore)"
+                )
             return fail_obj(error="no supported source files detected")
 
         rel_files = [str(f).replace("\\", "/") for f in files]
@@ -553,25 +944,23 @@ def _build_graph_impl(
             changed_set = set(changed)
             # ``changed`` holds RELATIVE relpaths (from _source_manifest) while
             # ``files`` are ABSOLUTE — compare against each file's relpath.
-            to_extract = [
-                f for f in files if str(f.relative_to(root)).replace("\\", "/") in changed_set
-            ]
+            to_extract = [f for f in files if str(f.relative_to(scan_root)).replace("\\", "/") in changed_set]
             # Re-extract changed files; feed the unchanged corpus as resolution
             # context so cross-file edges (calls, method refs) still resolve.
             fresh = g["extract"](
                 to_extract,
-                root=root,
-                cache_root=root,
+                root=scan_root,
+                cache_root=cache_root,
                 parallel=_use_parallel(),
                 resolution_context_nodes=prev_graph["nodes"],
                 resolution_context_edges=prev_graph["edges"],
             )
-            extraction = _merge_extractions(prev_graph, fresh, changed, rel_files)
+            extraction = _merge_extractions(prev_graph, fresh, changed)
         else:
             # Full build (first time, or nearly everything changed).
-            extraction = g["extract"](files, root=root, cache_root=root, parallel=_use_parallel())
+            extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
 
-        graph = g["build_from_json"](extraction, root=root, directed=directed)
+        graph = g["build_from_json"](extraction, root=scan_root, directed=directed)
         communities = g["cluster"](graph)
 
         graph_path = out_dir / "graph.json"
@@ -588,7 +977,7 @@ def _build_graph_impl(
             communities,
             str(graph_path),
             force=incremental,
-            built_at_commit=_git_head_safe(root),
+            built_at_commit=_git_head_safe(out_root),
         )
 
         artifacts = {"graph.json": str(graph_path)}
@@ -600,7 +989,8 @@ def _build_graph_impl(
         built_at = datetime.now(timezone.utc).isoformat()
         manifest = {
             "built_at": built_at,
-            "scan_root": str(root),
+            "scan_root": str(scan_root),
+            "output_root": str(out_root),
             "total_files": len(rel_files),
             "nodes": graph.number_of_nodes(),
             "edges": graph.number_of_edges(),
@@ -610,7 +1000,7 @@ def _build_graph_impl(
         _ensure_readme(out_dir)
 
         # Write-time feedback: record changed files in memory.
-        _write_feedback(workspace_path, root, prev_manifest, manifest, project_id)
+        _write_feedback(workspace_path, scan_root, prev_manifest, manifest, project_id)
 
         return ok_obj(
             out_dir=str(out_dir),
@@ -620,6 +1010,7 @@ def _build_graph_impl(
             files=len(rel_files),
             built_at=built_at,
             incremental=incremental,
+            gitignore_fallback=gitignore_fallback,
         )
     except Exception as e:  # noqa: BLE001 — loud, actionable
         return fail_obj(error=f"graph build failed: {e}")
@@ -643,10 +1034,14 @@ def _ensure_readme(out_dir: Path) -> None:
     )
 
 
-def graph_status(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any]:
+def graph_status(
+    workspace_path: str | Path, root: str | Path | None = None, family: str | None = None
+) -> dict[str, Any]:
     """Return whether the graph exists and is fresh (source unchanged since last build)."""
-    root = Path(root or workspace_path).resolve()
-    out_dir = _codegraph_dir(root)
+    if family:
+        return _family_status(family)
+    scan_root = _resolve_root(workspace_path, root)
+    out_dir = _codegraph_dir(_resolve_root(workspace_path))
     state_path = out_dir / ".build_state.json"
 
     if not state_path.is_file() or not (out_dir / "graph.json").is_file():
@@ -658,7 +1053,7 @@ def graph_status(workspace_path: str | Path, root: str | Path | None = None) -> 
         return ok_obj(exists=False, fresh=False, error="corrupt build state")
 
     prev = state.get("source_manifest", {})
-    cur = _source_manifest(root)
+    cur = _source_manifest(scan_root, _gitignore_exclusions(scan_root))
     changed = sorted(p for p in cur if prev.get(p) != cur.get(p))
     removed = sorted(p for p in prev if p not in cur)
     fresh = not changed and not removed
@@ -680,6 +1075,7 @@ def ensure_fresh(
     root: str | Path | None = None,
     *,
     background: bool = False,
+    family: str | None = None,
 ) -> dict[str, Any]:
     """Idempotent freshness guarantee: rebuild only when missing or stale.
 
@@ -691,15 +1087,34 @@ def ensure_fresh(
     the current graph.json stays readable (atomic writes) and the next read sees
     fresh data. Small incremental rebuilds stay synchronous so a read right after
     an edit returns accurate results. A first build (no graph yet) is always
-    synchronous because there is nothing to read otherwise.
+    synchronous because there is nothing to read otherwise. ``family`` ensures
+    the merged family graph: per-member per-project graphs are kept fresh, then
+    the family merge is rebuilt when missing or stale.
     """
+    if family:
+        st = _family_status(family)
+        if st.get("fresh"):
+            return ok_obj(fresh=True, updated=0, exists=True)
+        for m in family_members(family):
+            res = build_graph(m, include_html=False)
+            if not res.get("success"):
+                return fail_obj(error=res.get("error", "family member build failed"))
+        result = _build_family_graph(family)
+        result["fresh"] = True
+        result["updated"] = 1 if result.get("success") else 0
+        return result
     st = graph_status(workspace_path, root)
     if st.get("fresh"):
         return ok_obj(fresh=True, updated=0, exists=st.get("exists"))
     if background and st.get("exists"):
-        r = Path(root or workspace_path).resolve()
+        r = _resolve_root(workspace_path)
         prev_manifest = _load_manifest(_codegraph_dir(r))
-        changed = _changed_files(prev_manifest, _source_manifest(r)) if prev_manifest else []
+        scan_root = _resolve_root(workspace_path, root)
+        changed = (
+            _changed_files(prev_manifest, _source_manifest(scan_root, _gitignore_exclusions(scan_root)))
+            if prev_manifest
+            else []
+        )
         if prev_manifest is None or len(changed) >= _BACKGROUND_THRESHOLD:
             started = _background_rebuild(workspace_path, r)
             return ok_obj(fresh=False, background=True, started=started, updated=0, exists=True)
@@ -715,9 +1130,18 @@ def ensure_fresh(
 
 
 def _load_graph(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any] | None:
-    """Load the built graph.json, or None if it doesn't exist."""
-    root = Path(root or workspace_path).resolve()
-    graph_path = _codegraph_dir(root) / "graph.json"
+    """Load the built graph.json, or None if it doesn't exist.
+
+    An ABSOLUTE ``root`` (e.g. the family graph dir from ``_resolve_graph_root``)
+    is honored as the output location; a relative ``root`` (scan scope like
+    ``"src"``) or None resolves to the WORKSPACE root's ``.ai/codegraph`` — so
+    ``root="src"`` can never read/drop a graph inside ``src/``.
+    """
+    if root is not None and Path(root).is_absolute():
+        out_dir = _codegraph_dir(Path(root))
+    else:
+        out_dir = _codegraph_dir(_resolve_root(workspace_path))
+    graph_path = out_dir / "graph.json"
     if not graph_path.is_file():
         return None
     try:
@@ -727,22 +1151,55 @@ def _load_graph(workspace_path: str | Path, root: str | Path | None = None) -> d
 
 
 def _find_node_id(data: dict[str, Any], term: str) -> str | None:
-    """Find a node id by label, in order of specificity:
+    """Resolve a node by id OR label, in order of specificity:
 
+    0. Exact node ``id`` — so ids returned by ``graph_query`` (e.g.
+       ``src_stores_auth_useauthstore``) work unchanged in ``graph_path`` /
+       ``graph_explain``. This is what makes node identity CONSISTENT across
+       query / explain / path.
     1. Exact label match (case-insensitive).
-    2. Function-name exact match — the term matches a label after stripping a
+    2. ``name`` field exact match (some exporters split label/name).
+    3. Source-file match — a module path (e.g. ``src/stores/auth.js``) resolves
+       to its file/module node, so ``graph_path`` works with file paths directly
+       (cross-file navigation). Prefers the module node (label == basename); a
+       path-style term also matches by SUFFIX so full paths work regardless of
+       the build-root prefix (e.g. ``mcp_server/helpers/agent_recall.py`` matches
+       ``src/mcp_server/helpers/agent_recall.py``).
+    4. Function-name exact match — the term matches a label after stripping a
        trailing ``()``/``(...)`` call signature (e.g. ``graph_status`` matches
        the node labeled ``graph_status()``). Without this, ``graph_path`` could
        resolve ``graph_status`` to an unrelated node whose label merely
        *contains* the term (e.g. a test named ``test_graph_status_...``).
-    3. First substring label match (fallback).
+    5. First substring label match (fallback).
+    6. Substring id match (last-resort fallback).
     """
-    t = (term or "").strip().lower()
-    if not t:
+    raw = (term or "").strip()
+    if not raw:
         return None
+    t = raw.lower()
     nodes = data.get("nodes", [])
     for n in nodes:
+        if str(n.get("id") or "") == raw:
+            return n.get("id")
+    for n in nodes:
         if (n.get("label") or "").lower() == t:
+            return n.get("id")
+    for n in nodes:
+        if (n.get("name") or "").lower() == t:
+            return n.get("id")
+    for n in nodes:
+        src = (n.get("source_file") or "").lower()
+        if src == t and (n.get("label") or "").lower() == src.rsplit("/", 1)[-1]:
+            return n.get("id")
+    for n in nodes:
+        if (n.get("source_file") or "").lower() == t:
+            return n.get("id")
+    # Source-file SUFFIX fallback: a path-style term should resolve regardless of
+    # the build-root prefix (e.g. "mcp_server/helpers/agent_recall.py" matches a
+    # graph whose source_file is "src/mcp_server/helpers/agent_recall.py").
+    for n in nodes:
+        src = (n.get("source_file") or "").lower()
+        if "/" in t and src.endswith(t):
             return n.get("id")
     for n in nodes:
         label = (n.get("label") or "").lower()
@@ -750,6 +1207,9 @@ def _find_node_id(data: dict[str, Any], term: str) -> str | None:
             return n.get("id")
     for n in nodes:
         if t in (n.get("label") or "").lower():
+            return n.get("id")
+    for n in nodes:
+        if t in str(n.get("id") or "").lower():
             return n.get("id")
     return None
 
@@ -798,18 +1258,84 @@ def _related_memory(
         return []
 
 
+def _identifier_scan(
+    workspace_path: str | Path,
+    root: Path,
+    term: str,
+    limit: int = 10,
+    max_bytes: int = 1_000_000,
+) -> list[dict[str, Any]]:
+    """Text-scan source files for an identifier the graph did not index.
+
+    graphify only indexes file/function/class/component-level labels — computed,
+    ref, prop, and local variables are NOT graph nodes. This fallback greps the
+    (noise + project-gitignore-excluded) source tree for the term as a whole-word
+    identifier and returns file-level hits so ``graph_query`` never returns a
+    dead end for a real identifier (e.g. a Vue ``ref``/``computed``).
+    Case-sensitive first, case-insensitive as a fallback. Never raises.
+    """
+    if not term or len(term) < 2:
+        return []
+    pattern = re.compile(r"\b" + re.escape(term) + r"\b")
+    pattern_ic = re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
+    exclusions = _gitignore_exclusions(root)
+    hits: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _NOISE_DIRS and not d.endswith(".egg-info")]
+        rel_dir = str(Path(dirpath).relative_to(root)).replace("\\", "/")
+        parent = "" if rel_dir == "." else rel_dir
+        dirnames[:] = [d for d in dirnames if not exclusions.excludes_dir(parent, d)]
+        for name in filenames:
+            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name):
+                continue
+            path = Path(dirpath) / name
+            if _gitignored(root, path, exclusions):
+                continue
+            try:
+                rel = str(path.relative_to(root)).replace("\\", "/")
+                if path.stat().st_size > max_bytes:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            m = pattern.search(text)
+            if m is None:
+                m = pattern_ic.search(text)
+            if m is None:
+                continue
+            if rel in seen:
+                continue
+            seen.add(rel)
+            hits.append(
+                {
+                    "id": f"id:{rel}",
+                    "label": m.group(0),
+                    "type": "identifier",
+                    "source_file": rel,
+                }
+            )
+            if len(hits) >= limit:
+                break
+        if len(hits) >= limit:
+            break
+    return hits
+
+
 def query_graph(
     workspace_path: str | Path,
     query: str,
     limit: int = 10,
     root: str | Path | None = None,
     project_id: str | None = None,
+    family: str | None = None,
 ) -> dict[str, Any]:
     """Search graph nodes by label / source file / type (case-insensitive, ranked).
 
     Appends ``related_memory`` (memory entities matching the query term / source
     files) so the agent sees code + memory together (read-time correlation).
     """
+    root = _resolve_graph_root(workspace_path, root, family)
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
@@ -841,15 +1367,84 @@ def query_graph(
             "label": n.get("label"),
             "type": n.get("type"),
             "source_file": n.get("source_file"),
+            "repo": n.get("repo"),
         }
         for _, n in scored[: max(1, int(limit or 10))]
     ]
+    related_memory = _related_memory(workspace_path, q, project_id=project_id, limit=5)
+
+    if not results:
+        # Identifier fallback: the term exists in source but is not a graph node
+        # (computed/ref/prop/local variables). Return whole-word source hits so
+        # the query is not a dead end — mode distinguishes these from node hits.
+        fallback = _identifier_scan(
+            workspace_path, _resolve_root(workspace_path, root), q, limit=max(1, int(limit or 10))
+        )
+        if fallback:
+            return ok_obj(
+                count=len(fallback),
+                results=fallback,
+                mode="identifier",
+                note=(
+                    "no graph node for this term — returned whole-word identifier "
+                    "matches from source (graph indexes file/function/component labels only)"
+                ),
+                related_memory=related_memory,
+                **_graph_freshness(workspace_path, root, family=family),
+            )
+
     return ok_obj(
         count=len(scored),
         results=results,
-        related_memory=_related_memory(workspace_path, q, project_id=project_id, limit=5),
-        **_graph_freshness(workspace_path, root),
+        mode="node",
+        related_memory=related_memory,
+        **_graph_freshness(workspace_path, root, family=family),
     )
+
+
+def _bfs_path(adj: dict[str, list[str]], start: str, target: str) -> list[str] | None:
+    """BFS shortest path from ``start`` to ``target`` over adjacency, or None."""
+    if start == target:
+        return [start]
+    frontier = deque([start])
+    prev: dict[str, str | None] = {start: None}
+    while frontier:
+        cur = frontier.popleft()
+        if cur == target:
+            break
+        for nb in adj.get(cur, []):
+            if nb not in prev:
+                prev[nb] = cur
+                frontier.append(nb)
+    if target not in prev:
+        return None
+    ids: list[str] = []
+    cur: str | None = target
+    while cur is not None:
+        ids.append(cur)
+        cur = prev[cur]
+    ids.reverse()
+    return ids
+
+
+def _module_nodes(data: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
+    """Map ``source_file`` -> module node id, plus the set of module node ids.
+
+    graphify's per-file module nodes have ``label`` == basename of their
+    ``source_file`` (e.g. ``DashboardPage.vue`` for ``src/pages/DashboardPage.vue``).
+    Module-level edges (``imports_from`` / ``imports``) connect these file nodes,
+    which is what lets ``graph_path`` fall back to a file-level path when no
+    symbol-level path exists (e.g. a component that imports a store).
+    """
+    file_to_module: dict[str, str] = {}
+    module_ids: set[str] = set()
+    for n in data.get("nodes", []):
+        src = n.get("source_file") or ""
+        label = n.get("label") or ""
+        if src and label and label == src.rsplit("/", 1)[-1]:
+            file_to_module.setdefault(src, n.get("id"))
+            module_ids.add(n.get("id"))
+    return file_to_module, module_ids
 
 
 def path_query(
@@ -857,8 +1452,17 @@ def path_query(
     a: str,
     b: str,
     root: str | Path | None = None,
+    family: str | None = None,
 ) -> dict[str, Any]:
-    """Shortest path (BFS) between two nodes by label."""
+    """Shortest path (BFS) between two nodes — by id OR label, symbol-first.
+
+    Symbol-level BFS first; if no path, falls back to module/file-level BFS
+    (cross-file import relationships). Rich failure diagnostics: distinguishes
+    "node(s) not found" from "no path found", and on no-path reports both source
+    files plus whether a module relationship exists. ``family`` queries the
+    family graph spanning correlated member projects.
+    """
+    root = _resolve_graph_root(workspace_path, root, family)
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
@@ -868,39 +1472,58 @@ def path_query(
         missing = [t for t, i in ((a, a_id), (b, b_id)) if i is None]
         return fail_obj(error=f"node(s) not found: {', '.join(missing)}")
 
+    label = {n.get("id"): n.get("label") for n in data.get("nodes", [])}
+    node_info = {n.get("id"): n for n in data.get("nodes", [])}
+
     adj: dict[str, list[str]] = {}
     for link in data.get("links", []):
         s, tgt = link.get("source"), link.get("target")
         adj.setdefault(s, []).append(tgt)
         adj.setdefault(tgt, []).append(s)
 
-    frontier = deque([a_id])
-    prev: dict[str, str | None] = {a_id: None}
-    while frontier:
-        cur = frontier.popleft()
-        if cur == b_id:
-            break
-        for nb in adj.get(cur, []):
-            if nb not in prev:
-                prev[nb] = cur
-                frontier.append(nb)
+    path = _bfs_path(adj, a_id, b_id)
+    mode = "symbol"
+    if path is None:
+        # Module-level fallback: the two symbols live in files that may be
+        # connected by an import (e.g. DashboardPage.vue imports the auth store).
+        file_to_module, module_ids = _module_nodes(data)
+        src_a = (node_info.get(a_id) or {}).get("source_file") or ""
+        src_b = (node_info.get(b_id) or {}).get("source_file") or ""
+        ma, mb = file_to_module.get(src_a), file_to_module.get(src_b)
+        if ma is not None and mb is not None:
+            module_adj: dict[str, list[str]] = {}
+            for link in data.get("links", []):
+                s, tgt = link.get("source"), link.get("target")
+                if s in module_ids and tgt in module_ids:
+                    module_adj.setdefault(s, []).append(tgt)
+                    module_adj.setdefault(tgt, []).append(s)
+            module_path = _bfs_path(module_adj, ma, mb)
+            if module_path is not None:
+                path = module_path
+                mode = "module"
 
-    if b_id not in prev:
-        return fail_obj(error="no path found between the two nodes")
+    if path is None:
+        # Diagnostics: both nodes exist but are disconnected. Report source
+        # files + whether ANY module-level relationship exists between them.
+        src_a = (node_info.get(a_id) or {}).get("source_file") or "?"
+        src_b = (node_info.get(b_id) or {}).get("source_file") or "?"
+        return fail_obj(
+            error="no path found between the two nodes",
+            no_path=True,
+            a={"label": label.get(a_id, a), "source_file": src_a},
+            b={"label": label.get(b_id, b), "source_file": src_b},
+            hint=(f"no symbol path or module-level (imports_from/imports) connection between {src_a} and {src_b}"),
+        )
 
-    ids: list[str] = []
-    cur: str | None = b_id
-    while cur is not None:
-        ids.append(cur)
-        cur = prev[cur]
-    ids.reverse()
-
-    label = {n.get("id"): n.get("label") for n in data.get("nodes", [])}
-    return ok_obj(
-        path=[label.get(i, i) for i in ids],
-        hops=max(0, len(ids) - 1),
-        **_graph_freshness(workspace_path, root),
+    result: dict[str, Any] = ok_obj(
+        path=[label.get(i, i) for i in path],
+        hops=max(0, len(path) - 1),
+        mode=mode,
+        **_graph_freshness(workspace_path, root, family=family),
     )
+    if mode == "module":
+        result["note"] = "path found at module/file level (cross-file import)"
+    return result
 
 
 def explain_node(
@@ -909,12 +1532,14 @@ def explain_node(
     limit: int = 30,
     root: str | Path | None = None,
     project_id: str | None = None,
+    family: str | None = None,
 ) -> dict[str, Any]:
     """Explain a node: its details + direct neighbours with relation types.
 
     Appends ``related_memory`` (memory entities matching the symbol label and/or
     its source file) so the agent sees code + memory together.
     """
+    root = _resolve_graph_root(workspace_path, root, family)
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
@@ -961,5 +1586,5 @@ def explain_node(
             project_id=project_id,
             limit=5,
         ),
-        **_graph_freshness(workspace_path, root),
+        **_graph_freshness(workspace_path, root, family=family),
     )
