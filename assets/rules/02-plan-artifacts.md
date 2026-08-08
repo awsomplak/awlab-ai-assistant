@@ -3,7 +3,7 @@
 
 ## CRITICAL: Use MCP Actions, Not Manual File Edits
 
-All plan operations **MUST use `action_call` on the `awlab-mcp` server**. Do NOT manually
+All plan operations **MUST use `action_call` on the `awlab-ai-assistant` server**. Do NOT manually
 read/write `tasks.md`, `registry.md`, or `plan.md` files — the actions handle file I/O
 atomically with proper locking.
 

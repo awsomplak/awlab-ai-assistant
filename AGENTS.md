@@ -1,7 +1,7 @@
 # AGENTS.md — read this first (session start)
 
 This project is **AWLab-ID** — an AI-Assisted Development System (rules, workflows, skills, MCP server).
-It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-mcp.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **20 actions** (plan, task, memory, graph, context, util, workflow).
+It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-ai-assistant.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **20 actions** (plan, task, memory, graph, context, util, workflow).
 
 ## ⚠️ Session-start protocol (mandatory — prevents hallucination)
 
@@ -17,7 +17,7 @@ At the start of **every** session, before touching any code:
 - **MCP tool consolidation — DONE (plan `mcptool1`, all phases complete)**: the 36 tools across 3 servers were consolidated into a minimal surface for VS Code Copilot efficiency:
   - `action_call(action, params)` dispatcher + `action_help(action)` help tool (CLI `--help` pattern).
   - Single `REGISTRY` dict (action → handler / params / example / doc) generates the tool description, `action_help` output, and SKILL.md — no drift.
-  - Single executable `dist/bin/awlab-mcp.exe`; legacy 3-server files deleted.
+  - Single executable `dist/bin/awlab-ai-assistant.exe`; legacy 3-server files deleted.
   - Agentic orchestration: `ctx_info mode="context"` composite atomically regenerates `context.md` (code ↔ memory correlation).
   - Single `task_update` (multi-level paths, transition validation with `valid_targets`, auto-create, atomic rollback, executed/skipped/created trace).
 - **Code knowledge graph — incremental rebuild implemented**: `graph_build` now re-extracts only changed files (with the unchanged corpus as resolution context) and merges into the prior graph, so auto-refresh via the `graph_fresh` precondition is ~40x faster than a full rebuild. Verified: incremental output is identical to a full rebuild at the same source state.

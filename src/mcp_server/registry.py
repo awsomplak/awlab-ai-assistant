@@ -1530,11 +1530,11 @@ def build_skill_md() -> str:
     """Generate the SKILL.md content from REGISTRY (single source of truth)."""
     out = [
         "---",
-        "name: awlab-mcp",
+        "name: awlab-ai-assistant",
         "description: Dispatch consolidated MCP actions via action_call(action=...).",
         "---",
         "",
-        "# awlab-mcp — Action Reference",
+        "# awlab-ai-assistant — Action Reference",
         "",
         "Call `action_call` with `action` + params. Server guarantees preconditions/pipeline;",
         "responses include `executed`/`skipped` traces. Use `action_help(action)` for details.",

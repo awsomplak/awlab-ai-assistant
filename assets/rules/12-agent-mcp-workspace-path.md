@@ -3,7 +3,7 @@
 
 ## Purpose
 
-The `awlab-mcp` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
+The `awlab-ai-assistant` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
 
 ## Rules
 

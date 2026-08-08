@@ -16,7 +16,8 @@
 - **Vite/JS path-alias import indexing** — a post-build pass reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or array form, string or `fileURLToPath(new URL(...))` replacements) and emits the missing `imports_from`/`imports` edges for `@/...`, `@pages/...`, `~/...` imports that graphifyy cannot resolve (it only reads tsconfig/jsconfig `paths`). `.vue` SFCs and any alias-importing file now stay connected in `graph_path` even with no `tsconfig.json`. Handles multi-segment keys via longest-prefix match, is idempotent, and self-heals previously-built graphs on their next no-op read.
 
 ### Changed
-- **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **20 actions** (incl. `graph_*`, the `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache replay, and the `reg_update` single registry.md CRUD) via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-mcp.exe`; legacy 3-server files removed.
+- **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **20 actions** (incl. `graph_*`, the `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache replay, and the `reg_update` single registry.md CRUD) via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-ai-assistant.exe`; legacy 3-server files removed.
+- **Server renamed `awlab-mcp` → `awlab-ai-assistant`** — MCP server name, executable (`dist/bin/awlab-ai-assistant.exe`), pip distribution (`awlab-ai-assistant`), the `awlab-mcp` skill (folder + generated SKILL.md), and the profile/build generator all renamed to match the new repo `awsomplak/awlab-ai-assistant` and brand AWLab AI-Assistant. The `~/.awlab-id/` config home and the AWLab-ID platform brand are unchanged.
 - **Agentic orchestration**: `ctx_info mode="context"` assembles plan + next task + code + memory in one server-owned call and atomically regenerates `.ai/memory-bank/context.md`; `graph_query`/`graph_explain` return `related_memory` (code ↔ memory correlation).
 - **Consolidated `task_update`**: multi-level dotted paths, transition validation with `valid_targets`, auto-create, atomic rollback, and executed/skipped/created trace.
 - **Strict plan/task numbering**: phases and task paths are sequential positive integers only (no decimals/letters) — parsing depends on it.
@@ -33,7 +34,7 @@
 - **Family declared-id lookup on Windows** — `family_member_project_ids()` now normalizes member-path keys via `Path.resolve()`, so forward-slash paths in a live `project-families.json` (`D:/Project/...`) no longer fall through to the derived `<slug>-<dir>` id when a declared id exists.
 
 ### Builds
-- `build.094 → build.096` (`awlab-mcp-server v3.0.1+build.096`) — family schema v2 + reconciliation/seeding, offline cache + `mem_replay`, and the path-normalization fix. 319 tests pass, lint + format + dead-code clean. Validated live on the EkaMira `eka-warehouse` family (1277 nodes / 1256 edges, tags `eka_warehouse::` + `eka-warehouse-backend::`).
+- `build.094 → build.096` (`awlab-ai-assistant v3.0.1+build.096`) — family schema v2 + reconciliation/seeding, offline cache + `mem_replay`, and the path-normalization fix. 319 tests pass, lint + format + dead-code clean. Validated live on the EkaMira `eka-warehouse` family (1277 nodes / 1256 edges, tags `eka_warehouse::` + `eka-warehouse-backend::`).
 
 ## [3.0.0] - 2026-07-01
 

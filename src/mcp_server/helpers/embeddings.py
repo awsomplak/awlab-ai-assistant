@@ -169,7 +169,7 @@ class EmbeddingService:
         Raises ``RuntimeError`` if fastembed is not available.
         """
         if not has_fastembed():
-            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]")
+            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-ai-assistant[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
@@ -181,7 +181,7 @@ class EmbeddingService:
     def compute_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Return embedding vectors for a batch of texts."""
         if not has_fastembed():
-            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-mcp-server[hybrid]")
+            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-ai-assistant[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")

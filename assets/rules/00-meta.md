@@ -8,7 +8,7 @@ When rules appear to conflict, resolve using this explicit priority order (1 is 
 1. **Security Constraints** (Never overridden. No secrets in `.ai/`, no path traversal out of project root)
 2. **05-environment.md** (Shell/command correctness and environment detection)
 3. **02-plan-artifacts.md** (Phase execution logic, task formats, UUID rules)
-4. **01-memory-bank.md** (Memory operations via awlab-mcp `mem_*` actions)
+4. **01-memory-bank.md** (Memory operations via awlab-ai-assistant `mem_*` actions)
 5. **03-token-strategies.md** (Optimization, compression, context budgets)
 6. **06-project-scanner.md** (Scanning behavior, indexing protocols)
 7. **04-commands.md** (Reference tables and shortcuts ONLY — never overrides core rules)
@@ -18,7 +18,7 @@ When rules appear to conflict, resolve using this explicit priority order (1 is 
 
 Each concept maps to exactly ONE authoritative file. Other rules may *reference* these concepts but must never *redefine* them.
 
-- **Memory Operations** → `01-memory-bank.md` (uses awlab-mcp `mem_*` actions)
+- **Memory Operations** → `01-memory-bank.md` (uses awlab-ai-assistant `mem_*` actions)
 - **Environment & Commands** → `05-environment.md`
 - **Project Scanning & Indexing** → `06-project-scanner.md`
 - **Phase Execution & Tasks** → `02-plan-artifacts.md`

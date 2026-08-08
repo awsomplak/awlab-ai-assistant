@@ -2,13 +2,13 @@
 # Project Scanner Rule
 
 ## Purpose
-Provide a deterministic, framework-aware scanning protocol. All scanning execution logic is delegated to the `awlab-mcp` server's `ctx_info mode="scan"` action.
+Provide a deterministic, framework-aware scanning protocol. All scanning execution logic is delegated to the `awlab-ai-assistant` server's `ctx_info mode="scan"` action.
 
 ## Delegation
 
 When the `plan-creator` skill requires project scanning:
 
-1. **Do NOT manually implement** the Fingerprint Protocol if the `awlab-mcp` server is available (registered at `mcp_server/modules/registration.py`).
+1. **Do NOT manually implement** the Fingerprint Protocol if the `awlab-ai-assistant` server is available (registered at `mcp_server/modules/registration.py`).
 2. If the server is **available**, call:
    ```
    action_call(action="ctx_info", params={"mode": "scan"})

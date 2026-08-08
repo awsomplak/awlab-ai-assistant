@@ -16,7 +16,7 @@ def _whitelist(name):  # noqa: ANN001
     return name
 
 
-# Manually invoked generator — regenerates assets/skills/awlab-mcp/SKILL.md
+# Manually invoked generator — regenerates assets/skills/awlab-ai-assistant/SKILL.md
 # from the REGISTRY; called from external tooling, never from within src/.
 _whitelist(
     build_skill_md,
