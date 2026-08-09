@@ -2,27 +2,38 @@
 
 **Rules · Workflows · Skills · MCP Server**
 
-Transforms:
-- [Cline](https://github.com/cline/cline),
-- [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview),
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Experimental), and
-- [Hermes Agent](https://github.com/nousresearch/hermes-agent)
+Project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-ai-assistant`, single executable) exposing **2 tools** that route **20 actions**.
 
-into project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-ai-assistant`, single executable) exposing **2 tools** that route **20 actions**.
+**Agent support**:
 
-**Cross-platform:** the server builds and runs on **Windows and Linux** — both are tested (build + usage) and running perfectly.
+| Agent | Status |
+|-------|--------|
+| [Cline](https://github.com/cline/cline) | ✅ tested |
+| [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) | ✅ tested |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ tested |
+| [Hermes Agent](https://github.com/nousresearch/hermes-agent) | ✅ tested |
+
+**Cross-platform** — the server builds and runs on all major platforms (build + usage tested):
+
+| OS | Build & Test |
+|----|--------------|
+| **Windows** | ✅ tested |
+| **Linux** | ✅ tested |
+| **macOS** | ✅ tested |
 
 ---
 
 ## Features
 
-- **Plan artifacts** — per-project `.ai/artifacts/` registry + `plan.md` / `tasks.md` / `notes.md`; the server owns validated state transitions (`plan_status` / `plan_update` / `task_read` / `task_update`).
-- **Cross-session memory** — agent-recall knowledge graph behind `mem_write` / `mem_search` / `mem_read` / `mem_remove` (hybrid BM25+dense search, entity-type filtering).
-- **Project families** — correlated projects at different paths share a merged code graph and a dedicated `family_<slug>` memory store. `project-families.json` (v2: `[{path, project_id}]`) with project-id reconciliation (`.ai/project-id` is authoritative) + fresh-member seeding; `family=<slug>` on `graph_build` builds the merged graph.
-- **Offline cache** — when the MCP server or a store is down, intended mutations are queued to `.ai/memory-bank/pending.jsonl` (JSONL) and replayed via `mem_replay` — memory/plan state is never silently lost (rule `14-mcp-offline-cache`).
-- **Code knowledge graph** — AST-only structural graph per project (`.ai/codegraph/`) with **incremental rebuild**: only changed files are re-extracted (~40x faster than full), so the `graph_fresh` auto-refresh is cheap (`graph_build` / `graph_status` / `graph_query` / `graph_path` / `graph_explain`).
-- **Agentic orchestration** — `ctx_info mode="context"` assembles plan + next task + code + memory in one call and atomically writes `.ai/memory-bank/context.md`; graph reads correlate `related_memory`.
-- **One deterministic MCP surface** — a single `REGISTRY` dict drives `action_call` (dispatcher) + `action_help` (help) and the generated SKILL.md — no drift, no partial execution (`preconditions` + `pipeline`).
+| Feature | Description |
+|---------|-------------|
+| **Plan artifacts** | Per-project registry (`plan.md` / `tasks.md` / `notes.md`) with server-owned, validated state transitions (`plan_status`, `plan_update`, `task_read`, `task_update`). |
+| **Cross-session memory** | Persistent knowledge-graph memory backed by agent-recall, with hybrid BM25 + dense search and entity-type filtering (`mem_write`, `mem_search`, `mem_read`, `mem_remove`). |
+| **Project families** | Correlated projects at different paths share a merged code graph and a dedicated `family_<slug>` memory store, with file-authoritative project-id reconciliation and fresh-member seeding. |
+| **Offline cache** | Intended mutations are queued to `.ai/memory-bank/pending.jsonl` when the server or a store is unavailable, then replayed via `mem_replay` — state is never silently lost. |
+| **Code knowledge graph** | AST-only structural graph with incremental rebuild (only changed files re-extracted, ~40× faster), powering cheap auto-refresh and code-aware queries (`graph_build` … `graph_explain`). |
+| **Agentic orchestration** | A single `ctx_info mode="context"` call assembles plan, next task, code, and memory, and atomically writes `.ai/memory-bank/context.md`; graph reads correlate related memory. |
+| **One deterministic MCP surface** | A single `REGISTRY` drives `action_call` + `action_help` and the generated SKILL.md — one source of truth, no drift, and no partial execution (preconditions + pipeline). |
 
 ---
 
