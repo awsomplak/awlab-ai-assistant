@@ -1,7 +1,7 @@
 # AGENTS.md — read this first (session start)
 
 This project is **AWLab-ID** — an AI-Assisted Development System (rules, workflows, skills, MCP server).
-It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-ai-assistant.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **20 actions** (plan, task, memory, graph, context, util, workflow).
+It compiles rules+skills for Cline, VS Code Copilot, Claude Code, and Hermes, and provides a **single MCP server executable** (`dist/bin/awlab-ai-assistant.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **23 actions** (plan, task, memory, graph, context, util, workflow).
 
 ## ⚠️ Session-start protocol (mandatory — prevents hallucination)
 
@@ -23,4 +23,4 @@ At the start of **every** session, before touching any code:
 - **Code knowledge graph — incremental rebuild implemented**: `graph_build` now re-extracts only changed files (with the unchanged corpus as resolution context) and merges into the prior graph, so auto-refresh via the `graph_fresh` precondition is ~40x faster than a full rebuild. Verified: incremental output is identical to a full rebuild at the same source state.
 - **287 tests pass, lint clean.**
 - **Next**: no active plan — user-directed work.
-- Reference: `docs/AVAILABLE_TOOLS.md`, `docs/REGISTRY_SCHEMA.md`, `src/mcp_server/registry.py`, `src/mcp_server/modules/dispatcher.py`, `src/mcp_server/helpers/graphify_bridge.py`.
+- Reference: `docs/en/AVAILABLE_TOOLS.md`, `docs/en/REGISTRY_SCHEMA.md`, `src/mcp_server/registry.py`, `src/mcp_server/modules/dispatcher.py`, `src/mcp_server/helpers/graphify_bridge.py`.

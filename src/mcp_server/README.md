@@ -1,12 +1,12 @@
 # AWLab-ID MCP Server
 
-**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 20 actions across plan management, memory operations, registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
+**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
 
 Part of the [cline-ai-assisted-dev](../) system.
 
 | Server | MCP tools | Actions (via `action_call`) | Entry Point |
 |--------|-----------|------------------------------|-------------|
-| `awlab-ai-assistant` | `action_call` + `action_help` | 20 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
+| `awlab-ai-assistant` | `action_call` + `action_help` | 23 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
 
 ---
 
@@ -18,7 +18,7 @@ graph TB
     direction LR
     MAIN["__main__.py / server.py<br/>Single Entry Point"]
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
-    REG["registry.py<br/>REGISTRY — 20 actions, single source of truth"]
+    REG["registry.py<br/>REGISTRY — 23 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
     HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
@@ -71,7 +71,7 @@ flowchart LR
 - **`workspace_path` is required** for all tools that operate on disk (plans, registry, memory bank, scanning).
 - **Env vars are optional** — the server runs with sensible defaults. See [Configuration](#configuration) below.
 - **`DB_PATH`** overrides the agent-recall database location; when unset the caller must provide a workspace path at the call site.
-- **`get_project_id` MCP tool is removed.** To get the project ID, read `.ai/project-id` via `ctx_info mode="memory_bank"`.
+- **`project_id` action** — check-and-create on first response (before any `mem_*`/plan op) so per-project isolation never falls through to the global DB; the id lives in `.ai/project-id` (readable via `ctx_info mode="memory_bank"`).
 - **`psutil` dependency is removed.** No process inspection is performed.
 
 ---
@@ -125,7 +125,7 @@ Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awla
 
 ---
 
-## Tools Reference — action_call dispatcher (20 actions)
+## Tools Reference — action_call dispatcher (23 actions)
 
 Two MCP tools are exposed:
 
@@ -144,6 +144,7 @@ Two MCP tools are exposed:
 | `task_update` | Update task status (multi-level paths) with atomic rollback |
 | `plan_status` | Registry + next-eligible task + phase gate + completable check |
 | `plan_update` | Switch active plan / mark phase complete / resolve deferred tasks |
+| `plan_doc` | Read / create / update / delete a plan's `plan.md` or `notes.md` (pass full content) |
 | `reg_update` | Single registry.md CRUD: create (server UUID) / update status (active\|paused\|complete) / delete (requires approval) |
 | `wf` | List or execute named workflows |
 
@@ -158,6 +159,7 @@ Two MCP tools are exposed:
 | `mem_list_entities` | Inventory all memory entities (name/type/obs count) for auditing |
 | `mem_dedupe` | Merge same-named entities (keep data-bearing, archive dupes) |
 | `mem_replay` | Replay the offline cache (`pending.jsonl`) — re-apply queued mutations |
+| `mem_observe` | Record user-pattern evidence into `observations.jsonl` — pattern-baking input |
 
 **🕸️ Code Knowledge Graph**
 
@@ -173,8 +175,18 @@ Two MCP tools are exposed:
 
 | Action | Description |
 |--------|-------------|
-| `ctx_info` | Active plan + patterns + project ID snapshot |
+| `ctx_info` | Active plan + **stack-scoped baked patterns + pattern_candidates (tell-once)** + project ID snapshot |
+| `project_id` | Check the project-id; auto-create it if missing (idempotent) — call on first response |
 | `util_info` | OS, shell, server version, build metadata |
+
+### 🧁 Pattern baking & hook mode
+
+`mem_observe` (agent-relayed) and `hook --agent <host> --event <event>` (host lifecycle events)
+append signals to `.ai/memory-bank/observations.jsonl`; every `action_call` runs a deterministic
+`bake_tick` (key → count → consistency → confidence) persisting candidates to `baked.json`.
+`ctx_info`/`mem_search store="patterns"` deliver them **once** (delivery marker). A background
+`bake-scheduler` re-bakes active workspaces; `awlab-baker` is the gated subagent tier. All tiers
+share one store → identical candidates. See `docs/en/PATTERN_BAKING_PROTOCOL.md`.
 
 ---
 
@@ -186,7 +198,7 @@ Two MCP tools are exposed:
 | `LOG_ENABLED` | Enable/disable file logging (`true`/`1`/`yes`) | `true` |
 | `LOG_LEVEL` | Logging verbosity (`info`, `debug`) | `info` |
 | `DB_PATH` | Override agent-recall database directory | *(workspace_path/.ai/memory/)* |
-| `GRAPH_PARALLEL` | Opt-in parallel graph extraction (see docs/INSTALL.md) | `false` |
+| `GRAPH_PARALLEL` | Opt-in parallel graph extraction (see docs/en/INSTALL.md) | `false` |
 
 Copy `.env` (or `config.json`) in the production config home `~/.awlab-id/agent-memory/` or project root to customize:
 
@@ -205,10 +217,10 @@ GRAPH_PARALLEL=false        # Sequential extraction (default, recommended)
 ```
 mcp_server/
 ├── __init__.py
-├── _version.py             # Version string (v3.0.1+build.093)
+├── _version.py             # Version string (v3.0.1+build.098)
 ├── server.py               # Dev console entry (awlab-ai-assistant)
 ├── __main__.py             # PyInstaller entry — single executable
-├── registry.py             # REGISTRY — 20 actions, single source of truth
+├── registry.py             # REGISTRY — 23 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/

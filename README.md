@@ -1,19 +1,133 @@
-# AWLab-ID — AI-Assisted Development System
+<p align="center">
+  <strong>AWLab-ID — AI-Assisted Development System</strong><br/>
+  Rules · Workflows · Skills · One Deterministic MCP Server
+</p>
 
-**Rules · Workflows · Skills · MCP Server**
+<p align="center">
+  <strong>🌐 Language:</strong> <a href="README.md">English</a> · <a href="README_ID.md">Bahasa Indonesia</a>
+</p>
 
-Project-aware AI development assistants with structured plan management, persistent cross-session memory via a knowledge graph, a code knowledge graph, and **one deterministic MCP server** (`awlab-ai-assistant`, single executable) exposing **2 tools** that route **20 actions**.
+<p align="center">
+  <img src="https://img.shields.io/badge/version-3.0.1-blue" alt="Version 3.0.1" />
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/tests-360%20passing-brightgreen" alt="360 tests passing" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Cross-platform" />
+</p>
 
-**Agent support**:
+<p align="center">
+  <img src="https://img.shields.io/badge/actions-23-blueviolet" alt="23 MCP actions" />
+  <img src="https://img.shields.io/badge/agents-Cline%20%7C%20Copilot%20%7C%20Claude%20Code%20%7C%20Hermes%20%7C%20OpenCode-blueviolet" alt="5 AI agents" />
+</p>
 
-| Agent | Status |
-|-------|--------|
-| [Cline](https://github.com/cline/cline) | ✅ tested |
-| [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) | ✅ tested |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ tested |
-| [Hermes Agent](https://github.com/nousresearch/hermes-agent) | ✅ tested |
+<p align="center">
+  <a href="#-about">About</a> &bull;
+  <a href="#️-architecture">Architecture</a> &bull;
+  <a href="#️-how-it-works">How it works</a> &bull;
+  <a href="#-features">Features</a> &bull;
+  <a href="#-tested-on">Tested on</a> &bull;
+  <a href="#-documentation">Documentation</a> &bull;
+  <a href="#-your-project-stays-clean">Clean project</a> &bull;
+  <a href="#-requirements">Requirements</a> &bull;
+  <a href="#️-license">License</a>
+</p>
 
-**Cross-platform** — the server builds and runs on all major platforms (build + usage tested):
+<p align="center">
+  <img src="assets/images/banner.png" alt="AWLab-ID — AI-Assisted Development System" width="880" />
+</p>
+
+---
+
+## 💡 About
+
+AWLab-ID **AI-Assisted Development System** turns a plain project into a project-aware AI development environment. It ships:
+
+- **14 composable rules + 5 skills** (sources under `assets/`) that are compiled into **per-agent profiles** — Cline, VS Code Copilot, Claude Code, Hermes Agent, and OpenCode each get their native format automatically.
+- **A single deterministic MCP server** — `awlab-ai-assistant` (one standalone executable) exposing **2 tools** — `action_call` + `action_help` — that route **23 actions** across plan, task, memory, graph, context, util, and workflow. One `REGISTRY` dict is the single source of truth for everything the agent sees, so nothing drifts.
+- **Structured plan management** with server-owned, validated state transitions, **cross-session memory** on a knowledge graph, and a **code knowledge graph** with incremental rebuilds (~40× faster).
+
+The core promise: your agent **remembers the project across sessions**, follows a **consistent plan discipline**, and sees a **minimal, deterministic MCP surface** — no tool sprawl, no hallucinated state, no silent memory loss (offline mutations are queued and replayed).
+
+---
+
+## 🏗️ Architecture
+
+A visual overview of the components and how agents connect to the server:
+
+```mermaid
+graph TB
+  CL["Cline Extension"]
+  CP["VS Code Copilot"]
+  CC["Claude Code"]
+  HR["Hermes Agent"]
+  AM["awlab-ai-assistant<br/>(single exe: action_call + action_help, 23 actions)"]
+  ART["artifacts/ registry.md + plans"]
+  AG["agent-recall Knowledge Graph"]
+  CG["code graph .ai/codegraph/ (graphify)"]
+
+  CL --> AM
+  CP --> AM
+  CC --> AM
+  HR --> AM
+  AM --> ART
+  AM --> AG
+  AM --> CG
+```
+
+---
+
+## ⚙️ How it works
+
+Every session follows a predictable flow:
+
+```mermaid
+graph LR
+  A["Agent session starts"] --> B["project_id<br/>(memory isolation)"]
+  B --> C["plan_status / task_read<br/>(plan discipline)"]
+  C --> D["ctx_info mode=context<br/>(orchestration snapshot)"]
+  D --> E["action_call<br/>(23 actions)"]
+```
+
+1. **Agent session starts** — the agent begins working on your project.
+2. **`project_id`** — *(memory isolation)* confirms or creates the project identity so all memory stays scoped to this project, never leaking into the global store.
+3. **`plan_status` / `task_read`** — *(plan discipline)* loads the active plan and the next eligible task, so the agent works from a consistent, server-owned state.
+4. **`ctx_info mode="context"`** — *(orchestration snapshot)* assembles plan + next task + relevant code + memory in one server-owned call and atomically writes `.ai/memory-bank/context.md`.
+5. **`action_call`** — *(23 actions)* drives the rest of the work through the action surface (plan, task, memory, code graph, context). If a store or the server is ever unreachable, mutations are queued to `.ai/memory-bank/pending.jsonl` and replayed via `mem_replay` — nothing is silently lost.
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| **One deterministic MCP surface** | A single `REGISTRY` drives `action_call` + `action_help` and the generated SKILL.md — one source of truth, no drift, and no partial execution (preconditions + pipeline). |
+| **Plan artifacts** | Per-project registry (`plan.md` / `tasks.md` / `notes.md`) with server-owned, validated state transitions (`plan_status`, `plan_update`, `task_read`, `task_update`, `plan_doc`). |
+| **Cross-session memory** | Persistent knowledge-graph memory backed by agent-recall, with hybrid BM25 + dense search and entity-type filtering (`mem_write`, `mem_search`, `mem_read`, `mem_remove`, …). |
+| **Pattern-baking core** | An observation store (`.ai/memory-bank/observations.jsonl`) records user-pattern evidence (`mem_observe`) that the baking pipeline keys → counts → measures consistency → computes confidence. |
+| **Code knowledge graph** | AST-only structural graph with incremental rebuild (only changed files re-extracted), powering cheap auto-refresh and code-aware queries (`graph_build` … `graph_explain`). |
+| **Project families** | Correlated projects at different paths share a merged code graph and a dedicated `family_<slug>` memory store, with file-authoritative project-id reconciliation. |
+| **Offline cache** | Intended mutations are queued to `.ai/memory-bank/pending.jsonl` when the server or a store is unavailable, then replayed via `mem_replay` — state is never silently lost. |
+| **Agentic orchestration** | A single `ctx_info mode="context"` call assembles plan, next task, code, and memory, and atomically writes `.ai/memory-bank/context.md`; graph reads correlate related memory. |
+
+---
+
+## ✅ Tested on
+
+### Supported AI agents
+
+The compiled rules + skills and the MCP server are verified on all four agents:
+
+| Agent | Status | Notes |
+|-------|--------|-------|
+| [Cline](https://github.com/cline/cline) | ✅ tested | Individual `.md` rule files in `~/Documents/Cline/Rules/` |
+| [VS Code Copilot](https://code.visualstudio.com/docs/copilot/overview) | ✅ tested | `.instructions.md` files with YAML frontmatter |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ tested | Single `CLAUDE.md` monolith with heading anchors |
+| [Hermes Agent](https://github.com/nousresearch/hermes-agent) | ✅ tested | Rules packaged as `awlab-rules/SKILL.md` |
+| [OpenCode](https://opencode.ai) | 🆕 supported | Global `AGENTS.md` + skills in `~/.config/opencode/` |
+
+### Supported operating systems
+
+The server builds and runs on all major platforms (build + usage tested):
 
 | OS | Build & Test |
 |----|--------------|
@@ -23,135 +137,69 @@ Project-aware AI development assistants with structured plan management, persist
 
 ---
 
-## Features
+## 📚 Documentation
 
-| Feature | Description |
-|---------|-------------|
-| **Plan artifacts** | Per-project registry (`plan.md` / `tasks.md` / `notes.md`) with server-owned, validated state transitions (`plan_status`, `plan_update`, `task_read`, `task_update`). |
-| **Cross-session memory** | Persistent knowledge-graph memory backed by agent-recall, with hybrid BM25 + dense search and entity-type filtering (`mem_write`, `mem_search`, `mem_read`, `mem_remove`). |
-| **Project families** | Correlated projects at different paths share a merged code graph and a dedicated `family_<slug>` memory store, with file-authoritative project-id reconciliation and fresh-member seeding. |
-| **Offline cache** | Intended mutations are queued to `.ai/memory-bank/pending.jsonl` when the server or a store is unavailable, then replayed via `mem_replay` — state is never silently lost. |
-| **Code knowledge graph** | AST-only structural graph with incremental rebuild (only changed files re-extracted, ~40× faster), powering cheap auto-refresh and code-aware queries (`graph_build` … `graph_explain`). |
-| **Agentic orchestration** | A single `ctx_info mode="context"` call assembles plan, next task, code, and memory, and atomically writes `.ai/memory-bank/context.md`; graph reads correlate related memory. |
-| **One deterministic MCP surface** | A single `REGISTRY` drives `action_call` + `action_help` and the generated SKILL.md — one source of truth, no drift, and no partial execution (preconditions + pipeline). |
+This README is the single documentation entry point. Use the tables below to find the right page.
 
----
+### Where do you want to go?
 
-## Architecture
+| I want to… | Go to |
+|-----------|-------|
+| Understand what this project is and its features | *(you're already here — keep reading)* |
+| Install the MCP server, build it, and wire it into my AI agent | [Install & Implement](docs/en/INSTALL.md) |
+| See every MCP action (`action_call` / `action_help`) and what it does | [Available MCP Tools](docs/en/AVAILABLE_TOOLS.md) |
+| Register the optional hook automation layer (zero-LLM capture) | [Hook Registration](docs/en/HOOKS.md) |
+| Read the Indonesian version | [README_ID.md](README_ID.md) |
+| Read the version history | [CHANGELOG](CHANGELOG.md) |
 
-```mermaid
-graph TB
-  CL["Cline Extension"]
-  CP["VS Code Copilot"]
-  AM["awlab-ai-assistant (single exe: action_call + action_help, 20 actions)"]
-  ART["artifacts/ registry.md + plans"]
-  AG["agent-recall Knowledge Graph"]
-  CG["code graph .ai/codegraph/ (graphify)"]
+### Document map
 
-  CL --> AM
-  CP --> AM
-  AM --> ART
-  AM --> AG
-  AM --> CG
-```
+| Document | What it covers |
+|----------|----------------|
+| [`README.md`](README.md) | What AWLab-ID is, features, tested OS/agents, architecture (English) |
+| [`README_ID.md`](README_ID.md) | What AWLab-ID is, features, tested OS/agents, architecture (Bahasa Indonesia) |
+| [`docs/en/INSTALL.md`](docs/en/INSTALL.md) | Requirements, install from source, build the standalone executable, publish rules + skills, wire the MCP server per agent, environment variables, CLI reference |
+| [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md) | The 2 exposed MCP tools and the **23 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
+| [`docs/en/HOOKS.md`](docs/en/HOOKS.md) | Optional zero-LLM hook automation — per-agent registration (Claude Code, Hermes, Cline, Copilot), event behaviour, pros/cons vs MCP-only, verification & troubleshooting |
+| [`CHANGELOG.md`](CHANGELOG.md) | Version-by-version release notes |
 
----
+### Fastest path (new user)
 
-## Quick Start
-
-```bash
-pip install -e .
-python scripts/run.py compile-rules
-python scripts/run.py publish --target=all
-```
-
-See [Installation & CLI Reference](docs/INSTALL.md) for full instructions.
+1. **Install** the package and (optionally) build the standalone executable — see [`docs/en/INSTALL.md`](docs/en/INSTALL.md#install-the-mcp-server).
+2. **Publish** the compiled rules + skills to your agent — see [`docs/en/INSTALL.md`](docs/en/INSTALL.md#publish-rules--skills-to-your-agent).
+3. **Wire** the MCP server into your agent — see [`docs/en/INSTALL.md`](docs/en/INSTALL.md#wire-the-mcp-server).
+4. **Explore** the tool surface — see [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md).
 
 ---
 
-## Documentation
+## 🧹 Your project stays clean
 
-| Document | Description |
-|----------|-------------|
-| [Installation & CLI Reference](docs/INSTALL.md) | Requirements, install, build, publish, CLI commands |
-| [Available MCP Tools](docs/AVAILABLE_TOOLS.md) | `action_call` + `action_help` and the 20 actions |
-| [REGISTRY Schema](docs/REGISTRY_SCHEMA.md) | Design doc for the single action surface (no drift) |
-| [Project Structure](#project-structure) | Repository layout |
-| [User-Level Deployment](#user-level-deployment) | Per-agent file paths |
-| [CHANGELOG](CHANGELOG.md) | Version history |
-
----
-
-## Per-Agent Compilation Pipeline
-
-Rules (`assets/rules/`) and skills (`assets/skills/`) are compiled into per-agent profiles via `python scripts/run.py compile-rules`:
-
-| Agent | Rules | Skills |
-|-------|-------|--------|
-| **Cline** | Individual `.md` files → `~/Documents/Cline/Rules/` | `SKILL.md` → `~/.agents/skills/` |
-| **Copilot** | `.instructions.md` with YAML frontmatter → `~/.copilot/instructions/` | `SKILL.md` → `~/.agents/skills/` (shared) |
-| **Claude Code** | `CLAUDE.md` monolith (heading anchors) → `~/.claude/` | `SKILL.md` → `~/.claude/skills/` |
-| **Hermes Agent** | Packaged as `awlab-rules/SKILL.md` | `SKILL.md` → `~/.hermes/skills/` |
-
----
-
-## Project Structure
-
-```
-project-root/
-├── assets/
-│   ├── rules/                   # 14 rule files (source)
-│   └── skills/                  # 5 skill sources
-├── dist/
-│   └── profiles/                # Per-agent compiled output (generated by compile-rules)
-├── src/mcp_server/              # Python MCP server (single exe: action_call + action_help, 20 actions)
-├── scripts/
-│   ├── run.py                   # Build & dev CLI
-│   └── stop-mcp-servers.ps1     # Helper executeable to force stop all running `awlab-*` mcp server (Windows powershell only)
-├── tests/                       # Pytest suite
-├── docs/                        # Documentation
-├── CHANGELOG.md
-└── pyproject.toml
-```
-
-### User-Level Deployment
-
-```
-# Cline
-~/Documents/Cline/Rules/     # 14 .md rule files
-~/.agents/skills/            # 5 skills + awlab-rules (shared with Copilot)
-.clinerules                  # Compiled rules to single .clinerules for per-project without global rules
-
-# Copilot
-~/.copilot/instructions/     # 14 .instructions.md files
-~/.agents/skills/            # 5 skills + awlab-rules (shared with Cline)
-
-# Claude Code
-~/.claude/CLAUDE.md          # Compiled rule monolith
-~/.claude/skills/            # 5 skills + awlab-rules
-
-# Hermes
-~/.hermes/skills/            # 5 skills + awlab-rules
-```
-
-### Per-Project `.ai/` Structure
+AWLab-ID keeps **all** of its state inside a single `.ai/` directory at your project root — the agent's plans, memory, and code graph are never scattered as loose files across your repository:
 
 ```
 {project-root}/.ai/
-├── project-id             # Stable project identifier
-├── artifacts/registry.md  # Plan registry
-├── artifacts/{uuid}/      # plan.md, tasks.md, notes.md
-├── memory-bank/           # environment.md (static) + context.md (dynamic orchestration state)
-└── codegraph/             # Code knowledge graph (graph.json, graph.html, cache)
+├── project-id             # Stable project identifier (memory isolation)
+├── artifacts/             # Plan artifacts
+│   ├── registry.md        # Plan registry
+│   └── {uuid}/            # plan.md, tasks.md, notes.md
+├── memory-bank/           # environment.md (static) + context.md (dynamic) + observations.jsonl + pending.jsonl
+├── codegraph/             # Code knowledge graph (graph.json, graph.html, cache)
+└── temp/                  # Scratch/temp files — following file-hygiene rule
 ```
+
+No junk files, no scattered state — everything the AI assistant creates lives inside `.ai/`, so your source tree stays exactly as you'd expect.
 
 ---
 
-## Requirements
+## 📋 Requirements
 
-- **Cline** (VS Code/JetBrains) or **VS Code Copilot**
-- **Python 3.10+** (for MCP server)
-- **agent-recall** (knowledge graph backend)
-## License
+- **Python 3.10+** (for the MCP server)
+- **agent-recall** (knowledge-graph memory backend)
+- **graphifyy** (code knowledge-graph indexing)
+- One of: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, or **OpenCode**
 
-MIT — Use, modify, and share freely.
+---
+
+## ⚖️ License
+
+MIT — Use, modify, and share freely. See [LICENSE](LICENSE).
