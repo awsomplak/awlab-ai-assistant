@@ -84,6 +84,19 @@ async def _action_call(
         logger.tool("action_call").error(f"handler '{canonical}' failed: {e}")
         return _dispatch_error(canonical, f"Handler failed: {e}")
 
+    # Baking tick (Phase 4): after every successful action, cheap re-evaluate for that
+    # workspace (read → key → count → consistency → confidence → emit). The tick never
+    # breaks the action and never calls back into action_call, so there is no recursion.
+    if workspace_path:
+        try:
+            from ..helpers.baking import bake_tick
+            from .bake_scheduler import note_workspace
+
+            bake_tick(workspace_path)
+            note_workspace(workspace_path)  # async tier knows to re-bake this workspace
+        except Exception:  # noqa: BLE001 — baking must never break the action
+            logger.tool("action_call").warning(f"baking tick skipped for {workspace_path}")
+
     return json.dumps(
         {
             "success": True,
