@@ -5,6 +5,14 @@
 
 Manage user‑specific patterns that change over time – handle conflicts, updates, and live detection.
 
+## Computed Confidence & Delivery
+
+- **Confidence is computed, not hand-assigned** — the baking pipeline derives it from observations
+  (`frequency × consistency × source weight`); `mem_write` stores it as-is.
+- **Delivery is once-per-pattern** — when `ctx_info mode="context"` or `mem_search` returns
+  `pattern_candidates`, act per the gate and store via `mem_write` (stack-tagged for portability).
+  The delivery marker prevents re-telling.
+
 ## Pattern Storage Format
 
 Each pattern is a separate entity with the following structure:
@@ -18,7 +26,26 @@ Each pattern is a separate entity with the following structure:
   confidence: <float 0.0-1.0>
   timestamp: <ISO date>
   source: explicit | inferred | corrected
+  stack: <framework | language | any>
   ```
+
+## Stack Tagging & Portability
+
+Each baked pattern carries a `stack` tag (framework, else language, else `any`) so it is
+portable: `any` patterns apply in every project; stack-specific patterns only surface in
+matching ones. When storing via `mem_write`, include the stack tag; when reading
+(`mem_search` / `ctx_info mode="context"`), only stack-matching + `any` patterns are
+returned (`scope_candidates`).
+
+## Recency-Based Replacement
+
+When two patterns conflict:
+
+1. **Higher computed confidence wins** — confidence is computed by the baking pipeline
+   (frequency × consistency × source weight), never hand-assigned.
+2. **Newer wins** on equal confidence (compare `timestamp`).
+3. **Explicit beats inferred** at equal recency.
+4. Ties (both explicit, close in time) → **ask the user**, never guess.
 
 Patterns are stored using `mem_write` (entities + observations in one call):
 ```

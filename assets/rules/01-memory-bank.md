@@ -34,6 +34,17 @@ Legacy tool names still work as aliases: `mem_create_entities`, `mem_tag_entity`
 - The wrapper script reads `.ai/project-id` and sets `AGENT_RECALL_SLUG`.
 - All memory operations are automatically scoped to that slug – **no manual `project` parameter needed**.
 
+### STRICT FIRST-CALL (mandatory, before anything else)
+On the **first response of every session**, BEFORE any `mem_*` / plan / task operation
+and before processing the user's prompt, call:
+
+```
+action_call(action="project_id", params={"workspace_path": "<project root>"})
+```
+
+This **checks AND auto-creates** `.ai/project-id` in one call (see #08). Never skip it:
+a missing project-id puts memory in the GLOBAL DB instead of the per-project DB.
+
 ### Before any task (including `follow rules`)
 - Run `mem_search` with the task description to retrieve relevant context.
 - Do NOT read `.ai/memory-bank/*.md` except `environment.md`.

@@ -130,6 +130,30 @@ def _fmt_notes_doc(notes_doc: dict | None) -> list[str]:
     return lines or ["_notes.md parsed (no sections)._ "]
 
 
+def _fmt_patterns(patterns: list | None, candidates: list | None) -> list[str]:
+    """Render the baked-patterns section of context.md (candidates first)."""
+    lines: list[str] = []
+    cands = candidates or []
+    if cands:
+        lines.append(f"- **New pattern candidates ({len(cands)})** — told once, act per the gate:")
+        for c in cands[:8]:
+            sig = c.get("signature") or ""
+            val = (c.get("value") or "")[:100]
+            conf = c.get("confidence")
+            suffix = f"  (conf {conf})" if conf is not None else ""
+            lines.append(f"  - `{sig}` — {val}{suffix}")
+    pats = patterns or []
+    if pats:
+        lines.append(f"- **Baked patterns ({len(pats)}):**")
+        for p in pats[:8]:
+            sig = p.get("signature") or ""
+            val = (p.get("value") or "")[:100]
+            lines.append(f"  - `{sig}` — {val}")
+    if not lines:
+        return ["_No baked patterns yet — observations accumulate via `mem_observe` / hooks._"]
+    return lines
+
+
 def build_context_md(
     workspace_path: str | Path,
     plan: dict | None = None,
@@ -138,6 +162,8 @@ def build_context_md(
     query: str = "",
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
+    patterns: list | None = None,
+    pattern_candidates: list | None = None,
 ) -> str:
     """Assemble the full context.md content from the orchestration composite."""
     now = datetime.now(timezone.utc).isoformat()
@@ -167,6 +193,10 @@ def build_context_md(
         "## Memory",
         "",
         *_fmt_memory(memory),
+        "",
+        "## Patterns",
+        "",
+        *_fmt_patterns(patterns, pattern_candidates),
         "",
     ]
     return "\n".join(lines)
@@ -202,6 +232,8 @@ def materialize_context(
     query: str = "",
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
+    patterns: list | None = None,
+    pattern_candidates: list | None = None,
 ) -> dict:
     """Build + atomically write context.md. Returns ``{success, path, changed}``.
 
@@ -209,7 +241,15 @@ def materialize_context(
     optional) and always reflects what the agent just received.
     """
     content = build_context_md(
-        workspace_path, plan=plan, code=code, memory=memory, query=query, plan_doc=plan_doc, notes_doc=notes_doc
+        workspace_path,
+        plan=plan,
+        code=code,
+        memory=memory,
+        query=query,
+        plan_doc=plan_doc,
+        notes_doc=notes_doc,
+        patterns=patterns,
+        pattern_candidates=pattern_candidates,
     )
     ok = write_context_md_atomic(workspace_path, content)
     return {
