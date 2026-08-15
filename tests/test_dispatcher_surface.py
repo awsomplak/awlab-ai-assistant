@@ -59,13 +59,12 @@ def test_schema_context_budget_is_small():
 
 
 def test_registry_has_expected_action_count():
-    """20 actions across 7 groups — matches the documented surface.
+    """23 actions across 7 groups — matches the documented surface.
 
-    16 baseline + 2 memory-auditing actions (``mem_list_entities`` +
-    ``mem_dedupe``) + 1 offline-cache replay action (``mem_replay``) +
-    ``reg_update`` (single registry.md CRUD: create / update / delete).
+    21 + ``project_id`` (check-and-create, isolation bootstrap) + ``plan_doc``
+    (direct plan.md/notes.md read/write/delete).
     """
-    assert len(REGISTRY) == 20
+    assert len(REGISTRY) == 23
     groups = {spec["group"] for spec in REGISTRY.values()}
     assert {"task", "plan", "memory", "graph", "context", "util", "workflow"} <= groups
 
