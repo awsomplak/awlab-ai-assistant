@@ -1,7 +1,17 @@
 # Available MCP Tools
 
-> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help).
-> Everything is driven by a single [`REGISTRY`](./REGISTRY_SCHEMA.md) — no drift.
+> [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Available MCP Tools**
+
+> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help), routing **23 actions**.
+
+**In this page:**
+
+- [Server architecture](#server-architecture)
+- [Exposed tools](#exposed-tools)
+- [Actions (group → name)](#actions-group---name)
+- [Pattern baking & delivery](#pattern-baking--delivery)
+- [Offline cache (`pending.jsonl`)](#offline-cache-pendingjsonl)
+- [Project families](#project-families)
 
 ---
 
@@ -38,6 +48,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 | Action | Summary |
 |--------|---------|
 | `ctx_info` | Read project context: snapshot, memory-bank, scan, suggestions, or orchestration context. |
+| `project_id` | Check the project-id; auto-create it if missing (idempotent). Call this on first response, before any `mem_*`/plan op, so memory isolation never falls through to the global DB. |
 
 ### memory
 
@@ -45,6 +56,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 |--------|---------|
 | `mem_dedupe` | Merge same-named memory entities (keep data-bearing, archive dupes). |
 | `mem_list_entities` | List all memory entities (name/type/obs count) for auditing. |
+| `mem_observe` | Record user-pattern evidence into the observation store (`.ai/memory-bank/observations.jsonl`) — baking-pipeline input. |
 | `mem_read` | Read node details or the graph neighbourhood. |
 | `mem_remove` | Archive entities or delete observations/relations (type-safe — refuses ambiguous names). |
 | `mem_replay` | Replay the offline cache (`.ai/memory-bank/pending.jsonl`) — re-apply mutations queued when the store/MCP was down; failed entries are kept for retry. `dry_run` previews. |
@@ -57,6 +69,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 |--------|---------|
 | `plan_status` | Read plan/registry status: active plan, next task, completeness, phase gate. |
 | `plan_update` | Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks. |
+| `plan_doc` | Read / create / update / delete a plan's `plan.md` or `notes.md` directly (pass full content; no diff review). |
 | `reg_update` | Single registry.md CRUD: `create` (server-generated UUID, Active ⏹️, Date + immutable Created At) / `update` (status active\|paused\|complete → move to correct table, refresh Date, keep Created At, optional summary) / `delete` (strict user approval via `confirmed=true`). |
 
 ### graph
@@ -129,6 +142,28 @@ whether a rebuild is in flight:
 | `wf` | List or execute a workflow (workspace-free; shared `work-flows` dir, `workflows_dir` override). |
 
 ---
+
+## Pattern baking & delivery
+
+The server turns recurring user-pattern evidence into reusable candidates **deterministically (no LLM)**:
+
+1. **Observe** — `mem_observe` (agent-relayed) or `awlab-ai-assistant.exe hook --agent <host> --event <event>`
+   (host lifecycle events) append signals to `.ai/memory-bank/observations.jsonl` (dedup by fingerprint).
+2. **Bake** — every `action_call` runs an inline `bake_tick`: read → key → count → consistency →
+   confidence. Candidates are written to `.ai/memory-bank/baked.json` only when they change.
+   Confidence = `frequency(min(1,count/5)) × consistency × source_weight` (`explicit`/`corrected` 0.9,
+   `behavioral` 0.6, `inferred` 0.4). A candidate needs `count ≥ 2 ∧ consistency ≥ 0.5 ∧ confidence ≥ 0.6`.
+3. **Deliver (tell-once)** — `ctx_info mode="context"` / `mem_search store="patterns"` return
+   `pattern_candidates` / `baked_patterns` (stack-scoped). The delivery marker records told signatures
+   so a candidate is NEVER re-told until new evidence bakes.
+
+**Three tiers, one store** — inline (per `action_call`), async (background `bake-scheduler` re-bakes
+active workspaces), and subagent (`awlab-baker`, gated by new candidates) all share the same
+`observations.jsonl` + `baked.json`, so candidates are identical regardless of tier.
+
+**Hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` captures observations from
+host lifecycle events (user prompt, tool use, session start/stop, subagent stop) with **zero LLM cost**.
+Registration is per-host; the exe derives the project per event (see `docs/en/INSTALL.md`).
 
 ## Offline cache (`pending.jsonl`)
 

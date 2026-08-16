@@ -10,4 +10,10 @@ from .modules import registration  # noqa: F401 — triggers @mcp.tool() decorat
 from .modules.lifecycle import main
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "hook":
+        from .hooks.cli import run_hook
+
+        sys.exit(run_hook(sys.argv[2:]))
     main()

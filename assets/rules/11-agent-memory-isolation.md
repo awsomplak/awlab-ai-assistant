@@ -7,7 +7,7 @@
 
 Each project gets its own isolated memory namespace driven by `AGENT_RECALL_SLUG`. The slug is derived from the workspace folder name and stored in `.ai/project-id`.
 
-There is **ONE** MCP server: `awlab-ai-assistant` (single executable `dist/bin/awlab-ai-assistant.exe`). It exposes exactly 2 tools — `action_call` + `action_help` — that route the 20 actions (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`).
+There is **ONE** MCP server: `awlab-ai-assistant` (single executable `dist/bin/awlab-ai-assistant.exe`). It exposes exactly 2 tools — `action_call` + `action_help` — that route the 23 actions (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`).
 
 ## Isolation Mechanism
 

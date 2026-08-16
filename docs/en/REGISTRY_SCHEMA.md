@@ -1,23 +1,46 @@
 # REGISTRY Schema — action_call / action_help Dispatcher
 
+> [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **REGISTRY Schema**
+
 > **Design doc** — single source of truth for the
 > consolidated action surface. Everything the agent sees (`action_call` description,
 > `action_help` output, generated SKILL.md) is derived from this one `REGISTRY` dict,
 > so nothing can drift.
+>
+> **Audience:** contributors and maintainers. For the user-facing action list, see
+> [Available MCP Tools](AVAILABLE_TOOLS.md).
+
+**In this page:**
+
+- [1. Goals & principles](#1-goals--principles)
+- [2. File layout](#2-file-layout)
+- [3. ActionSpec schema](#3-actionspec-schema)
+- [4. Param schema (JSON-schema subset)](#4-param-schema-json-schema-subset)
+- [5. PRECONDITIONS contract](#5-preconditions-contract)
+- [6. Dispatcher flow](#6-dispatcher-flow)
+- [7. Generation (no drift)](#7-generation-no-drift)
+- [8. Worked examples](#8-worked-examples)
+- [9. Backward-compat alias map (36 → 23)](#9-backward-compat-alias-map-36--23)
+- [10. Open questions — resolved](#10-open-questions--resolved)
+- [11. Observation record (pattern-baking input)](#11-observation-record-pattern-baking-input)
+- [12. Baking & Delivery pipeline](#12-baking--delivery-pipeline)
+
+---
 
 ## 1. Goals & Principles
 
 1. **One source of truth** — `REGISTRY` drives tool description, `action_help`, and SKILL.md.
 2. **Server-owned orchestration** — the agent makes ONE call; the server guarantees the
    complete flow via `preconditions` + `pipeline`. No partial execution, ever.
-3. **Coarse, complete actions** — 36 partial tools → 20 actions (incl. `graph_*`, plus the
+3. **Coarse, complete actions** — 36 partial tools → 23 actions (incl. `graph_*`, the
    `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache
-   replay, and the `reg_update` single registry.md CRUD).
+   replay, the `reg_update` single registry.md CRUD, and the `plan_doc` / `project_id` /
+   `mem_observe` additions).
 4. **Reuse existing business logic as-is** — `src/mcp_server/tools/` handlers are called
    directly by name (`**params`). No logic rewrite.
-5. **Backward compatible** — the 36 legacy tool names map onto the 20 actions (32 as `aliases`;
-   3 were dropped, 3 became canonical action names), so current skills/rules keep working during
-   migration.
+5. **Backward compatible** — the 36 legacy tool names map onto the consolidated actions
+   (32 as `aliases`; 3 were dropped, 3 became canonical action names), so current skills/rules
+   keep working during migration.
 6. **Loud failure + transparent trace** — every response includes `executed`/`skipped`;
    a failure names the exact step that failed.
 
@@ -234,7 +257,7 @@ with an in-flight background rebuild (returns `rebuilding: true`, no duplicate
 build). Builds are serialized per project (a per-workspace lock); different
 projects build concurrently.
 
-## 9. Backward-Compat Alias Map (36 → 20)
+## 9. Backward-Compat Alias Map (36 → 23)
 
 | New action | Absorbed old tools |
 |-----------|--------------------|
@@ -272,3 +295,64 @@ projects build concurrently.
    (`resolve_action`); the response reports the canonical action name. Alias-usage logging is
    **not** implemented — old names still work but are not counted (acceptable: docs/rules are
    already migrated off them).
+
+## 11. Observation Record (pattern-baking input)
+
+The observation store (`.ai/memory-bank/observations.jsonl`) holds raw pattern-evidence
+signals that the baking pipeline later keys → counts → measures consistency → computes
+confidence. Written by `mem_observe` (agent-relayed), the `hook --agent` mode (host
+lifecycle events), and future server-mined scans.
+
+Record shape:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `signature` | string | Normalized key (command / instruction template / style fingerprint) |
+| `value` | string | Raw signal (e.g. `"pnpm install"`, `"always use BaseModel"`) |
+| `ts` | string | ISO timestamp (UTC) |
+| `source` | string | `explicit` / `corrected` / `behavioral` / `inferred` / `mined` |
+| `stack` | string | Detected stack tag (Python / Laravel / any) — a tag, not detection input |
+| `project` | string | Project-id slug (empty = portable) |
+| `context` | string | Optional area (workflow / models / commands) |
+| `fingerprint` | string | Dedup/delta guard (see below) |
+
+**Dedup/delta guard:** the fingerprint is `sha256(value + signature)` for value-only
+(agent-relayed) signals — the same value under a different signature is distinct; and
+`sha256(value + path + mtime + stat)` for mined signals — a changed source invalidates the
+old fingerprint, so re-scans never double-count. "Count = genuine recurrence", not "count =
+times the server was woken".
+
+## 12. Baking & Delivery pipeline
+
+The observation store feeds a **deterministic, LLM-free** baking pipeline
+(`src/mcp_server/helpers/baking.py`), which persists emerging candidates to
+`.ai/memory-bank/baked.json` for tell-once delivery.
+
+**Bake tick** (`bake_tick`) — cheap per call: read → key → count → consistency → confidence →
+persist (atomic, only when changed). Every `action_call` runs it inline after a successful action.
+
+**Keying** — each raw `value` normalizes to a canonical signature (case / whitespace /
+punctuation-insensitive), so "genuine recurrence" is counted, not "times the server woke".
+
+**Confidence** — `frequency(min(1, count/5)) × consistency × source_weight`, where
+`source_weight` is `explicit`/`corrected` 0.9, `behavioral` 0.6, `inferred` 0.4, and
+`consistency` is the modal-value agreement within a signature cluster. A candidate emerges at
+`count ≥ 2 ∧ consistency ≥ 0.5 ∧ confidence ≥ 0.6`.
+
+**Delivery (tell-once)** — `baked.json` keeps a `delivery` map `{signature: delivered_at_ts}`.
+`ctx_info mode="context"` and `mem_search store="patterns"` return `pattern_candidates` /
+`baked_patterns` (stack-scoped) and mark them delivered in the same read, so a candidate is never
+re-told until new evidence bakes.
+
+**Three-tier orchestration** — all tiers share the same store and `bake_tick`, so candidates are
+identical regardless of tier:
+
+| Tier | Mechanism | LLM? |
+|---|---|---|
+| Inline | `_action_call` runs `bake_tick` after every successful action | no |
+| Async | `modules/bake_scheduler.py` daemon re-bakes known workspaces every 30s | no |
+| Subagent | `awlab-baker` agent, gated by `should_spawn_subagent` (new undelivered candidates) | host |
+
+**Hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` (`src/mcp_server/hooks/`)
+normalizes host lifecycle events into observations (`HOOK_ADAPTERS` mirror `REGISTRY`), appending to
+the same store with zero LLM cost.

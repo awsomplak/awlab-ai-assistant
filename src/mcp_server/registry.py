@@ -6,7 +6,7 @@ The ``REGISTRY`` dict drives EVERYTHING the agent sees:
 - ``build_help()``              → the ``action_help`` output
 - ``build_skill_md()``          → the generated SKILL.md
 
-Principles (see docs/REGISTRY_SCHEMA.md):
+Principles (see docs/en/REGISTRY_SCHEMA.md):
 1. ONE source of truth — nothing else defines the action surface (no drift).
 2. Server-owned orchestration — ``preconditions`` + ``pipeline`` guarantee the
    complete flow for one request; no partial execution.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import re
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -28,6 +29,7 @@ from typing import Any, Awaitable, Callable
 from . import helpers
 from .config import settings
 from .helpers.context_builder import materialize_context
+from .helpers.file_utils import read_file_safe, write_file_safe
 from .helpers.graphify_bridge import (
     ensure_fresh as _graph_ensure_fresh,
 )
@@ -253,6 +255,147 @@ async def _reg_update(
     return helpers.fail_obj(error="reg_update: type must be create, update, or delete")
 
 
+async def _project_id_check(
+    workspace_path: str,
+    project_id: str | None = None,
+    force_regenerate: bool = False,
+) -> dict[str, Any]:
+    """Check the project-id; auto-create it if missing (idempotent).
+
+    Reads ``.ai/project-id``; if missing (or force_regenerate), derives the
+    sanitized directory-name slug (rule 08) and writes it. The agent calls this
+    on FIRST response, BEFORE any mem_*/plan op, so memory isolation never falls
+    through to the user-wide global DB (``~/.awlab-id/agent-memory/memory/memory.db``).
+    """
+    valid, err = helpers.validate_workspace_path(workspace_path)
+    if not valid:
+        return helpers.fail_obj(error=err or "invalid workspace_path")
+
+    existing = settings.get_project_id(workspace_path)
+
+    if existing and not force_regenerate:
+        return {
+            "success": True,
+            "project_id": existing,
+            "action": "check",
+            "created": False,
+            "path": str(settings.get_project_id_path(workspace_path)),
+        }
+
+    # Auto-create: sanitized dir-name slug (rule 08 bootstrap, server-side).
+    root_name = settings._resolve_workspace(workspace_path).name
+    slug = re.sub(r"[^a-z0-9_]+", "_", root_name.lower()).strip("_") or "project"
+    pid_path = settings.get_project_id_path(workspace_path)
+    ok = write_file_safe(pid_path, slug + "\n")
+    if not ok:
+        return helpers.fail_obj(error=f"project_id: failed to write {pid_path}")
+
+    return {
+        "success": True,
+        "project_id": slug,
+        "action": "create",
+        "created": True,
+        "path": str(pid_path),
+        "note": "project-id auto-generated (was missing) — memory now project-isolated",
+    }
+
+
+async def _plan_doc(
+    workspace_path: str,
+    plan_uuid: str = "",
+    doc: str = "plan",
+    mode: str = "read",
+    content: str | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Read / create / update / delete a plan's plan.md or notes.md directly.
+
+    The agent passes the FULL content (no template, no IDE compare-changes) and
+    reviews the complete result — not a diff. Modes: read (default) | write |
+    delete. doc: plan (default) | notes.
+    """
+    if doc not in ("plan", "notes"):
+        return helpers.fail_obj(error="plan_doc: doc must be 'plan' or 'notes'")
+    if mode not in ("read", "write", "delete"):
+        return helpers.fail_obj(error="plan_doc: mode must be read, write, or delete")
+    if not plan_uuid:
+        return helpers.fail_obj(error="plan_doc: plan_uuid required")
+
+    path = (
+        settings.get_plan_path(workspace_path=workspace_path, plan_uuid=plan_uuid)
+        if doc == "plan"
+        else settings.get_plan_dir(workspace_path=workspace_path, plan_uuid=plan_uuid) / "notes.md"
+    )
+
+    if mode == "read":
+        content = read_file_safe(path)
+        if content is None:
+            return helpers.fail_obj(error=f"plan_doc: {doc}.md not found for {plan_uuid}")
+        return {"success": True, "doc": doc, "mode": "read", "content": content, "path": str(path)}
+
+    if mode == "delete":
+        try:
+            if path.exists():
+                path.unlink()
+            return {"success": True, "doc": doc, "mode": "delete", "path": str(path)}
+        except OSError as e:
+            return helpers.fail_obj(error=f"plan_doc: delete failed: {e}")
+
+    # write / create
+    if content is None:
+        return helpers.fail_obj(error="plan_doc: content required for write")
+    ok = write_file_safe(path, content)
+    if not ok:
+        return helpers.fail_obj(error=f"plan_doc: write failed for {path}")
+    return {"success": True, "doc": doc, "mode": "write", "path": str(path)}
+
+
+async def _mem_observe(
+    workspace_path: str,
+    project_id: str | None = None,
+    observations: list[dict[str, Any]] | None = None,
+    stack: str = "any",
+) -> dict[str, Any]:
+    """Record user-pattern evidence into the observation store (baking input).
+
+    Agent-relayed observations: chat/behavior signals (explicit statements,
+    corrections, repeated commands) that the agent noticed. The baking pipeline
+    later keys → counts → measures consistency → computes confidence. Dedup/
+    delta-guarded (fingerprint), so re-recording the same signal is a no-op.
+    """
+    from .helpers.observation_store import append_observations
+
+    if not observations:
+        return helpers.fail_obj(error="mem_observe: observations required")
+
+    records = []
+    for o in observations:
+        if not isinstance(o, dict):
+            continue
+        source = str(o.get("source") or "behavioral")
+        records.append(
+            {
+                "signature": str(o.get("signature") or ""),
+                "value": str(o.get("value") or ""),
+                "source": source,
+                "stack": str(o.get("stack") or stack),
+                "project": project_id or "",
+                "context": str(o.get("context") or ""),
+            }
+        )
+
+    res = append_observations(workspace_path=workspace_path, records=records)
+    if not res.get("success"):
+        return helpers.fail_obj(error=f"mem_observe: {res.get('error', 'write failed')}")
+    return {
+        "success": True,
+        "store": "observations.jsonl",
+        "appended": res.get("appended", 0),
+        "skipped_duplicates": res.get("skipped_duplicates", 0),
+        "skipped_invalid": res.get("skipped_invalid", 0),
+    }
+
+
 async def _ctx_info(
     workspace_path: str,
     mode: str = "snapshot",
@@ -394,6 +537,20 @@ async def _context_composite(
         except Exception:  # noqa: BLE001
             pass
 
+    # Pattern delivery (Phase 5): inject stack-scoped baked patterns + tell-once
+    # candidates (marking them delivered in the same read).
+    baked_patterns: list[dict[str, Any]] = []
+    pattern_candidates: list[dict[str, Any]] = []
+    try:
+        from .helpers.baking import deliver_candidates, detect_stack, read_baked, scope_candidates
+
+        baked_patterns = scope_candidates(
+            read_baked(workspace_path).get("candidates") or [], detect_stack(workspace_path)
+        )
+        pattern_candidates = deliver_candidates(workspace_path).get("pattern_candidates") or []
+    except Exception:  # noqa: BLE001 — delivery must never break the composite
+        pass
+
     return {
         "success": True,
         "plan": plan if isinstance(plan, dict) else plan,
@@ -401,6 +558,8 @@ async def _context_composite(
         "notes_doc": notes_doc,
         "code": code if isinstance(code, dict) else code,
         "memory": mem if isinstance(mem, dict) else mem,
+        "patterns": baked_patterns,
+        "pattern_candidates": pattern_candidates,
         "query": query,
         "context_md": materialize_context(
             workspace_path,
@@ -410,6 +569,8 @@ async def _context_composite(
             query=query,
             plan_doc=plan_doc,
             notes_doc=notes_doc,
+            patterns=baked_patterns,
+            pattern_candidates=pattern_candidates,
         ),
     }
 
@@ -901,6 +1062,35 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "example": 'action_call(action="wf", params={"action": "execute", "workflow_name": "scan-project"})',
         "aliases": ["wf_execute", "wf_list"],
     },
+    # ── Plan documents ────────────────────────────────────────────────────
+    "plan_doc": {
+        "group": "plan",
+        "summary": "Read / create / update / delete a plan's plan.md or notes.md directly.",
+        "doc": "Pass the FULL content (no template, no IDE compare-changes); review the "
+        "complete result, not a diff. doc=plan (default) | notes. mode=read (default) | "
+        "write | delete. write upserts the whole file atomically; delete removes it.",
+        "handler": _plan_doc,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "plan_uuid": {
+                "type": "string",
+                "required": True,
+                "pattern": r"^[a-z0-9]{8}$",
+                "desc": "8-char lowercase UUID",
+            },
+            "project_id": {"type": "string", "desc": "Optional project ID for agent-recall isolation"},
+            "doc": {"type": "string", "enum": ["plan", "notes"], "default": "plan"},
+            "mode": {"type": "string", "enum": ["read", "write", "delete"], "default": "read"},
+            "content": {"type": "string", "desc": "Full markdown content (required for write)"},
+        },
+        "returns": "{success, doc, mode, path} | {content} on read",
+        "example": (
+            'action_call(action="plan_doc", params={"plan_uuid": "ab12cd34", "doc": "plan", '
+            '"mode": "write", "content": "# Plan\\n\\n## Overview\\n"})'
+        ),
+        "preconditions": ["workspace_valid", "plan_uuid_valid"],
+        "mutates": True,
+    },
     # ── Context ───────────────────────────────────────────────────────────
     "ctx_info": {
         "group": "context",
@@ -931,6 +1121,26 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "example": 'action_call(action="ctx_info")',
         "aliases": ["ctx_get_snapshot", "ctx_read_memory_bank", "ctx_scan_project", "ctx_suggest_files"],
     },
+    # ── Project identity ──────────────────────────────────────────────────
+    "project_id": {
+        "group": "context",
+        "summary": "Check the project-id; auto-create it if missing (idempotent).",
+        "doc": "Reads .ai/project-id. If missing (or force_regenerate), derives the "
+        "sanitized directory-name slug (rule 08) and writes it. The agent MUST call this "
+        "on FIRST response, BEFORE any mem_*/plan op, so memory isolation never falls "
+        "through to the user-wide global DB. One call replaces the old long check+create "
+        "flow — check and create are unified.",
+        "handler": _project_id_check,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Reserved (informational)"},
+            "force_regenerate": {"type": "boolean", "default": False, "desc": "Regenerate even if one exists"},
+        },
+        "returns": "{success, project_id, action: check|create, created, path}",
+        "example": 'action_call(action="project_id", params={"workspace_path": "..."})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
+    },
     # ── Utility ───────────────────────────────────────────────────────────
     "util_info": {
         "group": "util",
@@ -948,6 +1158,34 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "aliases": ["util_get_version", "util_get_project_meta", "util_generate_mermaid"],
     },
     # ── Memory ────────────────────────────────────────────────────────────
+    "mem_observe": {
+        "group": "memory",
+        "summary": "Record user-pattern evidence into the observation store (baking input).",
+        "doc": "Agent-relayed observations: chat/behavior signals (explicit statements, "
+        "corrections, repeated commands) that the agent noticed. Each observation is a "
+        "raw signal {signature, value, source, stack?, context?} appended to "
+        ".ai/memory-bank/observations.jsonl (dedup/delta-guarded by fingerprint, so "
+        "re-recording the same signal is a no-op). The baking pipeline later keys → "
+        "counts → measures consistency → computes confidence.",
+        "handler": _mem_observe,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project scope (tag, not required)"},
+            "observations": {
+                "type": "array",
+                "items": {"type": "object"},
+                "desc": "[{signature, value, source?, stack?, context?}] — raw pattern evidence",
+            },
+            "stack": {"type": "string", "default": "any", "desc": "Default stack tag when an observation omits stack"},
+        },
+        "returns": "{success, store, appended, skipped_duplicates, skipped_invalid}",
+        "example": (
+            'action_call(action="mem_observe", params={"observations": [{"signature": '
+            '"cmd_pnpm_install", "value": "pnpm install", "source": "behavioral", "stack": "nodejs"}]})'
+        ),
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
+    },
     "mem_search": {
         "group": "memory",
         "summary": "Hybrid BM25+dense search over memory (optionally by entity type).",

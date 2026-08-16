@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 RULES_SRC = ROOT / "assets" / "rules"
 SKILLS_SRC = ROOT / "assets" / "skills"
+AGENTS_SRC = ROOT / "assets" / "agents"
 WORKFLOWS_SRC = ROOT / "assets" / "workflows"
 PROFILES_DIR = DIST / "profiles"
 PYTHON_SRC = ROOT / "src" / "mcp_server"
@@ -195,7 +196,7 @@ Publish /dist contents to AI assistant locations.
 Use --uninstall to remove previously installed files.
 
 Options:
-  --target=<name>   One of: cline, copilot, claude, hermes, all
+  --target=<name>   One of: cline, copilot, claude, hermes, opencode, all
   --skip-build      Fail if /dist doesn't exist instead of building
   --force           Skip confirmation prompts
   --uninstall       Remove installed files instead of installing
@@ -206,12 +207,14 @@ Target Paths:
     copilot   ~/.agents/skills/ (shared with Cline)
     claude    ~/.claude/skills/
     hermes    ~/.hermes/skills/
+    opencode  ~/.config/opencode/skills/
 
   Rules:
     cline     ~/Documents/Cline/Rules/
     copilot   ~/.copilot/instructions/
     claude    ~/.claude/CLAUDE.md
     hermes    ~/.hermes/skills/
+    opencode  ~/.config/opencode/AGENTS.md
 """,
         "test": """\
 Usage: run.py test [<pytest-args>...]
@@ -235,6 +238,7 @@ Output:
   ├── cline/               (global skills and rules for cline)
   ├── copilot/             (global skills and rules for copilot)
   ├── hermes/              (global skills and rules for hermes)
+  ├── opencode/            (global AGENTS.md rules + skills)
   └── .clinerules          (Cline per project rules ready to copy)
 """,
     }
@@ -349,6 +353,122 @@ def _copy_skills(skills: list[dict], dest_dir: Path, label: str) -> None:
     _ok(f"{label}  ({len(skills)} skills)")
 
 
+def _copy_agents(dest_dir: Path, label: str) -> None:
+    """Copy shared agent definitions (awlab-baker.md) into a per-host agents dir.
+
+    The shared `awlab-baker.md` uses the Claude .claude/agents format, which
+    VS Code Copilot also reads — so one file serves both Claude Code and Copilot.
+    """
+    if not AGENTS_SRC.exists():
+        return
+    agents_dir = dest_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for f in sorted(AGENTS_SRC.glob("*.md")):
+        (agents_dir / f.name).write_text(f.read_text(encoding="utf-8"), "utf-8")
+    _ok(f"{label}  ({len(list(AGENTS_SRC.glob('*.md')))} agent file(s))")
+
+
+HOOK_CMD = "awlab-ai-assistant.exe hook"
+
+
+def _hook_config_for(agent: str, events: list[str]) -> str:
+    """Return a per-host hook-registration snippet pointing at the SAME exe.
+
+    Registration is global; the exe derives the project per-event from the payload
+    (Hermes cwd, Claude $CLAUDE_PROJECT_DIR, Copilot workspace URI, Cline task cwd).
+    """
+    if agent == "hermes":
+        lines = ["hooks:"]
+        for ev in events:
+            lines.append(f"  {ev}:")
+            lines.append(f'    - command: "{HOOK_CMD} --agent hermes --event {ev}"')
+        return "\n".join(lines) + "\n"
+    if agent == "claude":
+        # Claude Code settings.json hooks: {event: [{matcher?, hooks: [{type, command}]}]}.
+        return (
+            json.dumps(
+                {
+                    "hooks": {
+                        ev: [{"hooks": [{"type": "command", "command": f"{HOOK_CMD} --agent claude --event {ev}"}]}]
+                        for ev in events
+                    }
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+    # copilot / cline → registration lives in the host UI/settings; emit a note.
+    return (
+        f"# {agent} hook registration (via host UI/settings):\n"
+        + "\n".join(f"#   {HOOK_CMD} --agent {agent} --event {ev}" for ev in events)
+        + "\n"
+    )
+
+
+def _baking_capability_note(agent: str) -> str:
+    """Per-host pattern-baking tier note (Phase 7).
+
+    Three tiers, ONE shared store (``.ai/memory-bank/observations.jsonl`` +
+    ``baked.json``): every tier bakes identical candidates.
+      - subagent  : spawn the shared ``awlab-baker`` subagent to observe → bake → report.
+      - hooks     : ``{HOOK_CMD} --agent <host> --event <event>`` captures with zero LLM cost.
+      - async/inline : server background bake-scheduler + per-action tick (no LLM).
+    """
+    if agent in ("copilot", "claude", "hermes"):
+        tier = (
+            "- **Tier: subagent + hooks** — when the delivery marker shows NEW `pattern_candidates`, "
+            "spawn the shared `awlab-baker` subagent (see `docs/en/PATTERN_BAKING_PROTOCOL.md`) to "
+            "observe → mine → report a distilled pattern list; register hooks "
+            f"(`{HOOK_CMD} --agent {agent} --event ...`) for zero-LLM captures."
+        )
+    else:  # cline / opencode — built-in subagents cannot call MCP
+        tier = (
+            "- **Tier: async + inline (no MCP subagent)** — the server's background bake-scheduler and "
+            "per-action tick bake observations automatically (no LLM); act on `pattern_candidates` "
+            "yourself per rules 09/10; register hooks "
+            f"(`{HOOK_CMD} --agent {agent} --event ...`) for zero-LLM captures."
+        )
+    return (
+        "## Pattern Baking Capabilities\n\n"
+        "- **Shared store**: `.ai/memory-bank/observations.jsonl` + `baked.json` — all tiers write the same store.\n"
+        f"{tier}\n"
+        "- **Spawn gate**: only act when the delivery marker shows NEW `pattern_candidates` "
+        "(tell-once, token-cost control).\n"
+    )
+
+
+def _compile_agents(profiles_dir: Path) -> None:
+    """Compile the shared baking agent + per-host hook registration configs."""
+    # Shared awlab-baker.md → Copilot + Claude (Claude format, both read it).
+    _copy_agents(profiles_dir / "copilot", "copilot/agents/  (shared awlab-baker.md)")
+    _copy_agents(profiles_dir / "claude", "claude/agents/  (shared awlab-baker.md)")
+
+    # Per-host hook registration configs (all point at the same exe).
+    hooks_dir = profiles_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "hermes.hooks.yaml").write_text(
+        _hook_config_for(
+            "hermes",
+            ["pre_llm_call", "post_tool_call", "pre_tool_call", "subagent_stop", "on_session_start", "on_session_end"],
+        ),
+        "utf-8",
+    )
+    (hooks_dir / "claude.hooks.json").write_text(
+        _hook_config_for(
+            "claude", ["UserPromptSubmit", "PostToolUse", "PreToolUse", "SubagentStop", "Stop", "SessionStart"]
+        ),
+        "utf-8",
+    )
+    (hooks_dir / "copilot.hooks.txt").write_text(
+        _hook_config_for(
+            "copilot", ["user-prompt-submit", "post-tool-use", "session-start", "session-end", "subagent-stop", "stop"]
+        ),
+        "utf-8",
+    )
+    (hooks_dir / "cline.hooks.txt").write_text(_hook_config_for("cline", ["NewTask", "PostToolUse", "Stop"]), "utf-8")
+    _ok("hooks/  (4 per-host hook-registration configs, all → same exe)")
+
+
 def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
     """Cline: individual .md files + skills + .clinerules monolith."""
     cline_dir = profiles_dir / "cline"
@@ -368,9 +488,12 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
     ]
     unified = _build_unified(stripped)
     (profiles_dir / ".clinerules").write_text(
-        f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n## Available MCP Tools\n{MCP_TOOLS}\n", "utf-8"
+        f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n"
+        f"{_baking_capability_note('cline')}\n\n"
+        f"## Available MCP Tools\n{MCP_TOOLS}\n",
+        "utf-8",
     )
-    _ok(".clinerules  (monolith, HTML comments stripped, heading anchors)")
+    _ok(".clinerules  (monolith, HTML comments stripped, heading anchors + baking tier note)")
 
 
 def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
@@ -403,7 +526,17 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
         cleaned = _rewrite_refs(cleaned)
         frontmatter = f"---\nname: {base}\ndescription: '{desc}'\n---\n\n"
         (copilot_dir / f"{base}.instructions.md").write_text(frontmatter + cleaned, "utf-8")
-    _ok(f"copilot/  ({len(rules)} .instructions.md files, comments stripped, headings offset, heading anchors)")
+    # Pattern-baking capability note (Phase 7) — copilot uses subagent + hooks tier.
+    (copilot_dir / "99-baking-capabilities.instructions.md").write_text(
+        "---\nname: 99-baking-capabilities\n"
+        "description: 'Per-host pattern-baking tier note — subagent + hooks'\n---\n\n"
+        + _baking_capability_note("copilot"),
+        "utf-8",
+    )
+    _ok(
+        f"copilot/  ({len(rules)} .instructions.md files + baking tier note, comments stripped, headings offset, "
+        "heading anchors)"
+    )
 
 
 def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
@@ -419,9 +552,11 @@ def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -
     unified = _build_unified(processed)
 
     (claude_dir / "CLAUDE.md").write_text(
-        f"# Claude Code — AWLab-ID\n\nMCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n", "utf-8"
+        f"# Claude Code — AWLab-ID\n\nMCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n\n"
+        f"{_baking_capability_note('claude')}\n",
+        "utf-8",
     )
-    _ok("claude/CLAUDE.md  (monolith, comments stripped, heading anchors)")
+    _ok("claude/CLAUDE.md  (monolith, comments stripped, heading anchors + baking tier note)")
 
     # Skills for Claude Code
     _copy_skills(skills, claude_dir, "claude/skills/")
@@ -451,10 +586,11 @@ def _compile_hermes(rules: list[dict], skills: list[dict], profiles_dir: Path) -
         f"---\n"
         f"\n"
         f"# AWLab-ID Rules\n\n"
-        f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n",
+        f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n\n"
+        f"{_baking_capability_note('hermes')}\n",
         "utf-8",
     )
-    _ok("hermes/skills/awlab-rules/SKILL.md  (skill-packaged rules, comments stripped, anchors)")
+    _ok("hermes/skills/awlab-rules/SKILL.md  (skill-packaged rules, comments stripped, anchors + baking tier note)")
 
     # ── Copy all existing skills ──
     for s in skills:
@@ -462,6 +598,63 @@ def _compile_hermes(rules: list[dict], skills: list[dict], profiles_dir: Path) -
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text(s["content"], "utf-8")
     _ok(f"hermes/skills/  ({len(skills)} skills copied)")
+
+
+def _compile_opencode(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """OpenCode: single global AGENTS.md monolith + skills + MCP wiring snippet.
+
+    OpenCode reads global rules from ``~/.config/opencode/AGENTS.md`` and
+    discovers skills at ``~/.config/opencode/skills/<name>/SKILL.md`` (each
+    SKILL.md needs ``name`` + ``description`` frontmatter; the name must match
+    the folder and ``^[a-z0-9]+(-[a-z0-9]+)*$``). MCP servers are configured
+    via the ``mcp`` key in ``opencode.json``.
+    """
+    opencode_dir = profiles_dir / "opencode"
+    opencode_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Rules → AGENTS.md monolith ──
+    processed = []
+    for r in rules:
+        cleaned = _strip_html_comments(r["content"])
+        processed.append({"filename": r["filename"], "content": _rewrite_refs(cleaned)})
+    unified = _build_unified(processed)
+    (opencode_dir / "AGENTS.md").write_text(
+        f"# OpenCode — AWLab-ID\n\n"
+        f"Global rules for OpenCode (loaded from ~/.config/opencode/AGENTS.md).\n\n"
+        f"MCP Tools via awlab-ai-assistant:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n\n"
+        f"{_baking_capability_note('opencode')}\n",
+        "utf-8",
+    )
+    _ok("opencode/AGENTS.md  (global rules monolith, comments stripped, heading anchors + baking tier note)")
+
+    # ── Skills → skills/<name>/SKILL.md ──
+    skills_dir = opencode_dir / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for s in skills:
+        d = skills_dir / s["name"]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(s["content"], "utf-8")
+    _ok(f"opencode/skills/  ({len(skills)} skills)")
+
+    # ── MCP wiring snippet (merge the `mcp` key into opencode.json) ──
+    (opencode_dir / "opencode.mcp.json").write_text(
+        json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "mcp": {
+                    "awlab-ai-assistant": {
+                        "type": "local",
+                        "command": ["dist/bin/awlab-ai-assistant.exe"],
+                        "enabled": True,
+                    }
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        "utf-8",
+    )
+    _ok("opencode/opencode.mcp.json  (merge the `mcp` key into your opencode.json)")
 
 
 def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
@@ -482,6 +675,8 @@ def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
     _compile_copilot(rules, skills, PROFILES_DIR)
     _compile_claude(rules, skills, PROFILES_DIR)
     _compile_hermes(rules, skills, PROFILES_DIR)
+    _compile_opencode(rules, skills, PROFILES_DIR)
+    _compile_agents(PROFILES_DIR)
 
     _detail(f"{len(rules)} rules, {len(skills)} skills")
     return rules, skills
@@ -764,6 +959,7 @@ PUBLISH_MAP = {
         "Copilot",
         [
             ("profiles/copilot", "{home}/.copilot/instructions"),
+            ("profiles/copilot/agents", "{home}/.copilot/agents"),
             ("profiles/cline/skills", "{home}/.agents/skills"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
@@ -773,6 +969,8 @@ PUBLISH_MAP = {
         [
             ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
             ("profiles/claude/skills", "{home}/.claude/skills"),
+            ("profiles/claude/agents", "{home}/.claude/agents"),
+            ("profiles/hooks/claude.hooks.json", "{home}/.claude/awlab-hooks.json"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
@@ -780,6 +978,16 @@ PUBLISH_MAP = {
         "Hermes",
         [
             ("profiles/hermes/skills", "{home}/.hermes/skills"),
+            ("profiles/hooks/hermes.hooks.yaml", "{home}/.hermes/awlab-hooks.yaml"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "opencode": (
+        "OpenCode",
+        [
+            ("profiles/opencode/AGENTS.md", "{home}/.config/opencode/AGENTS.md"),
+            ("profiles/opencode/skills", "{home}/.config/opencode/skills"),
+            ("profiles/opencode/opencode.mcp.json", "{home}/.config/opencode/awlab-mcp.json"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),

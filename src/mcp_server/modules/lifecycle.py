@@ -52,6 +52,14 @@ def run_server(mcp_instance: FastMCP, server_name: str = "awlab-ai-assistant") -
     except Exception:
         lgr.warning("Embedding model pre-download thread failed")
 
+    # Start the async bake scheduler (three-tier orchestration — tier 1).
+    try:
+        from .bake_scheduler import start_scheduler
+
+        start_scheduler()
+    except Exception:
+        lgr.warning("Async bake scheduler failed to start")
+
     mcp_instance.run(transport="stdio")
 
     lgr.info(f"MCP Server [{server_name}] stopped")

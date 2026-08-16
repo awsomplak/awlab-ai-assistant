@@ -132,6 +132,17 @@ async def search_memory(
         context: Optional area filter for patterns (matches pattern context/value).
     """
     patterns, family = store_target(store)
+    # Baked-pattern injection (Phase 5): stack-scoped candidates ride alongside results.
+    baked: list[dict[str, Any]] = []
+    try:
+        from ..helpers.baking import read_baked, scope_candidates
+
+        baked = scope_candidates(
+            read_baked(workspace_path).get("candidates") or [],
+            _project_stack(workspace_path),
+        )
+    except Exception:  # noqa: BLE001 — injection is best-effort
+        baked = []
     try:
         # Deterministic type listing: no query → read the graph and filter by type.
         if entity_type and not query:
@@ -148,6 +159,7 @@ async def search_memory(
                 filtered_by="entity_type",
                 store=store,
                 scope=scope if patterns else None,
+                baked_patterns=baked,
             )
 
         # Full-text (or hybrid) search over name + observations.
@@ -174,6 +186,6 @@ async def search_memory(
         if patterns:
             result = _scope_patterns(result, workspace_path, scope=scope, context=context)
             result = [_annotate_pattern(e) for e in result]
-        return ok_obj(data=result[:limit], store=store, scope=scope if patterns else None)
+        return ok_obj(data=result[:limit], store=store, scope=scope if patterns else None, baked_patterns=baked)
     except Exception as e:
         return fail_obj(error=str(e))

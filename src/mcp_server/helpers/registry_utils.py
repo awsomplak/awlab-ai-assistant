@@ -33,6 +33,26 @@ TABLE_ROW_PATTERN = re.compile(r"^\|(.+)\|$")
 TABLE_SEPARATOR_PATTERN = re.compile(r"^\|?\s*[-:]+\s*\|")
 
 
+def _escape_cell(value: Any) -> str:
+    """Escape a markdown table cell so a literal ``|`` doesn't split the column."""
+    return str(value).replace("|", "\\|")
+
+
+def _split_table_cells(stripped: str) -> list[str]:
+    """Split a table row into cells, honoring ``\\|`` escapes.
+
+    Splits on pipes *not* preceded by a backslash, drops the row's outer empty
+    cells (from the leading/trailing ``|``), and unescapes ``\\|`` → ``|`` in
+    every cell.
+    """
+    cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", stripped)]
+    while cells and cells[0] == "":
+        cells.pop(0)
+    while cells and cells[-1] == "":
+        cells.pop()
+    return cells
+
+
 def parse_table_rows(content: str) -> list[dict[str, str]]:
     """
     Parse markdown table rows from a section of text.
@@ -52,19 +72,22 @@ def parse_table_rows(content: str) -> list[dict[str, str]]:
         if TABLE_SEPARATOR_PATTERN.match(stripped):
             continue
         if header_found and TABLE_ROW_PATTERN.match(stripped):
-            # Parse columns: split by | and trim. Canonical rows have 5 columns
-            # (uuid, status, date, created_at, summary); legacy 4-column rows
-            # (no Created At) are still accepted with created_at = date.
-            parts = [p.strip() for p in stripped.split("|") if p.strip()]
+            # Parse columns: split on unescaped pipes and trim. Canonical rows
+            # have 5 cells (uuid, status, date, created_at, summary); legacy
+            # 4-column rows (no Created At) are still accepted with created_at =
+            # date. Literal `|` inside a cell is written as `\|` and unescaped
+            # here; surplus cells (legacy rows with a raw `|` in the summary)
+            # are rejoined into the summary so no content is lost.
+            parts = _split_table_cells(stripped)
             if len(parts) >= 4:
                 has_created = len(parts) >= 5
                 rows.append(
                     {
-                        "uuid": parts[0].strip(),
-                        "status": parts[1].strip(),
-                        "date": parts[2].strip(),
-                        "created_at": parts[3].strip() if has_created else parts[2].strip(),
-                        "summary": parts[4].strip() if has_created else parts[3].strip(),
+                        "uuid": parts[0],
+                        "status": parts[1],
+                        "date": parts[2],
+                        "created_at": parts[3] if has_created else parts[2],
+                        "summary": "|".join(parts[4:] if has_created else parts[3:]),
                     }
                 )
     return rows
@@ -140,9 +163,20 @@ def parse_registry(workspace_path: str | Path) -> dict[str, Any]:
 
 
 def build_table_row(entry: dict[str, str]) -> str:
-    """Build a markdown table row from an entry dict (incl. immutable Created At)."""
+    """Build a markdown table row from an entry dict (incl. immutable Created At).
+
+    Every cell is pipe-escaped (``|`` → ``\\|``) so summaries and other free-text
+    fields containing ``|`` round-trip without breaking the table.
+    """
     created_at = entry.get("created_at", entry.get("date", ""))
-    return f"| {entry['uuid']} | {entry['status']} | {entry['date']} | {created_at} | {entry['summary']} |"
+    cells = [
+        _escape_cell(entry.get("uuid", "")),
+        _escape_cell(entry.get("status", "")),
+        _escape_cell(entry.get("date", "")),
+        _escape_cell(created_at),
+        _escape_cell(entry.get("summary", "")),
+    ]
+    return "| " + " | ".join(cells) + " |"
 
 
 def rebuild_registry_content(

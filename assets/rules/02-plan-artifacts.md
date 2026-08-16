@@ -152,7 +152,13 @@ and `plan_update` (mark_phase) handle status transitions. Do not edit tables man
 Each plan at `.ai/artifacts/{uuid}/`:
 - `plan.md` — Approach, reasoning, outcomes
 - `tasks.md` — Ordered checklist by phases
-- `notes.md` — Constraints, risks, decisions (optional)
+- `notes.md` — Constraints, risks, decisions (OPTIONAL, keep compact)
+
+**notes.md discipline (no bloat):** notes.md holds only significant constraints, risks, and
+key decisions. Do NOT append per-phase completion summaries or implementation detail — phase
+state lives in `tasks.md` markers, the registry, and `plan.md`. `plan_update` returns a
+`notes_summary` for the response only; it does NOT write notes.md and neither should you. At
+most update the `## Status` tracker line when a phase completes.
 
 Use `action_call(action="task_update", params={"content": "..."})` to persist tasks.
 Never write `tasks.md` directly.

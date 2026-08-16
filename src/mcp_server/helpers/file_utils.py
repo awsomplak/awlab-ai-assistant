@@ -539,6 +539,11 @@ def create_task_in_md(
     *new_status*. Returns ``(updated_content, created_path)``, or ``(None, None)``
     when the task already exists or the path is malformed.
     """
+    # The markdown format is one task per line — normalize embedded line breaks
+    # (and trim) so a description containing newlines can't produce malformed
+    # task lines.
+    description = re.sub(r"\s*\n\s*", " ", description).strip()
+
     parts = task_path.strip().split(".")
     if len(parts) < 2 or not description:
         return None, None

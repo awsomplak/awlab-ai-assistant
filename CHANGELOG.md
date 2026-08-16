@@ -1,4 +1,30 @@
 # Changelog
+## [3.0.2] - 2026-08-16
+
+### Added
+- **Pattern-baking core (Phase 4)**: append-only observation store (`.ai/memory-bank/observations.jsonl`, torn-tail tolerant) + deterministic LLM-free bake engine (`key → count → consistency → confidence`) persisting candidates to `baked.json`; async background bake scheduler + per-action inline bake tick.
+- **`mem_observe` action** — records user-pattern evidence (signals) into the observation store, dedup/delta-guarded by fingerprint; feeds the baking pipeline.
+- **`project_id` check-and-create action** — idempotent; auto-creates `.ai/project-id` from the sanitized directory-name slug so memory isolation never falls through to the global DB. STRICT FIRST-CALL rule (rules 01/08).
+- **`plan_doc` action** — direct read/write/delete of a plan's `plan.md`/`notes.md` (full content, no template / IDE compare).
+- **Unified hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` with per-host adapters (Hermes/Claude/Copilot/Cline), anti-loop dispatch, and project resolution; compiled per-host hook configs (Claude JSON / Hermes YAML).
+- **Baked-pattern delivery** — `ctx_info mode="context"` and `mem_search` inject stack-scoped `pattern_candidates` / `baked_patterns` with a tell-once delivery marker; `## Patterns` section in `context.md`.
+- **Shared `awlab-baker` subagent** (`assets/agents/awlab-baker.md`) — observe → mine → bake → report protocol (Claude format, also read by Copilot).
+- **OpenCode profile** — global `AGENTS.md` + `skills/<name>/SKILL.md` + `opencode.mcp.json` wiring in compile + publish.
+- **Live probe script** (`scripts/live_probe.py`) — smoke-tests the built exe over real stdio MCP (action surface, baking, plan/memory/graph lifecycle, hook mode).
+- **Indonesian documentation** — `docs/id/` (AVAILABLE_TOOLS, HOOKS, INSTALL) + `README_ID.md`; English docs moved to `docs/en/`; README redesigned with banner + language switcher.
+
+### Changed
+- **Action surface 20 → 23** — `project_id`, `plan_doc`, `mem_observe` join the 20-action `REGISTRY`.
+- **Docs reorganized** — `docs/` split into `docs/en/` + `docs/id/`; `REGISTRY_SCHEMA.md` moved to `docs/en/`.
+- **Rules updated for pattern baking** — `01` (STRICT FIRST-CALL), `02` (notes.md discipline), `08` (project-id check-and-create), `09` (observation-driven capture + baking tiers), `10` (computed confidence + stack tagging + delivery), `11` (23 actions).
+
+### Fixed
+- **Markdown table cells with literal `|`** now round-trip via `\|` escaping in registry parsing (legacy rows with a raw `|` still parse, surplus cells rejoined into the summary).
+- **Task descriptions with embedded newlines** are normalized to a single line so they can't produce malformed `tasks.md` entries.
+
+### Builds
+- `v3.0.2+build.100` — pattern-baking core (Phase 4), 23-action surface, hook mode, docs en/id split. 391 tests pass, lint + format clean.
+
 ## [3.0.1] - 2026-08-08
 
 ### Added
@@ -7,7 +33,7 @@
 - **Scratch/temp file hygiene rule** (`13-file-hygiene.md`): strict temp-file placement in `.ai/temp/` (gitignored) — no scratch files in the project root.
 - **Background non-blocking graph rebuild**: heavy stale/first builds run in a background thread so reads never block; small incremental rebuilds stay synchronous for accuracy.
 - **Graph freshness contract**: every graph read (`graph_query`/`graph_path`/`graph_explain`) returns `graph_fresh`, `graph_exists`, `graph_rebuilding`, `graph_built_at`; explicit `graph_build` coalesces with an in-flight background rebuild.
-- **Environment-variable documentation** (`docs/INSTALL.md`): `AWLAB_ENV`, `LOG_ENABLED`, `LOG_LEVEL`, `DB_PATH`, `GRAPH_PARALLEL` with resolution order (env → config.json → default).
+- **Environment-variable documentation** (`docs/en/INSTALL.md`): `AWLAB_ENV`, `LOG_ENABLED`, `LOG_LEVEL`, `DB_PATH`, `GRAPH_PARALLEL` with resolution order (env → config.json → default).
 - **Project families (schema v2)** — `project-families.json` members are now `[{path, project_id}]` objects (no role key; `project_id` is the stable member identity, so multiple same-role members like 2 frontends/plugins work). Family keys support `-` (`eka-warehouse`); the legacy `{slug: [paths]}` shape is still accepted.
 - **Project-id resolution & reconciliation** — a member's own `.ai/project-id` file is authoritative over the declared `project_id` (then `<slug>-<dir>` derived). `sync_family_project_ids()` reconciles the family JSON to each project's file when they differ (e.g. `eka-warehouse` vs `eka_warehouse`) and runs a duplicate checker (same `project_id` on different paths → the later member derives a distinct id + the conflict is reported). Fresh members are seeded with a tiny `.ai/project-id` marker on family build. Family graph `repo::` tags = resolved member `project_id`.
 - **Offline cache / `mem_replay`** — a new `mem_replay` action (19th) drains the offline cache at `.ai/memory-bank/pending.jsonl` (JSONL — one JSON object per line). Mutations are queued there instead of dropped when a store write fails (`mem_write`/`mem_remove` store down, `task_update` DB-sync down) or when the MCP server is unreachable. Successful entries are removed, failed ones kept for retry; `dry_run` previews.
