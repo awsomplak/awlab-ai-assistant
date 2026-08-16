@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awlab-ai-assistant"
-version = "3.0.1"
+version = "3.0.2"
 description = "Deterministic MCP server for plan management, cross-session memory, and AI-assisted development workflows"
 requires-python = ">=3.10"
 dependencies = [

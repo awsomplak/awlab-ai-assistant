@@ -1,4 +1,30 @@
 # Changelog
+## [3.0.2] - 2026-08-16
+
+### Added
+- **Pattern-baking core (Phase 4)**: append-only observation store (`.ai/memory-bank/observations.jsonl`, torn-tail tolerant) + deterministic LLM-free bake engine (`key → count → consistency → confidence`) persisting candidates to `baked.json`; async background bake scheduler + per-action inline bake tick.
+- **`mem_observe` action** — records user-pattern evidence (signals) into the observation store, dedup/delta-guarded by fingerprint; feeds the baking pipeline.
+- **`project_id` check-and-create action** — idempotent; auto-creates `.ai/project-id` from the sanitized directory-name slug so memory isolation never falls through to the global DB. STRICT FIRST-CALL rule (rules 01/08).
+- **`plan_doc` action** — direct read/write/delete of a plan's `plan.md`/`notes.md` (full content, no template / IDE compare).
+- **Unified hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` with per-host adapters (Hermes/Claude/Copilot/Cline), anti-loop dispatch, and project resolution; compiled per-host hook configs (Claude JSON / Hermes YAML).
+- **Baked-pattern delivery** — `ctx_info mode="context"` and `mem_search` inject stack-scoped `pattern_candidates` / `baked_patterns` with a tell-once delivery marker; `## Patterns` section in `context.md`.
+- **Shared `awlab-baker` subagent** (`assets/agents/awlab-baker.md`) — observe → mine → bake → report protocol (Claude format, also read by Copilot).
+- **OpenCode profile** — global `AGENTS.md` + `skills/<name>/SKILL.md` + `opencode.mcp.json` wiring in compile + publish.
+- **Live probe script** (`scripts/live_probe.py`) — smoke-tests the built exe over real stdio MCP (action surface, baking, plan/memory/graph lifecycle, hook mode).
+- **Indonesian documentation** — `docs/id/` (AVAILABLE_TOOLS, HOOKS, INSTALL) + `README_ID.md`; English docs moved to `docs/en/`; README redesigned with banner + language switcher.
+
+### Changed
+- **Action surface 20 → 23** — `project_id`, `plan_doc`, `mem_observe` join the 20-action `REGISTRY`.
+- **Docs reorganized** — `docs/` split into `docs/en/` + `docs/id/`; `REGISTRY_SCHEMA.md` moved to `docs/en/`.
+- **Rules updated for pattern baking** — `01` (STRICT FIRST-CALL), `02` (notes.md discipline), `08` (project-id check-and-create), `09` (observation-driven capture + baking tiers), `10` (computed confidence + stack tagging + delivery), `11` (23 actions).
+
+### Fixed
+- **Markdown table cells with literal `|`** now round-trip via `\|` escaping in registry parsing (legacy rows with a raw `|` still parse, surplus cells rejoined into the summary).
+- **Task descriptions with embedded newlines** are normalized to a single line so they can't produce malformed `tasks.md` entries.
+
+### Builds
+- `v3.0.2+build.100` — pattern-baking core (Phase 4), 23-action surface, hook mode, docs en/id split. 391 tests pass, lint + format clean.
+
 ## [3.0.1] - 2026-08-08
 
 ### Added

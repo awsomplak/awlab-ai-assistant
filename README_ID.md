@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.1-blue" alt="Versi 3.0.1" />
+  <img src="https://img.shields.io/badge/version-3.0.2-blue" alt="Versi 3.0.2" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/tests-360%20passing-brightgreen" alt="360 tes lulus" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="Lisensi MIT" />
