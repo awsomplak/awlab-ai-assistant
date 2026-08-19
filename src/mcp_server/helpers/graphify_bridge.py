@@ -1230,18 +1230,15 @@ def graph_build_action(
     node_limit: int | None = None,
     max_files: int | None = None,
     chunk_size: int | None = None,
-    background: bool = False,
+    background: bool = True,
 ) -> dict[str, Any]:
     """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
 
-    If a background rebuild is already running for this project, return
-    immediately with ``{rebuilding: True}`` instead of starting a duplicate build
-    (which would block the request and double-build). The graph will be fresh
-    shortly; the agent can confirm via ``graph_status``. ``family`` builds the
-    merged family graph (native global-graph mechanism) instead. ``node_limit``,
-    ``max_files`` and ``chunk_size`` are forwarded to :func:`build_graph`. With
-    ``background=True`` and work remaining, a queue-style worker keeps advancing
-    bounded chunks until the graph is complete (Laravel-queue semantics).
+    With ``background=True`` (the default), this is a fire-and-forget trigger:
+    it starts the worker immediately and returns without processing a chunk.
+    ``graph_status`` reports progress. With ``background=False``, one synchronous
+    chunk is processed for callers that explicitly need blocking behavior.
+    ``family`` builds the merged family graph instead.
     """
     if family:
         return _build_family_graph(family, include_html=include_html, directed=directed, node_limit=node_limit)
@@ -1254,6 +1251,19 @@ def graph_build_action(
             note="graph rebuild already in progress — will be fresh shortly; no new build started",
         )
     chunk_size = settings.graph_chunk_size if chunk_size is None else chunk_size
+    if background:
+        started = _background_rebuild(workspace_path, out_root, chunk_size=chunk_size)
+        status = graph_status(workspace_path, root)
+        return ok_obj(
+            out_dir=str(_codegraph_dir(out_root)),
+            background=True,
+            background_started=started,
+            triggered=True,
+            fresh=status.get("fresh", False),
+            processed_files=status.get("processed_files", 0),
+            remaining_files=status.get("remaining_files"),
+            note="graph build queued in background; poll graph_status for progress",
+        )
     result = build_graph(
         workspace_path,
         root,
@@ -1264,13 +1274,6 @@ def graph_build_action(
         max_files=max_files,
         chunk_size=chunk_size,
     )
-    # Queue-style completion: after the synchronous chunk, a background worker
-    # keeps advancing chunks until the graph is done — bounded work per run, so
-    # there is no single RAM/CPU spike on large projects.
-    if background and result.get("success") and result.get("remaining_files") and chunk_size:
-        started = _background_rebuild(workspace_path, out_root, chunk_size=chunk_size)
-        result["background"] = True
-        result["background_started"] = started
     return result
 
 
@@ -1327,6 +1330,12 @@ def _build_graph_impl(
     exclusions = _gitignore_exclusions(scan_root)
     cur_manifest = _source_manifest(scan_root, exclusions)
     changed = _changed_files(prev_manifest, cur_manifest)
+    pending_build = bool(prev_manifest and prev_manifest.get("remaining_files", 0) > 0)
+    if pending_build and not changed:
+        # A partial first chunk may intentionally persist an empty or subset
+        # source_manifest. It is still incomplete; resume against the current
+        # filtered corpus instead of taking the fresh-skip path forever.
+        changed = sorted(cur_manifest)
 
     try:
         detected = g["detect"](scan_root, cache_root=cache_root)
@@ -1380,6 +1389,9 @@ def _build_graph_impl(
         chunked = False
         remaining_files = 0
         to_extract: list[Path] = []
+        pending_offset = 0
+        if pending_build and prev_manifest and not prev_manifest.get("source_manifest"):
+            pending_offset = max(0, int(prev_manifest.get("processed_files", 0) or 0))
         if prev_graph is None:
             first_cap = _first_build_cap(max_files, chunk_size, len(files))
             if first_cap is not None and first_cap < len(files):
@@ -1389,6 +1401,8 @@ def _build_graph_impl(
         else:
             changed_set = set(changed)
             to_extract = [f for f in files if str(f.relative_to(scan_root)).replace("\\", "/") in changed_set]
+            if pending_offset:
+                to_extract = to_extract[pending_offset:]
             if chunk_size and len(to_extract) > chunk_size:
                 to_extract = to_extract[:chunk_size]
                 chunked = True
@@ -1398,14 +1412,17 @@ def _build_graph_impl(
         }
         # Supported source files still needing extraction after this run.
         changed_supported = (set(changed) & supported_rel) if prev_graph else supported_rel
-        remaining_files = max(0, len(changed_supported - processed_rel))
+        if pending_offset:
+            remaining_files = max(0, total_files - pending_offset - len(processed_rel))
+        else:
+            remaining_files = max(0, len(changed_supported - processed_rel))
 
         # Fresh-skip: prior graph exists AND nothing changed → nothing to rebuild.
         # Makes no-op rebuilds (e.g. a graph_fresh precondition re-check) instant
         # instead of re-running a warm full-corpus extract. Still self-heal a
         # graph built before the Vite-alias pass (or by an older version) so
         # stale graphs gain alias-import edges on the next read.
-        if prev_graph is not None and not changed:
+        if prev_graph is not None and not changed and not pending_build:
             alias_edges = _augment_alias_import_edges_json(out_dir / "graph.json", scan_root)
             artifacts = {"graph.json": str(out_dir / "graph.json")}
             html = None
@@ -1622,7 +1639,8 @@ def graph_status(
     cur = _source_manifest(scan_root, _gitignore_exclusions(scan_root))
     changed = sorted(p for p in cur if prev.get(p) != cur.get(p))
     removed = sorted(p for p in prev if p not in cur)
-    fresh = not changed and not removed
+    pending_build = bool(state.get("remaining_files", 0) > 0)
+    fresh = not changed and not removed and not pending_build
 
     return ok_obj(
         exists=True,
@@ -1630,13 +1648,34 @@ def graph_status(
         built_at=state.get("built_at"),
         nodes=state.get("nodes"),
         edges=state.get("edges"),
-        total_files=len(cur),
+        total_files=max(len(cur), int(state.get("total_files", 0) or 0)),
         processed_files=state.get("processed_files"),
         remaining_files=state.get("remaining_files", 0),
         chunked=bool(state.get("chunked")),
         background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))),
         changed_files=changed[:20],
         removed_files=removed[:10],
+    )
+
+
+def _graph_read_pending(
+    workspace_path: str | Path,
+    root: str | Path | None = None,
+    family: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a pending response when graph reads would serve incomplete nodes."""
+    if family:
+        return None
+    status = graph_status(workspace_path, root)
+    if status.get("fresh") and not status.get("remaining_files"):
+        return None
+    return ok_obj(
+        count=0,
+        results=[],
+        mode="pending",
+        graph_pending=True,
+        note="graph build is still in progress; retry after graph_status reports fresh=true",
+        **_graph_freshness(workspace_path, root, family=family),
     )
 
 
@@ -1910,6 +1949,9 @@ def query_graph(
     files) so the agent sees code + memory together (read-time correlation).
     """
     root = _resolve_graph_root(workspace_path, root, family)
+    pending = _graph_read_pending(workspace_path, root, family=family)
+    if pending is not None:
+        return pending
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
@@ -2037,6 +2079,9 @@ def path_query(
     family graph spanning correlated member projects.
     """
     root = _resolve_graph_root(workspace_path, root, family)
+    pending = _graph_read_pending(workspace_path, root, family=family)
+    if pending is not None:
+        return pending
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
@@ -2114,6 +2159,9 @@ def explain_node(
     its source file) so the agent sees code + memory together.
     """
     root = _resolve_graph_root(workspace_path, root, family)
+    pending = _graph_read_pending(workspace_path, root, family=family)
+    if pending is not None:
+        return pending
     data = _load_graph(workspace_path, root)
     if data is None:
         return fail_obj(error="no graph built (run graph_build)")
