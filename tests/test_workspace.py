@@ -19,94 +19,45 @@ from mcp_server.helpers.workspace import resolve_db_path
 
 
 class TestIsValidProjectRoot:
-    def test_detects_pyproject_toml(self, tmp_path):
-        """Should detect pyproject.toml as a project root marker."""
-        (tmp_path / "pyproject.toml").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
+    # Known project-root markers (file names / directory names). Compacted into
+    # one loop so every marker is still asserted in isolation while keeping the
+    # suite lean.
+    _FILE_MARKERS = [
+        "pyproject.toml",
+        "setup.py",
+        ".gitignore",
+        "package.json",
+        "requirements.txt",
+        "go.mod",
+        "Cargo.toml",
+        "composer.json",
+        "Gemfile",
+        "manage.py",
+        "artisan",
+        "next.config.js",
+        "next.config.ts",
+        "setup.cfg",
+    ]
+    _DIR_MARKERS = [".git"]
 
-    def test_detects_setup_py(self, tmp_path):
-        """Should detect setup.py as a project root marker."""
-        (tmp_path / "setup.py").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
+    def test_detects_project_markers(self, tmp_path):
+        """Every known project-root marker is detected (each in isolation)."""
+        for marker in self._FILE_MARKERS:
+            (tmp_path / marker).write_text("")
+            assert validate_project_root(str(tmp_path)) is True, f"marker {marker} not detected"
+            (tmp_path / marker).unlink()
+        for marker in self._DIR_MARKERS:
+            (tmp_path / marker).mkdir()
+            assert validate_project_root(str(tmp_path)) is True, f"marker {marker} not detected"
+            (tmp_path / marker).rmdir()
 
-    def test_detects_git_dir(self, tmp_path):
-        """Should detect .git directory as a project root marker."""
-        (tmp_path / ".git").mkdir()
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_gitignore(self, tmp_path):
-        """Should detect .gitignore as a project root marker."""
-        (tmp_path / ".gitignore").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_package_json(self, tmp_path):
-        """Should detect package.json as a project root marker."""
-        (tmp_path / "package.json").write_text("{}")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_requirements_txt(self, tmp_path):
-        """Should detect requirements.txt as a project root marker."""
-        (tmp_path / "requirements.txt").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_go_mod(self, tmp_path):
-        """Should detect go.mod as a project root marker."""
-        (tmp_path / "go.mod").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_cargo_toml(self, tmp_path):
-        """Should detect Cargo.toml as a project root marker."""
-        (tmp_path / "Cargo.toml").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_composer_json(self, tmp_path):
-        """Should detect composer.json as a project root marker."""
-        (tmp_path / "composer.json").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_gemfile(self, tmp_path):
-        """Should detect Gemfile as a project root marker."""
-        (tmp_path / "Gemfile").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_manage_py(self, tmp_path):
-        """Should detect manage.py as a project root marker."""
-        (tmp_path / "manage.py").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_artisan(self, tmp_path):
-        """Should detect artisan as a project root marker."""
-        (tmp_path / "artisan").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_next_config_js(self, tmp_path):
-        """Should detect next.config.js as a project root marker."""
-        (tmp_path / "next.config.js").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_detects_next_config_ts(self, tmp_path):
-        """Should detect next.config.ts as a project root marker."""
-        (tmp_path / "next.config.ts").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_setup_cfg_detected(self, tmp_path):
-        """Should detect setup.cfg as a project root marker."""
-        (tmp_path / "setup.cfg").write_text("")
-        assert validate_project_root(str(tmp_path)) is True
-
-    def test_returns_false_for_empty_dir(self, tmp_path):
-        """Should return False for a directory with no markers."""
-        assert validate_project_root(str(tmp_path)) is False
-
-    def test_returns_false_for_nonexistent_path(self):
-        """Should return False for a path that doesn't exist."""
-        assert validate_project_root("/nonexistent/path") is False
-
-    def test_returns_false_for_file_path(self, tmp_path):
-        """Should return False when path points to a file, not a directory."""
+    def test_returns_false_without_project_markers(self, tmp_path):
+        """No markers, a nonexistent path, or a file path all return False."""
+        assert validate_project_root(str(tmp_path)) is False  # empty dir
+        assert validate_project_root("/nonexistent/path") is False  # missing path
         f = tmp_path / "some_file.txt"
         f.write_text("")
-        assert validate_project_root(str(f)) is False
+        assert validate_project_root(str(f)) is False  # file, not a directory
 
 
 # ── resolve_db_path tests ──────────────────────────────────────────────────

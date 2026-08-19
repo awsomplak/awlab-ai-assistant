@@ -296,35 +296,42 @@ class TestPlanToolsIntegration:
 class TestValidationTools:
     """Tests for pure-logic validation tools (no workspace_path needed)."""
 
-    def test_validate_uuid_valid(self):
-        """validate_uuid returns True for valid 8-char alphanumeric UUIDs."""
-        result = validate_uuid(uuid=VALID_UUID)
-        assert result is True, f"Expected True for valid UUID, got {result}"
+    @pytest.mark.parametrize(
+        ("uuid", "expected"),
+        [
+            (VALID_UUID, True),  # valid 8-char alphanumeric
+            ("bad-uuid-with-dashes-and-extra-long-123456", False),  # invalid
+        ],
+    )
+    def test_validate_uuid(self, uuid, expected):
+        result = validate_uuid(uuid=uuid)
+        assert result is expected, f"Expected {expected} for UUID {uuid!r}, got {result}"
 
-    def test_validate_uuid_invalid(self):
-        """validate_uuid returns False for invalid UUIDs."""
-        result = validate_uuid(uuid="bad-uuid-with-dashes-and-extra-long-123456")
-        assert result is False, f"Expected False for invalid UUID, got {result}"
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            ("[x]", True),  # valid marker
+            ("[z]", False),  # invalid marker
+        ],
+    )
+    def test_validate_status(self, status, expected):
+        result = validate_status(status=status)
+        assert result is expected, f"Expected {expected} for status {status!r}, got {result}"
 
-    def test_validate_status_valid(self):
-        """validate_status returns True for valid status markers."""
-        result = validate_status(status="[x]")
-        assert result is True, f"Expected True for valid status, got {result}"
-
-    def test_validate_status_invalid(self):
-        """validate_status returns False for invalid status markers."""
-        result = validate_status(status="[z]")
-        assert result is False, f"Expected False for invalid status, got {result}"
-
-    def test_validate_status_transition_valid(self):
-        result = validate_status_transition(current="[ ]", target="[x]")
-        _assert_success(result, fields=["valid", "reason", "valid_targets"])
-
-    def test_validate_status_transition_invalid(self):
-        result = validate_status_transition(current="[x]", target="[!]")
+    @pytest.mark.parametrize(
+        ("current", "target", "expected"),
+        [
+            ("[ ]", "[x]", True),  # legal
+            ("[x]", "[!]", False),  # illegal
+        ],
+    )
+    def test_validate_status_transition(self, current, target, expected):
+        result = validate_status_transition(current=current, target=target)
         result = json.loads(result) if isinstance(result, str) else result
-        _assert_success(result)
-        assert result.get("valid") is False
+        assert isinstance(result, dict)
+        assert result.get("valid") is expected
+        assert "reason" in result
+        assert "valid_targets" in result
 
 
 class TestMemoryToolsIntegration:

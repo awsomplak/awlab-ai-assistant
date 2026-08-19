@@ -724,35 +724,29 @@ class TestGetNextEligibleTask:
 
 
 class TestValidateStatusTransition:
-    def test_legal_transition_pending_to_done(self):
-        """[ ] → [x] should be legal."""
-        result = validate_status_transition("[ ]", "[x]")
-        assert result["valid"] is True
+    @pytest.mark.parametrize(
+        ("current", "target"),
+        [
+            ("[ ]", "[x]"),  # pending → done
+            ("[ ]", "[!]"),  # pending → failed
+            ("[x]", "[x✓]"),  # done → verified
+            ("[!]", "[—]"),  # failed → skipped
+        ],
+    )
+    def test_legal_transition(self, current, target):
+        result = validate_status_transition(current, target)
+        assert result["valid"] is True, f"{current} → {target} should be legal"
 
-    def test_legal_transition_pending_to_failed(self):
-        """[ ] → [!] should be legal."""
-        result = validate_status_transition("[ ]", "[!]")
-        assert result["valid"] is True
-
-    def test_legal_transition_done_to_verified(self):
-        """[x] → [x✓] should be legal."""
-        result = validate_status_transition("[x]", "[x✓]")
-        assert result["valid"] is True
-
-    def test_skipped_is_terminal(self):
-        """[—] has no legal outgoing transitions."""
-        result = validate_status_transition("[—]", "[x]")
-        assert result["valid"] is False
-
-    def test_failed_to_skipped(self):
-        """[!] → [—] should be legal (failed can be skipped)."""
-        result = validate_status_transition("[!]", "[—]")
-        assert result["valid"] is True
-
-    def test_skipped_to_deferred(self):
-        """[—] → [⏳] should be illegal (skipped is terminal)."""
-        result = validate_status_transition("[—]", "[⏳]")
-        assert result["valid"] is False
+    @pytest.mark.parametrize(
+        ("current", "target"),
+        [
+            ("[—]", "[x]"),  # skipped is terminal
+            ("[—]", "[⏳]"),  # skipped is terminal
+        ],
+    )
+    def test_illegal_transition(self, current, target):
+        result = validate_status_transition(current, target)
+        assert result["valid"] is False, f"{current} → {target} should be illegal"
 
     def test_unknown_current_status(self):
         """Unknown current status should return valid=False."""
