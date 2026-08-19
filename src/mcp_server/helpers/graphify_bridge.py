@@ -91,10 +91,16 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                 if chunk_size:
                     # Queue worker: each iteration processes <= chunk_size files
                     # and advances the manifest; loop until the graph is complete.
+                    # Safety: break if remaining_files stops decreasing, so a
+                    # manifest/advance bug can never spin the worker forever.
+                    last_remaining = None
                     while True:
                         res = build_graph(workspace_path, root, chunk_size=chunk_size)
                         if not res.get("success") or not res.get("remaining_files"):
                             break
+                        if res.get("remaining_files") == last_remaining:
+                            break
+                        last_remaining = res.get("remaining_files")
                 else:
                     build_graph(workspace_path, root)
             except Exception:  # noqa: BLE001 — background, never crash the server
@@ -1439,17 +1445,26 @@ def _build_graph_impl(
         # ``built_at_commit`` is passed explicitly so graphify skips its
         # subprocess ``git`` call, which deadlocks in the frozen exe (see
         # _git_head_safe).
+        # ``force``: a chunked build legitimately produces a smaller intermediate
+        # graph (it grows as chunks land) — the shrink guard must NOT refuse to
+        # overwrite an existing larger graph.json, or the partial chunk never
+        # lands and graph.json stays stale while the manifest advances. Non-
+        # chunked incremental rebuilds may also shrink legitimately (deletions).
         g["to_json"](
             graph,
             communities,
             str(graph_path),
-            force=incremental,
+            force=bool(incremental or chunked),
             built_at_commit=_git_head_safe(out_root),
         )
 
         artifacts = {"graph.json": str(graph_path)}
         html = None
-        if render_html:
+        # Render the interactive graph.html only when the graph is COMPLETE
+        # (non-chunked, or the final chunk). Re-embedding the whole (large)
+        # merged graph into HTML on every intermediate chunk is very slow and
+        # makes chunked builds appear stuck on big projects.
+        if render_html and (not chunked or remaining_files == 0):
             html_path = out_dir / "graph.html"
             try:
                 # Explicit node_limit → over-limit graphs render the aggregated

@@ -159,6 +159,46 @@ def test_graph_build_chunk_size_background_completes(tmp_path: Path):
     assert st.get("remaining_files", 0) == 0
 
 
+async def test_graph_build_chunked_first_build_overwrites_existing_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A chunked first build (prev manifest missing/corrupt -> prev_graph=None)
+    must OVERWRITE an existing larger graph.json — the shrink guard must not
+    leave it stale while .build_state.json advances (regression: graph.json vs
+    build_state mismatch, worker appearing stuck at chunk 1)."""
+    monkeypatch.delenv("GRAPH_MAX_FILES", raising=False)
+    monkeypatch.delenv("GRAPH_CHUNK_SIZE", raising=False)
+    monkeypatch.delenv("GRAPHIFY_VIZ_NODE_LIMIT", raising=False)
+    _reset("graph_max_files", "graph_chunk_size", "graph_viz_limit")
+    from mcp_server.helpers import graphify_bridge as gb
+
+    for i in range(30):
+        (tmp_path / f"m{i:03d}.py").write_text(f"def f{i:03d}():\n    return {i}\n", encoding="utf-8")
+    ws = str(tmp_path)
+
+    # Existing full graph.
+    full = gb.build_graph(ws, chunk_size=0, include_html=False)
+    assert full["success"] is True and full["remaining_files"] == 0
+
+    # Simulate a missing/unreadable old manifest -> prev_graph=None (first-build chunked).
+    (tmp_path / ".ai" / "codegraph" / ".build_state.json").unlink()
+
+    c1 = gb.build_graph(ws, chunk_size=5, include_html=False)
+    assert c1["success"] is True, c1
+    assert c1["chunked"] is True
+    # graph.json MUST reflect the partial chunk, not the stale full graph.
+    gj = json.loads((tmp_path / ".ai" / "codegraph" / "graph.json").read_text(encoding="utf-8"))
+    assert len(gj["nodes"]) == c1["nodes"]
+    assert c1["nodes"] < full["nodes"]  # partial chunk is smaller than the full graph
+
+    # Subsequent chunks advance consistently (graph.json grows with build_state).
+    c2 = gb.build_graph(ws, chunk_size=5, include_html=False)
+    assert c2["success"] is True
+    assert c2["remaining_files"] < c1["remaining_files"]
+    gj2 = json.loads((tmp_path / ".ai" / "codegraph" / "graph.json").read_text(encoding="utf-8"))
+    assert len(gj2["nodes"]) == c2["nodes"]
+
+
 # ── .graphignore exclusion (gitignore-style, without .gitignore) ──────────
 
 
