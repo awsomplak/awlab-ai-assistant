@@ -68,13 +68,17 @@ def _build_lock(root: Path) -> threading.RLock:
         return _BUILD_LOCKS.setdefault(key, threading.RLock())
 
 
-def _background_rebuild(workspace_path: str | Path, root: Path) -> bool:
+def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int | None = None) -> bool:
     """Start a background rebuild for the project (single-flight per workspace).
 
     Returns True if a new background thread was started, False if one is already
     in flight for this project. The thread runs ``build_graph`` (which takes the
     per-project lock) and never raises — a failed background build must not take
     the server down; the next read will simply retry.
+
+    With ``chunk_size`` set, the worker runs Laravel-queue style: it keeps
+    processing bounded chunks until ``remaining_files`` reaches 0, so a large
+    catch-up finishes smoothly in the background instead of one long spike.
     """
     key = str(Path(root).resolve())
     with _BUILD_LOCKS_GUARD:
@@ -84,7 +88,15 @@ def _background_rebuild(workspace_path: str | Path, root: Path) -> bool:
 
         def _run() -> None:
             try:
-                build_graph(workspace_path, root)
+                if chunk_size:
+                    # Queue worker: each iteration processes <= chunk_size files
+                    # and advances the manifest; loop until the graph is complete.
+                    while True:
+                        res = build_graph(workspace_path, root, chunk_size=chunk_size)
+                        if not res.get("success") or not res.get("remaining_files"):
+                            break
+                else:
+                    build_graph(workspace_path, root)
             except Exception:  # noqa: BLE001 — background, never crash the server
                 pass
             finally:
@@ -231,13 +243,14 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
 
 @dataclass
 class _ProjectExclusions:
-    """Project-derived exclusion rules (parsed from .gitignore files).
+    """Project-derived exclusion rules (parsed from .gitignore + .graphignore).
 
-    gitignore is a SUPPLEMENT on top of the ALWAYS-applied ``_NOISE_DIRS`` safety
-    net — it can exclude MORE (project junk: dist/, build/, coverage/, ...) but
-    can NEVER re-include a ``_NOISE_DIRS`` path. Only positive patterns are
+    Both files use gitignore syntax and are SUPPLEMENTS on top of the
+    ALWAYS-applied ``_NOISE_DIRS`` safety net — they can exclude MORE (project
+    junk: dist/, build/, coverage/, ...; graph-only exclusions via .graphignore)
+    but can NEVER re-include a ``_NOISE_DIRS`` path. Only positive patterns are
     applied (``!`` negations are ignored — conservative), and a blank-detection
-    guard keeps gitignore from ever emptying the source set.
+    guard keeps exclusions from ever emptying the source set.
     """
 
     dir_names: set[str] = field(default_factory=set)  # any-level directory names (O(1) prune)
@@ -290,15 +303,22 @@ def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> Non
 
 
 _EXCLUSION_CACHE: dict[str, tuple[float, _ProjectExclusions]] = {}
-_EXCLUSION_TTL = 30.0  # seconds — re-walk after this so gitignore edits are picked up
+_EXCLUSION_TTL = 30.0  # seconds — re-walk after this so exclusion edits are picked up
+
+# Exclusion files parsed at every level, gitignore syntax, ADDITIVE (can only
+# exclude MORE — never re-include). ``.graphignore`` lets users exclude files/
+# dirs from the CODE GRAPH without touching their project .gitignore.
+_EXCLUSION_FILENAMES = (".gitignore", ".graphignore")
 
 
 def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
-    """Load all .gitignore-derived exclusions under scan_root (cached with a TTL).
+    """Load all project exclusion rules (.gitignore + .graphignore) under scan_root.
 
-    The walk prunes ``_NOISE_DIRS`` so dependency/junk subtrees are never
-    traversed just to read gitignores — this keeps the extra pass cheap while
-    the returned dir-name set makes later scans skip even more.
+    Both use gitignore syntax and merge into ONE additive rule set — a file
+    excluded by either is excluded from the graph. This keeps graph-only
+    exclusions in ``.graphignore`` (committed or not) without affecting git.
+    Cached with a TTL; the walk prunes ``_NOISE_DIRS`` so dependency/junk
+    subtrees are never traversed just to read them.
     """
     key = str(Path(scan_root).resolve())
     now = time.monotonic()
@@ -310,18 +330,20 @@ def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _NOISE_DIRS and not d.endswith(".egg-info")]
         rel_dir = str(Path(dirpath).relative_to(root)).replace("\\", "/")
-        if ".gitignore" in filenames:
-            try:
-                content = (Path(dirpath) / ".gitignore").read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                content = ""
-            _parse_gitignore(ex, content, "" if rel_dir == "." else rel_dir)
+        for gi_name in _EXCLUSION_FILENAMES:
+            if gi_name in filenames:
+                try:
+                    content = (Path(dirpath) / gi_name).read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    content = ""
+                _parse_gitignore(ex, content, "" if rel_dir == "." else rel_dir)
     _EXCLUSION_CACHE[key] = (now, ex)
     return ex
 
 
 def _gitignored(scan_root: Path, path: Path, ex: _ProjectExclusions) -> bool:
-    """True when a file path is excluded by project gitignore rules (dirs included)."""
+    """True when a file path is excluded by project exclusion rules
+    (.gitignore/.graphignore; dirs included)."""
     try:
         rel = str(path.relative_to(scan_root)).replace("\\", "/")
     except ValueError:
@@ -747,6 +769,7 @@ def _build_family_graph(
     include_html: bool = False,
     directed: bool = False,
     out_dir: str | Path | None = None,
+    node_limit: int | None = None,
 ) -> dict[str, Any]:
     """Build the FAMILY graph via graphify's native global-graph mechanism.
 
@@ -777,6 +800,8 @@ def _build_family_graph(
     g = _graphify_imports()
     if g is None:
         return fail_obj(error="graphifyy is not installed")
+    node_limit = settings.graph_viz_limit if node_limit is None else node_limit
+    render_html = bool(include_html and node_limit != 0)
     # Reconcile declared member project_ids to each project's own .ai/project-id
     # (the project is authoritative) + check for duplicate ids with different paths.
     sync_family_project_ids(slug)
@@ -798,11 +823,11 @@ def _build_family_graph(
         seed_member_project_id(slug, member)
         if sandbox is not None:
             m_out = sandbox / "members" / tag
-            res = build_graph(member, include_html=True, out_dir=m_out)
+            res = build_graph(member, include_html=True, out_dir=m_out, node_limit=node_limit)
             graph_json = m_out / "graph.json"
             member_out_dirs[tag] = m_out
         else:
-            res = build_graph(member, include_html=True)
+            res = build_graph(member, include_html=True, node_limit=node_limit)
             graph_json = _codegraph_dir(Path(member)) / "graph.json"
             member_out_dirs[tag] = _codegraph_dir(Path(member))
         if not res.get("success"):
@@ -831,16 +856,22 @@ def _build_family_graph(
         built_at_commit=_git_head_safe(fam_out),
     )
     artifacts = {"graph.json": str(graph_path), "family.html": ""}
-    if include_html:
+    html = None
+    if render_html:
         fam_html = fam_out / "family.html"
-        g["to_html"](combined, communities, str(fam_html))
-        artifacts["family.html"] = str(fam_html)
-        # Mirror the merged visualization into every member location (project
-        # .ai/codegraph, or the sandbox member dir) so opening family.html from
-        # any member shows the SAME combined graph.
-        for tag, member_out in member_out_dirs.items():
-            member_out.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(fam_html, member_out / "family.html")
+        try:
+            g["to_html"](combined, communities, str(fam_html), node_limit=node_limit)
+            artifacts["family.html"] = str(fam_html)
+            html = "full" if combined.number_of_nodes() <= node_limit else "aggregated"
+            # Mirror the merged visualization into every member location (project
+            # .ai/codegraph, or the sandbox member dir) so opening family.html
+            # from any member shows the SAME combined graph.
+            for tag, member_out in member_out_dirs.items():
+                member_out.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(fam_html, member_out / "family.html")
+        except ValueError as e:
+            # Non-fatal: structural graph.json + manifest still land.
+            html = f"skipped ({e})"
     built_at = datetime.now(timezone.utc).isoformat()
     (fam_out / ".build_state.json").write_text(
         json.dumps(
@@ -864,7 +895,9 @@ def _build_family_graph(
         edges=combined.number_of_edges(),
         built_at=built_at,
         members=len(members),
-        family_html_mirrored_to_members=bool(include_html),
+        family_html_mirrored_to_members=bool(artifacts["family.html"]),
+        node_limit=node_limit,
+        html=html,
     )
 
 
@@ -1102,6 +1135,14 @@ def _merge_extractions(
     return {"nodes": merged_nodes, "edges": merged_edges}
 
 
+def _first_build_cap(max_files: int | None, chunk_size: int | None, total: int) -> int | None:
+    """Leading-corpus cap for a FIRST build (min of max_files / chunk_size)."""
+    caps = [c for c in (max_files, chunk_size) if c and c > 0]
+    if not caps:
+        return None
+    return min(min(caps), total)
+
+
 def build_graph(
     workspace_path: str | Path,
     root: str | Path | None = None,
@@ -1109,6 +1150,9 @@ def build_graph(
     directed: bool = False,
     project_id: str | None = None,
     out_dir: str | Path | None = None,
+    node_limit: int | None = None,
+    max_files: int | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Build the code knowledge graph (serialized per project).
 
@@ -1120,9 +1164,18 @@ def build_graph(
     scan root stays ``root`` (useful for sandboxed family builds or keeping
     large projects untouched). Output defaults to the WORKSPACE root's
     ``.ai/codegraph`` regardless of ``root`` (which only scopes the scan).
+
+    ``node_limit`` bounds the interactive ``graph.html`` export (default from
+    ``settings.graph_viz_limit`` = 20000; ``0`` skips HTML). ``max_files`` caps
+    the corpus of the FIRST build so the initial pass on a large project is
+    light. ``chunk_size`` (queue-chunk semantics, default 200) bounds EVERY run
+    — each build processes at most that many files and returns ``remaining_files``
+    for the next call or background worker to continue.
     """
     with _build_lock(_resolve_root(workspace_path)):
-        return _build_graph_impl(workspace_path, root, include_html, directed, project_id, out_dir)
+        return _build_graph_impl(
+            workspace_path, root, include_html, directed, project_id, out_dir, node_limit, max_files, chunk_size
+        )
 
 
 def graph_build_action(
@@ -1132,6 +1185,10 @@ def graph_build_action(
     directed: bool = False,
     project_id: str | None = None,
     family: str | None = None,
+    node_limit: int | None = None,
+    max_files: int | None = None,
+    chunk_size: int | None = None,
+    background: bool = False,
 ) -> dict[str, Any]:
     """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
 
@@ -1139,10 +1196,13 @@ def graph_build_action(
     immediately with ``{rebuilding: True}`` instead of starting a duplicate build
     (which would block the request and double-build). The graph will be fresh
     shortly; the agent can confirm via ``graph_status``. ``family`` builds the
-    merged family graph (native global-graph mechanism) instead.
+    merged family graph (native global-graph mechanism) instead. ``node_limit``,
+    ``max_files`` and ``chunk_size`` are forwarded to :func:`build_graph`. With
+    ``background=True`` and work remaining, a queue-style worker keeps advancing
+    bounded chunks until the graph is complete (Laravel-queue semantics).
     """
     if family:
-        return _build_family_graph(family, include_html=include_html, directed=directed)
+        return _build_family_graph(family, include_html=include_html, directed=directed, node_limit=node_limit)
     out_root = _resolve_root(workspace_path)
     if _rebuild_in_flight(workspace_path, root):
         return ok_obj(
@@ -1151,7 +1211,25 @@ def graph_build_action(
             out_dir=str(_codegraph_dir(out_root)),
             note="graph rebuild already in progress — will be fresh shortly; no new build started",
         )
-    return build_graph(workspace_path, root, include_html=include_html, directed=directed, project_id=project_id)
+    chunk_size = settings.graph_chunk_size if chunk_size is None else chunk_size
+    result = build_graph(
+        workspace_path,
+        root,
+        include_html=include_html,
+        directed=directed,
+        project_id=project_id,
+        node_limit=node_limit,
+        max_files=max_files,
+        chunk_size=chunk_size,
+    )
+    # Queue-style completion: after the synchronous chunk, a background worker
+    # keeps advancing chunks until the graph is done — bounded work per run, so
+    # there is no single RAM/CPU spike on large projects.
+    if background and result.get("success") and result.get("remaining_files") and chunk_size:
+        started = _background_rebuild(workspace_path, out_root, chunk_size=chunk_size)
+        result["background"] = True
+        result["background_started"] = started
+    return result
 
 
 def _build_graph_impl(
@@ -1161,6 +1239,9 @@ def _build_graph_impl(
     directed: bool = False,
     project_id: str | None = None,
     out_dir: str | Path | None = None,
+    node_limit: int | None = None,
+    max_files: int | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Build the code knowledge graph (AST-only, no LLM).
 
@@ -1174,12 +1255,21 @@ def _build_graph_impl(
     After a successful rebuild, writes a memory observation about changed files
     (write-time feedback) so memory tracks code evolution.
 
-    Returns ``{success, out_dir, nodes, edges, files, built_at, incremental}``
-    or an error dict.
+    Returns ``{success, out_dir, nodes, edges, files, built_at, incremental,
+    node_limit, html, partial, pending_files}`` or an error dict.
     """
     g = _graphify_imports()
     if g is None:
         return fail_obj(error="graphifyy is not installed")
+
+    # HTML viz limit: central config default (20000) unless explicitly set.
+    # Passed EXPLICITLY to to_html so an over-limit graph renders the
+    # aggregated community meta-graph view instead of raising ValueError.
+    # ``0`` disables the HTML step (graphify's "disable viz" convention).
+    node_limit = settings.graph_viz_limit if node_limit is None else node_limit
+    render_html = bool(include_html and node_limit != 0)
+    max_files = settings.graph_max_files if max_files is None else max_files
+    chunk_size = settings.graph_chunk_size if chunk_size is None else chunk_size
 
     scan_root = _resolve_root(workspace_path, root)
     out_root = _resolve_root(workspace_path)
@@ -1229,8 +1319,43 @@ def _build_graph_impl(
                 )
             return fail_obj(error="no supported source files detected")
 
+        # Deterministic corpus order (stable across runs) so a ``max_files`` /
+        # ``chunk_size`` cap always selects the same leading subset.
+        supported_rel = {str(f.relative_to(scan_root)).replace("\\", "/") for f in files}
+        files = sorted(files, key=lambda f: str(f.relative_to(scan_root)).replace("\\", "/"))
         rel_files = [str(f).replace("\\", "/") for f in files]
         prev_graph = _graph_from_json(out_dir) if prev_manifest else None
+
+        # QUEUE-CHUNK SEMANTICS (Laravel-queue style): bound the work done in
+        # THIS run so peak RAM/CPU stays flat on large projects. Each call
+        # processes at most ``chunk_size`` files and advances the manifest by
+        # exactly that chunk — a later call (or the background chunk worker)
+        # picks up where this one stopped until ``remaining_files`` hits 0.
+        # ``max_files`` remains the FIRST-build leading-subset cap (back-compat
+        # with partial builds); the effective first cap is min(max_files,
+        # chunk_size).
+        chunked = False
+        remaining_files = 0
+        to_extract: list[Path] = []
+        if prev_graph is None:
+            first_cap = _first_build_cap(max_files, chunk_size, len(files))
+            if first_cap is not None and first_cap < len(files):
+                chunked = True
+                files = files[:first_cap]
+                rel_files = [str(f).replace("\\", "/") for f in files]
+        else:
+            changed_set = set(changed)
+            to_extract = [f for f in files if str(f.relative_to(scan_root)).replace("\\", "/") in changed_set]
+            if chunk_size and len(to_extract) > chunk_size:
+                to_extract = to_extract[:chunk_size]
+                chunked = True
+        # Files actually processed THIS run (relative relpaths).
+        processed_rel = {
+            str(f.relative_to(scan_root)).replace("\\", "/") for f in (to_extract if prev_graph else files)
+        }
+        # Supported source files still needing extraction after this run.
+        changed_supported = (set(changed) & supported_rel) if prev_graph else supported_rel
+        remaining_files = max(0, len(changed_supported - processed_rel))
 
         # Fresh-skip: prior graph exists AND nothing changed → nothing to rebuild.
         # Makes no-op rebuilds (e.g. a graph_fresh precondition re-check) instant
@@ -1240,8 +1365,10 @@ def _build_graph_impl(
         if prev_graph is not None and not changed:
             alias_edges = _augment_alias_import_edges_json(out_dir / "graph.json", scan_root)
             artifacts = {"graph.json": str(out_dir / "graph.json")}
-            if include_html and (out_dir / "graph.html").is_file():
+            html = None
+            if render_html and (out_dir / "graph.html").is_file():
                 artifacts["graph.html"] = str(out_dir / "graph.html")
+                html = "existing"
             return ok_obj(
                 out_dir=str(out_dir),
                 artifacts=artifacts,
@@ -1252,32 +1379,47 @@ def _build_graph_impl(
                 incremental=False,
                 skipped=True,
                 alias_edges=alias_edges,
+                node_limit=node_limit,
+                html=html,
             )
 
-        # Incremental path: prior graph exists AND only some files changed.
-        incremental = bool(prev_graph and changed and len(changed) < len(rel_files))
-        if incremental:
-            # ``incremental`` implies prev_graph is not None (Pylance cannot
-            # narrow through the bool(...) wrapper — assert explicitly).
+        # Extraction: incremental (chunked or not) when a prior graph exists,
+        # full when first building. A chunked incremental merge carries ONLY the
+        # processed chunk — pending files keep their old nodes so the graph stays
+        # readable while catch-up proceeds.
+        if prev_graph is not None and changed:
             assert prev_graph is not None
-            changed_set = set(changed)
-            # ``changed`` holds RELATIVE relpaths (from _source_manifest) while
-            # ``files`` are ABSOLUTE — compare against each file's relpath.
-            to_extract = [f for f in files if str(f.relative_to(scan_root)).replace("\\", "/") in changed_set]
-            # Re-extract changed files; feed the unchanged corpus as resolution
-            # context so cross-file edges (calls, method refs) still resolve.
-            fresh = g["extract"](
-                to_extract,
-                root=scan_root,
-                cache_root=cache_root,
-                parallel=_use_parallel(),
-                resolution_context_nodes=prev_graph["nodes"],
-                resolution_context_edges=prev_graph["edges"],
-            )
-            extraction = _merge_extractions(prev_graph, fresh, changed)
+            if chunked:
+                fresh = g["extract"](
+                    to_extract,
+                    root=scan_root,
+                    cache_root=cache_root,
+                    parallel=_use_parallel(),
+                    resolution_context_nodes=prev_graph["nodes"],
+                    resolution_context_edges=prev_graph["edges"],
+                )
+                extraction = _merge_extractions(prev_graph, fresh, sorted(processed_rel))
+                incremental = True
+            elif len(changed) < len(rel_files):
+                # Original non-chunked incremental: re-extract all changed files.
+                fresh = g["extract"](
+                    to_extract,
+                    root=scan_root,
+                    cache_root=cache_root,
+                    parallel=_use_parallel(),
+                    resolution_context_nodes=prev_graph["nodes"],
+                    resolution_context_edges=prev_graph["edges"],
+                )
+                extraction = _merge_extractions(prev_graph, fresh, changed)
+                incremental = True
+            else:
+                # Full rebuild (first time, or nearly everything changed).
+                extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
+                incremental = False
         else:
-            # Full build (first time, or nearly everything changed).
+            # First build (the nothing-changed case was handled by fresh-skip).
             extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
+            incremental = False
 
         graph = g["build_from_json"](extraction, root=scan_root, directed=directed)
         communities = g["cluster"](graph)
@@ -1306,10 +1448,34 @@ def _build_graph_impl(
         )
 
         artifacts = {"graph.json": str(graph_path)}
-        if include_html:
+        html = None
+        if render_html:
             html_path = out_dir / "graph.html"
-            g["to_html"](graph, communities, str(html_path))
-            artifacts["graph.html"] = str(html_path)
+            try:
+                # Explicit node_limit → over-limit graphs render the aggregated
+                # community meta-graph view (graceful) instead of raising.
+                g["to_html"](graph, communities, str(html_path), node_limit=node_limit)
+                artifacts["graph.html"] = str(html_path)
+                html = "full" if graph.number_of_nodes() <= node_limit else "aggregated"
+            except ValueError as e:
+                # Non-fatal: the structural graph.json + manifest still land;
+                # only the optional interactive viz is skipped.
+                html = f"skipped ({e})"
+
+        # Chunked builds advance the manifest ONLY for the files processed this
+        # run: pending supported files keep their previous signature (so they
+        # stay "changed"/"added" and are picked up next run), deleted files drop
+        # out, and non-source files are recorded complete so status is accurate.
+        if chunked:
+            prev_src = (prev_manifest or {}).get("source_manifest", {})
+            manifest_src = dict(cur_manifest)
+            for rel in changed_supported - processed_rel:
+                if rel in prev_src:
+                    manifest_src[rel] = prev_src[rel]
+                else:
+                    manifest_src.pop(rel, None)
+        else:
+            manifest_src = cur_manifest
 
         built_at = datetime.now(timezone.utc).isoformat()
         manifest = {
@@ -1319,8 +1485,12 @@ def _build_graph_impl(
             "total_files": len(rel_files),
             "nodes": graph.number_of_nodes(),
             "edges": graph.number_of_edges(),
-            "source_manifest": cur_manifest,
+            "processed_files": len(processed_rel),
+            "remaining_files": remaining_files,
+            "source_manifest": manifest_src,
         }
+        if chunked:
+            manifest["chunked"] = True
         (out_dir / ".build_state.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         _ensure_readme(out_dir)
 
@@ -1333,10 +1503,17 @@ def _build_graph_impl(
             nodes=graph.number_of_nodes(),
             edges=graph.number_of_edges(),
             files=len(rel_files),
+            processed_files=len(processed_rel),
+            remaining_files=remaining_files,
             built_at=built_at,
             incremental=incremental,
             gitignore_fallback=gitignore_fallback,
             alias_edges=alias_edges,
+            node_limit=node_limit,
+            html=html,
+            chunked=chunked,
+            partial=bool(chunked and prev_graph is None),
+            pending_files=remaining_files,
         )
     except Exception as e:  # noqa: BLE001 — loud, actionable
         return fail_obj(error=f"graph build failed: {e}")
@@ -1355,7 +1532,16 @@ def _ensure_readme(out_dir: Path) -> None:
         "- `graph.json` — the code knowledge graph\n"
         "- `graph.html` — interactive visualization (open in a browser)\n"
         "- `.build_state.json` — freshness manifest (mtime/size per source file)\n"
-        "- `cache/` — graphify's own extraction cache (regenerable; safe to delete)\n",
+        "- `cache/` — graphify's own extraction cache (regenerable; safe to delete)\n"
+        "\n"
+        "## Exclusions (what the graph indexes)\n"
+        "\n"
+        "Files/directories are excluded from the graph using gitignore syntax, additive:\n"
+        "- `_NOISE_DIRS` (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, ...) and "
+        "dependency lock files — always excluded\n"
+        "- project `.gitignore` — always honored\n"
+        "- `.graphignore` — graph-only exclusions; NEVER affects git. Add generated code, "
+        "vendored copies, etc. here so they stay out of the graph without touching `.gitignore`.\n",
         encoding="utf-8",
     )
 
@@ -1391,6 +1577,9 @@ def graph_status(
         nodes=state.get("nodes"),
         edges=state.get("edges"),
         total_files=len(cur),
+        processed_files=state.get("processed_files"),
+        remaining_files=state.get("remaining_files", 0),
+        chunked=bool(state.get("chunked")),
         changed_files=changed[:20],
         removed_files=removed[:10],
     )
@@ -1402,6 +1591,7 @@ def ensure_fresh(
     *,
     background: bool = False,
     family: str | None = None,
+    chunk_size: int | None = None,
 ) -> dict[str, Any]:
     """Idempotent freshness guarantee: rebuild only when missing or stale.
 
@@ -1442,7 +1632,10 @@ def ensure_fresh(
             else []
         )
         if prev_manifest is None or len(changed) >= _BACKGROUND_THRESHOLD:
-            started = _background_rebuild(workspace_path, r)
+            # Queue-chunk completion: a background worker keeps advancing bounded
+            # chunks until the graph is complete (smooth on large projects).
+            chunk_size = settings.graph_chunk_size if chunk_size is None else chunk_size
+            started = _background_rebuild(workspace_path, r, chunk_size=chunk_size)
             return ok_obj(fresh=False, background=True, started=started, updated=0, exists=True)
     result = build_graph(workspace_path, root)
     result["fresh"] = True

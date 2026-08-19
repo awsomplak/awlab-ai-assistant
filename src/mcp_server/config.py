@@ -209,6 +209,58 @@ class _Settings:
         val = self._get("GRAPH_PARALLEL", "false")
         return val.strip().lower() in ("true", "1", "yes")
 
+    @cached_property
+    def graph_viz_limit(self) -> int:
+        """HTML viz node limit for graph_build's interactive export (default 20000).
+
+        Raised from graphify's hard ``MAX_NODES_FOR_VIZ`` (5000) so big projects
+        render instead of raising ValueError. Overridable via
+        ``GRAPHIFY_VIZ_NODE_LIMIT`` (env var or config.json) — the same env var
+        graphify's own ``_viz_node_limit()`` honors. Graphs over the limit fall
+        back to the aggregated community meta-graph view (graceful, never a
+        crash); ``0`` disables the HTML export entirely.
+        """
+        try:
+            return int(self._get("GRAPHIFY_VIZ_NODE_LIMIT", "20000"))
+        except (TypeError, ValueError):
+            return 20000
+
+    @cached_property
+    def graph_max_files(self) -> int | None:
+        """Optional cap on source files processed in a project's FIRST build.
+
+        Bounding the initial full build of a large project limits the RAM/CPU
+        spike; the remaining files are folded in incrementally on later builds.
+        ``None`` (default) processes everything. Env/config ``GRAPH_MAX_FILES``.
+        """
+        val = self._get("GRAPH_MAX_FILES", "").strip()
+        if not val:
+            return None
+        try:
+            n = int(val)
+            return n if n > 0 else None
+        except ValueError:
+            return None
+
+    @cached_property
+    def graph_chunk_size(self) -> int | None:
+        """Per-run file cap for graph builds (default 200; queue-chunk semantics).
+
+        Each ``graph_build`` processes at most this many files and advances the
+        manifest by exactly that chunk; the remaining files are picked up by the
+        next call (or the background chunk worker). This bounds peak RAM/CPU on
+        large projects instead of one big spike — Laravel-queue style. Env/config
+        ``GRAPH_CHUNK_SIZE``; ``0``/unset disables chunking (single full pass).
+        """
+        val = self._get("GRAPH_CHUNK_SIZE", "200").strip()
+        if not val:
+            return None
+        try:
+            n = int(val)
+            return n if n > 0 else None
+        except ValueError:
+            return None
+
     # ── .ai/ directory resolvers ────────────────────────────────────────────
 
     def get_ai_dir(self, workspace_path: str | Path = "") -> Path:
