@@ -23,6 +23,9 @@ def _tools() -> dict:
 
 async def action_call(action: str, params: dict | None = None) -> dict:
     tool = _tools()["action_call"]
+    if action == "graph_build":
+        params = dict(params or {})
+        params.setdefault("background", False)
     return json.loads(await tool.fn(action=action, params=params))
 
 
@@ -64,7 +67,7 @@ async def test_graph_build_partial_then_chunked_completes(tmp_path: Path, monkey
     ws = str(tmp_path)
 
     # 1. max_files caps the first build → partial + pending.
-    r1 = await action_call("graph_build", {"workspace_path": ws, "max_files": 2})
+    r1 = await action_call("graph_build", {"workspace_path": ws, "max_files": 2, "background": False})
     assert r1["success"] is True, r1
     assert r1["result"]["partial"] is True
     assert r1["result"]["pending_files"] >= 6
@@ -73,13 +76,13 @@ async def test_graph_build_partial_then_chunked_completes(tmp_path: Path, monkey
     assert st["result"]["fresh"] is False
 
     # 2. chunk_size bounds every run — two more calls finish it (3 then 3).
-    r2 = await action_call("graph_build", {"workspace_path": ws, "chunk_size": 3})
+    r2 = await action_call("graph_build", {"workspace_path": ws, "chunk_size": 3, "background": False})
     assert r2["success"] is True, r2
     assert r2["result"]["chunked"] is True
     assert r2["result"]["processed_files"] == 3
     assert r2["result"]["remaining_files"] == 3
 
-    r3 = await action_call("graph_build", {"workspace_path": ws, "chunk_size": 3})
+    r3 = await action_call("graph_build", {"workspace_path": ws, "chunk_size": 3, "background": False})
     assert r3["success"] is True, r3
     assert r3["result"]["chunked"] is False
     assert r3["result"]["processed_files"] == 3
@@ -132,8 +135,8 @@ async def test_graph_build_node_limit_graceful_and_zero(tmp_path: Path):
 
 
 def test_graph_build_chunk_size_background_completes(tmp_path: Path):
-    """background=True starts a queue worker that advances chunks until the graph
-    is complete (Laravel-queue handler style)."""
+    """A normal graph_build triggers a queue worker without processing a chunk
+    synchronously, then the worker advances until the graph is complete."""
     from mcp_server.helpers import graphify_bridge as gb
 
     proj = tmp_path / "chunkbg"
@@ -143,13 +146,12 @@ def test_graph_build_chunk_size_background_completes(tmp_path: Path):
         (proj / f"b{i:02d}.py").write_text(f"def b{i:02d}():\n    return {i}\n", encoding="utf-8")
     ws = str(proj)
 
-    r = gb.graph_build_action(ws, chunk_size=10, background=True)
+    r = gb.graph_build_action(ws, chunk_size=10)
     assert r.get("success") is True, r
-    assert r.get("chunked") is True
-    remaining = int(r.get("remaining_files") or 0)
-    assert remaining > 0
+    assert r.get("triggered") is True
     assert r.get("background") is True
     assert r.get("background_started") is True
+    assert gb._rebuild_in_flight(ws) is True
 
     deadline = time.perf_counter() + 60
     while time.perf_counter() < deadline and not gb.graph_status(ws).get("fresh"):
@@ -157,6 +159,42 @@ def test_graph_build_chunk_size_background_completes(tmp_path: Path):
     st = gb.graph_status(ws)
     assert st.get("fresh") is True
     assert st.get("remaining_files", 0) == 0
+
+
+def test_graph_build_trigger_does_not_block_on_first_chunk(tmp_path: Path):
+    """The background trigger returns progress metadata immediately; work is
+    performed by the worker, not inside the graph_build request."""
+    from mcp_server.helpers import graphify_bridge as gb
+
+    for i in range(20):
+        (tmp_path / f"trigger{i:02d}.py").write_text(f"def trigger{i:02d}():\n    return {i}\n", encoding="utf-8")
+    result = gb.graph_build_action(str(tmp_path), chunk_size=5, include_html=False)
+    assert result["success"] is True
+    assert result["triggered"] is True
+    assert "nodes" not in result
+    assert gb._rebuild_in_flight(str(tmp_path)) is True
+
+    deadline = time.perf_counter() + 60
+    while time.perf_counter() < deadline and not gb.graph_status(str(tmp_path)).get("fresh"):
+        time.sleep(0.1)
+    assert gb.graph_status(str(tmp_path)).get("fresh") is True
+
+
+def test_graph_reads_pending_during_incomplete_build(tmp_path: Path):
+    """Queries do not return partial nodes while a chunked build is incomplete."""
+    from mcp_server.helpers import graphify_bridge as gb
+
+    for i in range(12):
+        (tmp_path / f"pending{i:02d}.py").write_text(f"def pending{i:02d}():\n    return {i}\n", encoding="utf-8")
+    workspace = str(tmp_path)
+    first = gb.build_graph(workspace, chunk_size=3, include_html=False)
+    assert first["success"] is True
+    assert first["remaining_files"] > 0
+
+    pending = gb.query_graph(workspace, "pending11")
+    assert pending["mode"] == "pending"
+    assert pending["graph_pending"] is True
+    assert pending["results"] == []
 
 
 async def test_graph_build_chunked_first_build_overwrites_existing_graph(
@@ -197,6 +235,37 @@ async def test_graph_build_chunked_first_build_overwrites_existing_graph(
     assert c2["remaining_files"] < c1["remaining_files"]
     gj2 = json.loads((tmp_path / ".ai" / "codegraph" / "graph.json").read_text(encoding="utf-8"))
     assert len(gj2["nodes"]) == c2["nodes"]
+
+
+def test_graph_status_resumes_pending_empty_manifest(tmp_path: Path):
+    """A partial state with an empty source_manifest is stale, not fresh, and
+    the next normal chunk resumes instead of returning skipped=True forever."""
+    from mcp_server.helpers import graphify_bridge as gb
+
+    for i in range(12):
+        (tmp_path / f"resume{i:02d}.py").write_text(f"def resume{i:02d}():\n    return {i}\n", encoding="utf-8")
+    workspace = str(tmp_path)
+
+    full = gb.build_graph(workspace, chunk_size=0, include_html=False)
+    assert full["success"] is True
+    state_path = tmp_path / ".ai" / "codegraph" / ".build_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["source_manifest"] = {}
+    state["processed_files"] = 3
+    state["remaining_files"] = 9
+    state["chunked"] = True
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    status = gb.graph_status(workspace)
+    assert status["fresh"] is False
+    assert status["remaining_files"] == 9
+    assert status["total_files"] == 12
+
+    resumed = gb.build_graph(workspace, chunk_size=3, include_html=False)
+    assert resumed["success"] is True, resumed
+    assert resumed.get("skipped") is not True
+    assert resumed["remaining_files"] < 9
+    assert resumed["processed_files"] == 3
 
 
 # ── .graphignore exclusion (gitignore-style, without .gitignore) ──────────

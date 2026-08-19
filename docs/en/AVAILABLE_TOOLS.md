@@ -118,12 +118,15 @@ processes the corpus in **bounded chunks** (queue style):
 |-------------|---------|---------|
 | `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Max files processed per build. Each run advances the manifest by exactly that many and returns `processed_files` / `remaining_files` / `chunked`. |
 | `max_files` / `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
-| `background` | `false` | After the synchronous chunk, start a background worker that keeps advancing chunks until `remaining_files == 0`. |
+| `background` | `true` | Fire-and-forget trigger: return immediately and let the background worker process chunks until `remaining_files == 0`; set `false` to process one chunk synchronously. |
 
 - **Flat resource usage** — every build touches ≤ `chunk_size` files, so peak RAM/CPU stays
   flat instead of one big spike; ideal for very large projects.
 - **Observable progress** — `graph_build`/`graph_status` report `processed_files` and
   `remaining_files`; `remaining_files == 0` means the graph is complete.
+- **No partial reads** — while a build is incomplete, `graph_query`, `graph_path`, and
+  `graph_explain` return `mode: "pending"` with no nodes instead of serving partial or stale
+  graph results. Retry after `graph_status` reports `fresh: true`.
 - **Auto-completion** — a graph read (`graph_query`/`graph_path`/`graph_explain`) triggers
   `graph_fresh` → `ensure_fresh(background=True)`, which starts a background chunk worker, so
   reads also advance the build smoothly.

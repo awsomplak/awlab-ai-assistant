@@ -109,10 +109,11 @@ Pada project yang besar, pembangunan graph secara penuh dapat menyebabkan lonjak
 |-----------------|---------|------------|
 | `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Jumlah maksimal file yang diproses dalam satu kali build. Manifest hanya diperbarui untuk file yang sudah diproses, dan hasilnya mengembalikan `processed_files` / `remaining_files` / `chunked`. |
 | `max_files` / `GRAPH_MAX_FILES` | (tidak diatur) | Membatasi jumlah file pada build pertama (chunk awal). |
-| `background` | `false` | Setelah chunk pertama selesai, proses latar belakang (worker) terus memproses chunk berikutnya hingga `remaining_files == 0`. |
+| `background` | `true` | Pemicu tanpa menunggu: permintaan langsung dikembalikan dan worker latar belakang memproses chunk hingga `remaining_files == 0`; gunakan `false` untuk memproses satu chunk secara sinkronus. |
 
 - **Penggunaan sumber daya yang stabil** — setiap build hanya memproses maksimal `chunk_size` file, sehingga puncak RAM/CPU tetap terkendali, bukan melonjak sekaligus; ini ideal untuk project yang sangat besar.
 - **Progres mudah dipantau** — `graph_build` dan `graph_status` melaporkan `processed_files` dan `remaining_files`; nilai `remaining_files == 0` berarti graph sudah lengkap.
+- **Tidak ada pembacaan graph parsial** — selama build belum selesai, `graph_query`, `graph_path`, dan `graph_explain` mengembalikan `mode: "pending"` tanpa node, bukan menyajikan hasil graph yang parsial atau kedaluwarsa. Coba lagi setelah `graph_status` melaporkan `fresh: true`.
 - **Selesai secara otomatis** — setiap pembacaan graph (`graph_query`/`graph_path`/`graph_explain`) memicu `graph_fresh` → `ensure_fresh(background=True)`, yang menjalankan proses chunk di latar belakang, sehingga pembacaan ikut mempercepat penyelesaian build secara bertahap.
 - `node_limit` (default `20000`, via `GRAPHIFY_VIZ_NODE_LIMIT`) membatasi `graph.html` interaktif; graph yang melebihi batas ditampilkan dalam bentuk agregasi per kelompok (bukan gagal); nilai `0` menonaktifkan HTML sepenuhnya.
 

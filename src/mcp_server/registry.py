@@ -1428,19 +1428,22 @@ REGISTRY: dict[str, dict[str, Any]] = {
             },
             "background": {
                 "type": "boolean",
-                "default": False,
+                "default": True,
                 "desc": (
-                    "After the synchronous chunk, start a background worker that "
-                    "keeps advancing chunks until the graph is complete (queue "
-                    "handler style)"
+                    "Non-blocking trigger (default): start the background worker and "
+                    "return immediately; poll graph_status for progress. Set false "
+                    "to process one chunk synchronously."
                 ),
             },
             "directed": {"type": "boolean", "default": False, "desc": "Directed graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for feedback-memory scoping"},
         },
         "returns": (
-            "{success, out_dir, nodes, edges, files, processed_files, remaining_files, "
-            "artifacts, node_limit, html, chunked, partial, pending_files} — rebuild "
+            "background=true returns immediately with {triggered, background_started, "
+            "processed_files, remaining_files}; background=false returns chunk build "
+            "details {success, out_dir, nodes, edges, files, processed_files, "
+            "remaining_files, artifacts, node_limit, html, chunked, partial, "
+            "pending_files} — poll graph_status until fresh=true. "
             "writes graphify_feedback memory obs when files changed; if a background "
             "rebuild is already in flight this coalesces and returns "
             "{rebuilding: true}; with background=true and remaining work it also "

@@ -26,6 +26,9 @@ def _tools() -> dict:
 
 async def action_call(action: str, params: dict | None = None) -> dict:
     tool = _tools()["action_call"]
+    if action == "graph_build":
+        params = dict(params or {})
+        params.setdefault("background", False)
     return json.loads(await tool.fn(action=action, params=params))
 
 
