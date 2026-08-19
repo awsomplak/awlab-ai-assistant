@@ -59,6 +59,7 @@ _BACKGROUND_THRESHOLD = 20  # changed files at/above which rebuild runs in backg
 _BUILD_LOCKS: dict[str, threading.RLock] = {}
 _BUILD_LOCKS_GUARD = threading.Lock()
 _BACKGROUND_THREADS: dict[str, threading.Thread] = {}
+_BACKGROUND_ERRORS: dict[str, str] = {}
 
 
 def _build_lock(root: Path) -> threading.RLock:
@@ -85,6 +86,7 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
         existing = _BACKGROUND_THREADS.get(key)
         if existing is not None and existing.is_alive():
             return False
+        _BACKGROUND_ERRORS.pop(key, None)
 
         def _run() -> None:
             try:
@@ -96,15 +98,28 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     last_remaining = None
                     while True:
                         res = build_graph(workspace_path, root, chunk_size=chunk_size)
-                        if not res.get("success") or not res.get("remaining_files"):
+                        if not res.get("success"):
+                            with _BUILD_LOCKS_GUARD:
+                                _BACKGROUND_ERRORS[key] = str(res.get("error", "chunk build failed"))
+                            break
+                        if not res.get("remaining_files"):
                             break
                         if res.get("remaining_files") == last_remaining:
+                            with _BUILD_LOCKS_GUARD:
+                                _BACKGROUND_ERRORS[key] = (
+                                    "chunk worker stopped because remaining_files did not decrease "
+                                    f"(still {res.get('remaining_files')})"
+                                )
                             break
                         last_remaining = res.get("remaining_files")
                 else:
-                    build_graph(workspace_path, root)
-            except Exception:  # noqa: BLE001 — background, never crash the server
-                pass
+                    res = build_graph(workspace_path, root)
+                    if not res.get("success"):
+                        with _BUILD_LOCKS_GUARD:
+                            _BACKGROUND_ERRORS[key] = str(res.get("error", "background build failed"))
+            except Exception as exc:  # noqa: BLE001 — background, never crash the server
+                with _BUILD_LOCKS_GUARD:
+                    _BACKGROUND_ERRORS[key] = f"background worker exception: {exc}"
             finally:
                 with _BUILD_LOCKS_GUARD:
                     _BACKGROUND_THREADS.pop(key, None)
@@ -117,7 +132,8 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
 
 def _rebuild_in_flight(workspace_path: str | Path, root: str | Path | None = None) -> bool:
     """True if a background rebuild is currently running for this project."""
-    key = str(_resolve_root(workspace_path, root))
+    # The output root identifies the project; ``root`` may only scope the scan.
+    key = str(_resolve_root(workspace_path))
     with _BUILD_LOCKS_GUARD:
         t = _BACKGROUND_THREADS.get(key)
     return t is not None and t.is_alive()
@@ -308,7 +324,10 @@ def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> Non
                 ex.name_globs.append(line)
 
 
-_EXCLUSION_CACHE: dict[str, tuple[float, _ProjectExclusions]] = {}
+_EXCLUSION_CACHE: dict[
+    str,
+    tuple[float, _ProjectExclusions, dict[str, int], dict[str, tuple[int, int]]],
+] = {}
 _EXCLUSION_TTL = 30.0  # seconds — re-walk after this so exclusion edits are picked up
 
 # Exclusion files parsed at every level, gitignore syntax, ADDITIVE (can only
@@ -330,20 +349,37 @@ def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
     now = time.monotonic()
     cached = _EXCLUSION_CACHE.get(key)
     if cached is not None and now - cached[0] < _EXCLUSION_TTL:
-        return cached[1]
+        _, cached_ex, cached_dirs, cached_files = cached
+        try:
+            dirs_current = {path: Path(path).stat().st_mtime_ns for path in cached_dirs}
+            files_current = {path: (Path(path).stat().st_mtime_ns, Path(path).stat().st_size) for path in cached_files}
+        except OSError:
+            dirs_current = {}
+            files_current = {}
+        if dirs_current == cached_dirs and files_current == cached_files:
+            return cached_ex
     ex = _ProjectExclusions()
     root = Path(scan_root)
+    visited_dirs: dict[str, int] = {}
+    exclusion_files: dict[str, tuple[int, int]] = {}
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _NOISE_DIRS and not d.endswith(".egg-info")]
+        try:
+            visited_dirs[str(Path(dirpath))] = Path(dirpath).stat().st_mtime_ns
+        except OSError:
+            continue
         rel_dir = str(Path(dirpath).relative_to(root)).replace("\\", "/")
         for gi_name in _EXCLUSION_FILENAMES:
             if gi_name in filenames:
+                gi_path = Path(dirpath) / gi_name
                 try:
-                    content = (Path(dirpath) / gi_name).read_text(encoding="utf-8", errors="ignore")
+                    gi_stat = gi_path.stat()
+                    exclusion_files[str(gi_path)] = (gi_stat.st_mtime_ns, gi_stat.st_size)
+                    content = gi_path.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     content = ""
                 _parse_gitignore(ex, content, "" if rel_dir == "." else rel_dir)
-    _EXCLUSION_CACHE[key] = (now, ex)
+    _EXCLUSION_CACHE[key] = (now, ex, visited_dirs, exclusion_files)
     return ex
 
 
@@ -1328,6 +1364,7 @@ def _build_graph_impl(
         # Deterministic corpus order (stable across runs) so a ``max_files`` /
         # ``chunk_size`` cap always selects the same leading subset.
         supported_rel = {str(f.relative_to(scan_root)).replace("\\", "/") for f in files}
+        total_files = len(supported_rel)
         files = sorted(files, key=lambda f: str(f.relative_to(scan_root)).replace("\\", "/"))
         rel_files = [str(f).replace("\\", "/") for f in files]
         prev_graph = _graph_from_json(out_dir) if prev_manifest else None
@@ -1448,13 +1485,14 @@ def _build_graph_impl(
         # ``force``: a chunked build legitimately produces a smaller intermediate
         # graph (it grows as chunks land) — the shrink guard must NOT refuse to
         # overwrite an existing larger graph.json, or the partial chunk never
-        # lands and graph.json stays stale while the manifest advances. Non-
-        # chunked incremental rebuilds may also shrink legitimately (deletions).
+        # lands and graph.json stays stale while the manifest advances. Any
+        # changed source/exclusion set is also an intentional replacement, so
+        # deletions and .graphignore edits may legitimately shrink the graph.
         g["to_json"](
             graph,
             communities,
             str(graph_path),
-            force=bool(incremental or chunked),
+            force=bool(changed or incremental or chunked),
             built_at_commit=_git_head_safe(out_root),
         )
 
@@ -1497,7 +1535,7 @@ def _build_graph_impl(
             "built_at": built_at,
             "scan_root": str(scan_root),
             "output_root": str(out_root),
-            "total_files": len(rel_files),
+            "total_files": total_files,
             "nodes": graph.number_of_nodes(),
             "edges": graph.number_of_edges(),
             "processed_files": len(processed_rel),
@@ -1517,7 +1555,8 @@ def _build_graph_impl(
             artifacts=artifacts,
             nodes=graph.number_of_nodes(),
             edges=graph.number_of_edges(),
-            files=len(rel_files),
+            files=len(processed_rel) if chunked else len(rel_files),
+            total_files=total_files,
             processed_files=len(processed_rel),
             remaining_files=remaining_files,
             built_at=built_at,
@@ -1595,6 +1634,7 @@ def graph_status(
         processed_files=state.get("processed_files"),
         remaining_files=state.get("remaining_files", 0),
         chunked=bool(state.get("chunked")),
+        background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))),
         changed_files=changed[:20],
         removed_files=removed[:10],
     )
