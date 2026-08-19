@@ -281,6 +281,8 @@ Runtime settings resolve in this order: **environment variable → `config.json`
 | `LOG_LEVEL` | `info` | Log level for file logging (e.g. `info`, `debug`). |
 | `DB_PATH` | (unset) | Optional override for the agent-recall database path. |
 | `GRAPH_PARALLEL` | `false` | Opt-in parallel graph extraction (`true`/`1`/`yes`). See below. |
+| `GRAPH_CHUNK_SIZE` | `200` | Max files processed per `graph_build` run (queue-chunk semantics). Keeps RAM/CPU flat on large projects; `0`/empty disables chunking. See below. |
+| `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
 
 Set these in the config home (production) or project `.env` (development), or pass them as real environment variables when launching the server.
 
@@ -292,6 +294,11 @@ Graph extraction (`graph_build`) is **sequential by default**, which is the corr
 - Parallel extraction uses a `ProcessPoolExecutor`, which **hangs in the frozen onefile exe**. Never enable it in production builds.
 
 Only consider `GRAPH_PARALLEL=1` for a **very large source corpus** where the per-file pass dominates and you are running from **source** (`.venv`), not the exe. When in doubt, leave it off.
+
+### `GRAPH_CHUNK_SIZE` — chunked builds for large projects
+
+`graph_build` processes the corpus in **bounded chunks** (queue): each run extracts at
+most `chunk_size` files and advances the freshness manifest by exactly that many, returning `processed_files` / `remaining_files` / `chunked`. With `background=true` (or via a graph read's `graph_fresh` precondition → `ensure_fresh(background=True)`), a background worker keeps advancing chunks until `remaining_files == 0`. This keeps peak RAM/CPU flat instead of one big spike on very large projects. `max_files` (env `GRAPH_MAX_FILES`) additionally caps the first build's leading corpus. `graph_status` reports `remaining_files` so progress is observable.
 
 ---
 

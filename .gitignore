@@ -1,8 +1,9 @@
 /.vscode
 /.idea
+/.github
+/.ai
 /.venv
 /venv
-/.ai
 */**/.ai
 /.temp/
 */**/.temp/

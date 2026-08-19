@@ -1384,7 +1384,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "doc": "Builds a per-project structural graph (detect -> extract -> build -> cluster -> "
         "export graph.json + graph.html) into <root>/.ai/codegraph/ and writes a "
         ".build_state.json manifest for freshness. graph.html is for the user to open "
-        "manually in a browser.",
+        "manually in a browser. Exclusion: _NOISE_DIRS + project .gitignore AND "
+        ".graphignore (gitignore syntax) — .graphignore excludes files/dirs from "
+        "the graph without affecting git.",
         "handler": _graph_build,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
@@ -1397,13 +1399,52 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 ),
             },
             "include_html": {"type": "boolean", "default": True, "desc": "Also export graph.html"},
+            "node_limit": {
+                "type": "integer",
+                "desc": (
+                    "HTML viz node limit for graph.html (default 20000 via "
+                    "GRAPHIFY_VIZ_NODE_LIMIT/config). Graphs over the limit render "
+                    "as the aggregated community view instead of failing; 0 skips "
+                    "HTML entirely"
+                ),
+            },
+            "max_files": {
+                "type": "integer",
+                "desc": (
+                    "Cap source files processed in the FIRST build (bounds RAM/CPU "
+                    "on large projects); remaining files are folded in "
+                    "incrementally on later builds"
+                ),
+            },
+            "chunk_size": {
+                "type": "integer",
+                "desc": (
+                    "Per-run file cap (queue-chunk semantics, default 200 via "
+                    "GRAPH_CHUNK_SIZE): each build processes at most this many "
+                    "files; remaining_files are picked up by the next call or the "
+                    "background chunk worker — keeps peak RAM/CPU flat on large "
+                    "projects"
+                ),
+            },
+            "background": {
+                "type": "boolean",
+                "default": False,
+                "desc": (
+                    "After the synchronous chunk, start a background worker that "
+                    "keeps advancing chunks until the graph is complete (queue "
+                    "handler style)"
+                ),
+            },
             "directed": {"type": "boolean", "default": False, "desc": "Directed graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for feedback-memory scoping"},
         },
         "returns": (
-            "{success, out_dir, nodes, edges, files, artifacts} — rebuild writes "
-            "graphify_feedback memory obs when files changed; if a background rebuild "
-            "is already in flight this coalesces and returns {rebuilding: true}"
+            "{success, out_dir, nodes, edges, files, processed_files, remaining_files, "
+            "artifacts, node_limit, html, chunked, partial, pending_files} — rebuild "
+            "writes graphify_feedback memory obs when files changed; if a background "
+            "rebuild is already in flight this coalesces and returns "
+            "{rebuilding: true}; with background=true and remaining work it also "
+            "returns {background, background_started}"
         ),
         "example": 'action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid", "graph_dir_ready"],

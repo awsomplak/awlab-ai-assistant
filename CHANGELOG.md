@@ -1,4 +1,26 @@
 # Changelog
+## [3.0.3] - 2026-08-19
+
+### Added
+- **Chunked graph builds (queue-chunk semantics)** — `graph_build` now processes the corpus in bounded chunks so peak RAM/CPU stays flat on large projects:
+  - `chunk_size` / `GRAPH_CHUNK_SIZE` (default `200`) — max files processed per build; each run advances the freshness manifest by exactly that many.
+  - `max_files` / `GRAPH_MAX_FILES` — optional cap on the FIRST build's leading corpus (partial first build; the rest is folded in incrementally).
+  - `background` — after the synchronous chunk, a Laravel-queue-style background worker keeps advancing chunks until the graph is complete (`remaining_files == 0`); graph reads auto-start it via `graph_fresh` → `ensure_fresh(background=True)`.
+  - Progress reporting — `graph_build` / `graph_status` return `processed_files`, `remaining_files`, `chunked`; `graph_status` stays `fresh: false` until the graph is complete.
+- **Graceful HTML viz limit** — `node_limit` param + `graph_viz_limit` config (default `20000`, overridable via `GRAPHIFY_VIZ_NODE_LIMIT`): graphs over the limit render the aggregated community meta-graph view instead of raising `ValueError`; `0` disables the HTML export; a failed HTML export is non-fatal (graph.json + manifest always land).
+- **`.graphignore` exclusion file** — gitignore syntax, combined ADDITIVELY with the project's `.gitignore` (parsed at every directory level): exclude files/directories from the code graph only (generated code, vendored copies, …) without ever affecting git. A `.graphignore` change triggers a rebuild.
+- **Documentation** — `.graphignore` + chunked-build behavior documented in the generated per-project `.ai/codegraph/README.md` and in `docs/en/` + `docs/id/` (AVAILABLE_TOOLS graph sections + INSTALL env rows `GRAPH_CHUNK_SIZE` / `GRAPH_MAX_FILES`).
+
+### Changed
+- **Test suite compaction** — merged repetitive clusters into loop/combined tests (`test_workspace` 22→6, `test_context_tools` 27→13, graph scalability 11→7) and parametrized the status-transition / validation clusters in `test_plan_tools` + `test_integration_mcp_tools` — same coverage, 368 tests.
+- **`.gitignore` support unchanged** — `.graphignore` is parsed alongside it, never replacing it.
+
+### Fixed
+- **Oversized-graph build failure** — a graph over the HTML viz limit previously raised `ValueError` *after* writing graph.json but *before* `.build_state.json` (→ stale-manifest rebuild loop); it now renders an aggregated community view (or skips HTML) and the build completes normally.
+
+### Builds
+- `v3.0.3+build.102` — chunked graph builds, graceful HTML viz limit, `.graphignore` exclusion, docs en/id + test compaction. 368 tests pass, lint + format clean.
+
 ## [3.0.2] - 2026-08-16
 
 ### Added
