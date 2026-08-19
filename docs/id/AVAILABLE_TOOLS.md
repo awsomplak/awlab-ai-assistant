@@ -98,6 +98,23 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
   `imports_from`/`imports` yang hilang — sehingga SFC `.vue` dan file yang meng-import `@/` tetap
   terhubung di `graph_path` walau tidak ada `tsconfig.json`. Edge hasil-alias membawa
   `alias_resolved: true`; langkah ini idempotent dan juga memperbaiki sendiri graph lama (tanpa build ulang penuh).
+- **Pengecualian (exclusion)** — mengikuti sintaks gitignore dan bersifat kumulatif:
+  graph selalu mematuhi `_NOISE_DIRS` (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, …) dan file kunci dependensi (lock file). Selain itu, graph juga mengikuti `.gitignore` project, serta **`.graphignore`** yang bersifat lokal — Anda dapat mengecualikan file/direktori dari code graph saja (misalnya kode hasil generate atau salinan vendor) tanpa memengaruhi git. Perubahan pada `.graphignore` akan memicu pembangunan ulang.
+
+#### Pembuatan bertahap (chunking) untuk project besar
+
+Pada project yang besar, pembangunan graph secara penuh dapat menyebabkan lonjakan penggunaan RAM/CPU. Agar prosesnya tetap lancar, `graph_build` memproses file secara **bertahap dalam potongan (chunk) yang dibatasi** — mengikuti pola antrean (queue):
+
+| Parameter / Env | Default | Keterangan |
+|-----------------|---------|------------|
+| `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Jumlah maksimal file yang diproses dalam satu kali build. Manifest hanya diperbarui untuk file yang sudah diproses, dan hasilnya mengembalikan `processed_files` / `remaining_files` / `chunked`. |
+| `max_files` / `GRAPH_MAX_FILES` | (tidak diatur) | Membatasi jumlah file pada build pertama (chunk awal). |
+| `background` | `false` | Setelah chunk pertama selesai, proses latar belakang (worker) terus memproses chunk berikutnya hingga `remaining_files == 0`. |
+
+- **Penggunaan sumber daya yang stabil** — setiap build hanya memproses maksimal `chunk_size` file, sehingga puncak RAM/CPU tetap terkendali, bukan melonjak sekaligus; ini ideal untuk project yang sangat besar.
+- **Progres mudah dipantau** — `graph_build` dan `graph_status` melaporkan `processed_files` dan `remaining_files`; nilai `remaining_files == 0` berarti graph sudah lengkap.
+- **Selesai secara otomatis** — setiap pembacaan graph (`graph_query`/`graph_path`/`graph_explain`) memicu `graph_fresh` → `ensure_fresh(background=True)`, yang menjalankan proses chunk di latar belakang, sehingga pembacaan ikut mempercepat penyelesaian build secara bertahap.
+- `node_limit` (default `20000`, via `GRAPHIFY_VIZ_NODE_LIMIT`) membatasi `graph.html` interaktif; graph yang melebihi batas ditampilkan dalam bentuk agregasi per kelompok (bukan gagal); nilai `0` menonaktifkan HTML sepenuhnya.
 
 #### Alur pembentukan code-graph
 

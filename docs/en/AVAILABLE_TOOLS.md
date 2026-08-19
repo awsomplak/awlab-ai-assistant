@@ -103,6 +103,33 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
   in `graph_path` even when no `tsconfig.json` exists. Alias-resolved edges carry
   `alias_resolved: true`; the pass is idempotent and also self-heals previously-built graphs
   (no full rebuild needed).
+- **Exclusions** (additive, gitignore syntax): the graph always honors `_NOISE_DIRS`
+  (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, …) and dependency lock
+  files; it also honors the project's `.gitignore`, plus a project-local **`.graphignore`**
+  that lets you exclude files/dirs from the CODE GRAPH only (generated code, vendored
+  copies, …) without ever affecting git. A `.graphignore` change triggers a rebuild.
+
+#### Chunked builds (large-project performance)
+
+On large projects a full graph build can spike RAM/CPU. To keep it smooth, `graph_build`
+processes the corpus in **bounded chunks** (queue style):
+
+| Param / Env | Default | Meaning |
+|-------------|---------|---------|
+| `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Max files processed per build. Each run advances the manifest by exactly that many and returns `processed_files` / `remaining_files` / `chunked`. |
+| `max_files` / `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
+| `background` | `false` | After the synchronous chunk, start a background worker that keeps advancing chunks until `remaining_files == 0`. |
+
+- **Flat resource usage** — every build touches ≤ `chunk_size` files, so peak RAM/CPU stays
+  flat instead of one big spike; ideal for very large projects.
+- **Observable progress** — `graph_build`/`graph_status` report `processed_files` and
+  `remaining_files`; `remaining_files == 0` means the graph is complete.
+- **Auto-completion** — a graph read (`graph_query`/`graph_path`/`graph_explain`) triggers
+  `graph_fresh` → `ensure_fresh(background=True)`, which starts a background chunk worker, so
+  reads also advance the build smoothly.
+- `node_limit` (default `20000`, `GRAPHIFY_VIZ_NODE_LIMIT`) bounds the interactive `graph.html`;
+  graphs over the limit render an aggregated community view instead of failing; `0` disables
+  HTML entirely.
 
 #### Graph freshness contract
 

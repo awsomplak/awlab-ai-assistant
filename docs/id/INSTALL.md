@@ -288,6 +288,8 @@ Pengaturan runtime yang berjalan memiliki prioritas urutan dalam menentukan mana
 | `LOG_LEVEL` | `info` | Tingkat level log untuk melakukan pencatatan ke file log (contoh: `info`, `debug`, `warning`). |
 | `DB_PATH` | (kosong) | Penggantian opsional untuk lokasi database agent-recall. |
 | `GRAPH_PARALLEL` | `false` | Ekstraksi code-graph secara paralel dan bersifat opsional (`true`/`1`/`yes`). Lihat di bawah untuk detailnya. |
+| `GRAPH_CHUNK_SIZE` | `200` | Jumlah maksimal file yang diproses dalam satu kali `graph_build` (pembuatan bertahap/chunk). Menjaga RAM/CPU tetap stabil pada project besar; nilai `0`/kosong menonaktifkan chunking. Lihat penjelasan di bawah. |
+| `GRAPH_MAX_FILES` | (tidak diatur) | Membatasi jumlah file pada build pertama (chunk awal). |
 
 Pengaturan dapat berupa file `config.json` atau `.env` untuk diterapkan secara global, atau bisa juga diterapkan sebagai environment variable saat mendaftarkan MCP server atau juga dapat diatur langsung dari OS.
 
@@ -308,6 +310,10 @@ Proses ekstraksi code-graph saat menjalankan perintah `graph_build` **berjalan b
 Gunakan `GRAPH_PARALLEL=1` hanya jika:
 1. Anda memiliki source code dalam jumlah yang sangat besar.
 2. Anda menjalankan MCP server-nya langsung dari source code (menggunakan .venv), bukan dari binary executable yang sudah dibuild.
+
+### `GRAPH_CHUNK_SIZE` — pembuatan graph secara bertahap untuk project besar
+
+`graph_build` memproses file secara **bertahap dalam potongan (chunk) yang dibatasi** — mengikuti pola antrean (queue): setiap proses (run) mengekstrak maksimal `chunk_size` file, Manifest hanya diperbarui untuk file yang sudah diproses, dan hasilnya mengembalikan `processed_files` / `remaining_files` / `chunked`. Dengan `background=true` (atau melalui precondition `graph_fresh` saat pembacaan graph → `ensure_fresh(background=True)`), proses latar belakang (worker) terus memproses chunk berikutnya hingga `remaining_files == 0`. Dengan begitu, penggunaan RAM/CPU tetap stabil — ideal untuk project yang sangat besar. `max_files` (env `GRAPH_MAX_FILES`) juga membatasi jumlah file pada build pertama. `graph_status` melaporkan `remaining_files` sehingga perkembangannya dapat dipantau.
 
 ---
 
