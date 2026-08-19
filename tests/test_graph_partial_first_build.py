@@ -221,3 +221,27 @@ async def test_graph_build_graphignore_excludes_files(tmp_path: Path):
     assert q_skip["result"]["count"] == 0
     q_gen = await action_call("graph_query", {"workspace_path": ws, "query": "gen_me"})
     assert q_gen["result"]["count"] == 0
+
+
+async def test_graphignore_changes_invalidate_cache_and_totals(tmp_path: Path):
+    """A .graphignore edit is visible on the next build, without the old
+    30-second TTL; totals describe the filtered corpus, not ignored files."""
+    from mcp_server.helpers import graphify_bridge as gb
+
+    for name in ("keep.py", "skip.py", "later.py"):
+        (tmp_path / name).write_text(f"def {name[:-3]}():\n    return 1\n", encoding="utf-8")
+    ws = str(tmp_path)
+
+    initial = gb.build_graph(ws, chunk_size=0, include_html=False)
+    assert initial["success"] is True
+
+    (tmp_path / ".graphignore").write_text("skip.py\nlater.py\n", encoding="utf-8")
+    filtered = gb.build_graph(ws, chunk_size=1, include_html=False)
+    assert filtered["success"] is True, filtered
+    assert filtered["total_files"] == 1
+    assert filtered["files"] == 1
+    assert filtered["remaining_files"] == 0
+
+    exclusions = gb._gitignore_exclusions(tmp_path)
+    assert gb._gitignored(tmp_path, tmp_path / "skip.py", exclusions) is True
+    assert gb._gitignored(tmp_path, tmp_path / "keep.py", exclusions) is False
