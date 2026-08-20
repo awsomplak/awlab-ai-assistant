@@ -99,7 +99,7 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
   terhubung di `graph_path` walau tidak ada `tsconfig.json`. Edge hasil-alias membawa
   `alias_resolved: true`; langkah ini idempotent dan juga memperbaiki sendiri graph lama (tanpa build ulang penuh).
 - **Pengecualian (exclusion)** — mengikuti sintaks gitignore dan bersifat kumulatif:
-  graph selalu mematuhi `_NOISE_DIRS` (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, …) dan file kunci dependensi (lock file). Selain itu, graph juga mengikuti `.gitignore` project, serta **`.graphignore`** yang bersifat lokal — Anda dapat mengecualikan file/direktori dari code graph saja (misalnya kode hasil generate atau salinan vendor) tanpa memengaruhi git. Perubahan pada `.graphignore` akan memicu pembangunan ulang.
+  graph selalu mematuhi `_NOISE_DIRS` (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, …) dan file kunci dependensi (lock file). Selain itu, graph juga mengikuti `.gitignore` project, serta **`.graphignore`** yang bersifat lokal — Anda dapat mengecualikan file/direktori dari code graph saja (misalnya kode hasil generate atau salinan vendor) tanpa memengaruhi git. `.gitignore` dan `.graphignore` diparsing menjadi SATU set aturan aditif dengan SEMANTIK GLOB yang IDENTIK untuk file DAN direktori (`dist-*/`, `**/cache/` memangkas seluruh subtree; nama/path persis mengecualikan file atau direktori). Pola `*`/`**` (ignore-all, yang butuh re-inclusion `!`) dilewati, sehingga `.gitignore` ala Laravel tidak pernah secara tidak sengaja mengecualikan semua file. Perubahan pada `.graphignore` akan memicu pembangunan ulang.
 
 #### Pembuatan bertahap (chunking) untuk project besar
 
@@ -109,13 +109,23 @@ Pada project yang besar, pembangunan graph secara penuh dapat menyebabkan lonjak
 |-----------------|---------|------------|
 | `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Jumlah maksimal file yang diproses dalam satu kali build. Manifest hanya diperbarui untuk file yang sudah diproses, dan hasilnya mengembalikan `processed_files` / `remaining_files` / `chunked`. |
 | `max_files` / `GRAPH_MAX_FILES` | (tidak diatur) | Membatasi jumlah file pada build pertama (chunk awal). |
-| `background` | `true` | Pemicu tanpa menunggu: permintaan langsung dikembalikan dan worker latar belakang memproses chunk hingga `remaining_files == 0`; gunakan `false` untuk memproses satu chunk secara sinkronus. |
+| `background` | `true` | Pemicu tanpa menunggu: permintaan langsung dikembalikan dan worker latar belakang memproses chunk hingga `remaining_files == 0`; gunakan `false` untuk memproses satu chunk secara sinkronus (tidak pernah diblokir oleh build ulang yang sedang berjalan). |
+| `force` | `false` | Melewati guard in-flight dan memulai build baru walau ada rebuilding flag/worker yang basi (escape hatch untuk keadaan stuck). |
 
 - **Penggunaan sumber daya yang stabil** — setiap build hanya memproses maksimal `chunk_size` file, sehingga puncak RAM/CPU tetap terkendali, bukan melonjak sekaligus; ini ideal untuk project yang sangat besar.
 - **Progres mudah dipantau** — `graph_build` dan `graph_status` melaporkan `processed_files` dan `remaining_files`; nilai `remaining_files == 0` berarti graph sudah lengkap.
 - **Tidak ada pembacaan graph parsial** — selama build belum selesai, `graph_query`, `graph_path`, dan `graph_explain` mengembalikan `mode: "pending"` tanpa node, bukan menyajikan hasil graph yang parsial atau kedaluwarsa. Coba lagi setelah `graph_status` melaporkan `fresh: true`.
 - **Selesai secara otomatis** — setiap pembacaan graph (`graph_query`/`graph_path`/`graph_explain`) memicu `graph_fresh` → `ensure_fresh(background=True)`, yang menjalankan proses chunk di latar belakang, sehingga pembacaan ikut mempercepat penyelesaian build secara bertahap.
 - `node_limit` (default `20000`, via `GRAPHIFY_VIZ_NODE_LIMIT`) membatasi `graph.html` interaktif; graph yang melebihi batas ditampilkan dalam bentuk agregasi per kelompok (bukan gagal); nilai `0` menonaktifkan HTML sepenuhnya.
+
+**Akurasi `graph_status`** — `processed_files` bersifat kumulatif (`total_files − remaining_files`), plus `processed_total`, `processed_this_chunk` (per-run), `remaining_files`, `chunked`, dan visibilitas pengecualian `scanned_files` / `excluded_files` / `supported_files`. `rebuilding` mencerminkan worker latar belakang yang aktif (persisted `rebuilding: true` yang basi tanpa worker aktif otomatis dibersihkan saat dibaca); `background_error` menampilkan kegagalan worker terakhir dan bertahan setelah server restart. `background: false` selalu memproses satu chunk secara sinkronus (tidak pernah diblokir — perbaikan Bug 3); `force: true` melewati guard sepenuhnya.
+
+**HTML graph skala besar (`graph.html` / `family.html`)** — setiap visualisasi yang dirender menyertakan lapisan sisi-klien mandiri agar project dengan ribuan node tetap bisa digunakan:
+
+- **Bilah filter** — filter node berdasarkan path file (`src/components`), berdasarkan derajat minimum (merapikan tampilan), atau aktifkan **Focus 2-hop** untuk menampilkan hanya lingkungan node yang dipilih. Tepi (edges) dipotong hanya ke node yang terlihat. Tombol header **Filters** bisa menciutkan/memperluas bilah agar ruang sidebar lebih lega.
+- **Pengaman physics** — di atas ±2000 node yang terlihat, layout forceAtlas2 dinonaktifkan (agar browser tidak membeku); persempit tampilan dengan filter, lalu tekan **Stabilize**.
+- **Panel yang bisa diubah ukurannya** — seret pemisah antara **Node Info** dan **Communities** untuk memberi ruang lebih ke salah satu panel (klik dua kali untuk mengatur ulang); kotak Node Info menggulir ke dalam bila node punya daftar tetangga panjang, sehingga tidak menimpa atau mendorong legenda Communities.
+- **Drill-down komunitas** — saat graph melebihi `node_limit` (tampilan agregasi per komunitas), saat klik node komunitas membuka daftar anggota yang bisa dicari, lalu **Load members into graph** membangun ulang tampilan dari node + tepi anggota komunitas tersebut; **Reset** kembali ke tampilan ringkasan. Turunkan `node_limit` (mis. `1500`) untuk mendapatkan ringkasan agregasi + drill-down pada project besar.
 
 #### Alur pembentukan code-graph
 
