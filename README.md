@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.2-blue" alt="Version 3.0.2" />
+  <img src="https://img.shields.io/badge/version-3.0.4-blue" alt="Version 3.0.4" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/tests-360%20passing-brightgreen" alt="360 tests passing" />
+  <img src="https://img.shields.io/badge/tests-405%20passing-brightgreen" alt="405 tests passing" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Cross-platform" />
 </p>
