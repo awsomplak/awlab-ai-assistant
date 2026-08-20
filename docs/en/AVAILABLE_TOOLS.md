@@ -107,7 +107,12 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
   (`.git`, `.venv`, `node_modules`, `dist`, `build`, `vendor`, …) and dependency lock
   files; it also honors the project's `.gitignore`, plus a project-local **`.graphignore`**
   that lets you exclude files/dirs from the CODE GRAPH only (generated code, vendored
-  copies, …) without ever affecting git. A `.graphignore` change triggers a rebuild.
+  copies, …) without ever affecting git. `.gitignore` and `.graphignore` are parsed into
+  ONE additive rule set with IDENTICAL glob semantics for files AND directories
+  (`dist-*/`, `**/cache/` prune whole subtrees; exact names/paths exclude a file or a
+  directory). A bare `*`/`**` (ignore-all, which needs `!` re-inclusions) is skipped, so
+  a Laravel-style `.gitignore` can never accidentally exclude every file. A `.graphignore`
+  change triggers a rebuild.
 
 #### Chunked builds (large-project performance)
 
@@ -118,7 +123,8 @@ processes the corpus in **bounded chunks** (queue style):
 |-------------|---------|---------|
 | `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Max files processed per build. Each run advances the manifest by exactly that many and returns `processed_files` / `remaining_files` / `chunked`. |
 | `max_files` / `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
-| `background` | `true` | Fire-and-forget trigger: return immediately and let the background worker process chunks until `remaining_files == 0`; set `false` to process one chunk synchronously. |
+| `background` | `true` | Fire-and-forget trigger: return immediately and let the background worker process chunks until `remaining_files == 0`; set `false` to process one chunk synchronously (never blocked by an in-flight rebuild). |
+| `force` | `false` | Bypass the in-flight guard and start a fresh build even if a stale rebuilding flag/worker is present (escape hatch for a stuck state). |
 
 - **Flat resource usage** — every build touches ≤ `chunk_size` files, so peak RAM/CPU stays
   flat instead of one big spike; ideal for very large projects.
@@ -133,6 +139,33 @@ processes the corpus in **bounded chunks** (queue style):
 - `node_limit` (default `20000`, `GRAPHIFY_VIZ_NODE_LIMIT`) bounds the interactive `graph.html`;
   graphs over the limit render an aggregated community view instead of failing; `0` disables
   HTML entirely.
+
+**`graph_status` progress & accuracy** — `processed_files` is cumulative
+(`total_files − remaining_files`), plus `processed_total`, `processed_this_chunk` (per-run),
+`remaining_files`, `chunked`, and exclusion visibility `scanned_files` / `excluded_files` /
+`supported_files`. `rebuilding` reflects a live background worker (a stale persisted
+`rebuilding: true` with no live worker is auto-cleared on read); `background_error` surfaces
+the last worker failure and survives a server restart. `background: false` always processes
+one synchronous chunk (never blocked by an in-flight rebuild — Bug 3 fix); `force: true`
+bypasses the guard entirely.
+
+**Large-graph HTML (`graph.html` / `family.html`)** — every rendered visualization embeds a
+self-contained client-side layer so projects with thousands of nodes stay usable:
+
+- **Filter bar** — filter nodes by file path (`src/components`), by a minimum degree
+  (de-hairball the view), or enable **Focus 2-hop** to show only the neighborhood of the
+  selected node. Edges are clipped to the visible nodes. A **Filters** header button
+  collapses/expands the bar to free sidebar space.
+- **Physics guard** — above ~2000 visible nodes the forceAtlas2 layout is disabled (it would
+  freeze the browser); narrow the view with the filters, then hit **Stabilize**.
+- **Resizable panes** — drag the splitter between **Node Info** and **Communities** to give
+  either pane more room (double-click resets); the Node Info box scrolls internally when a
+  node has a long neighbor list, so it never overlaps or pushes the Communities legend.
+- **Community drill-down** — when a graph is over `node_limit` (aggregated community view),
+  clicking a community node opens a searchable member list and **Load members into graph**
+  rebuilds the view from that community's member nodes + edges; **Reset** returns to the
+  overview. Lower `node_limit` (e.g. `1500`) to get the aggregated overview + drill-down for a
+  large project.
 
 #### Graph freshness contract
 
@@ -150,7 +183,7 @@ whether a rebuild is in flight:
 **Freshness behavior:**
 - A stale graph with **few changed files** → rebuilt **synchronously** before the read (results are accurate).
 - A stale graph with **many changed files (≥ 20) or a first build** → rebuilt in a **background thread**; the read returns immediately and may serve the previous graph. When `graph_rebuilding: true`, wait a moment and re-read (the next read is fresh).
-- `graph_build` (explicit) during an in-flight background rebuild **coalesces** — it returns `rebuilding: true` instead of starting a duplicate build.
+- `graph_build` (explicit) during an in-flight background rebuild **coalesces** — it returns `rebuilding: true` instead of starting a duplicate build. Set `force: true` to bypass the guard and start fresh, or `background: false` to process one chunk synchronously regardless.
 
 ### task
 

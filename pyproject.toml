@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awlab-ai-assistant"
-version = "3.0.2"
+version = "3.0.4"
 description = "Deterministic MCP server for plan management, cross-session memory, and AI-assisted development workflows"
 requires-python = ">=3.10"
 dependencies = [
@@ -42,6 +42,13 @@ extend-exclude = [".vulture_whitelist.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# graphify_bridge.py embeds a large JS/CSS template (the interactive graph.html
+# filter + drill-down layer) inside a triple-quoted f-string; those template
+# lines are legitimately longer than the Python line limit (JS/CSS ignore line
+# length). All other checks still apply to the file.
+"src/mcp_server/helpers/graphify_bridge.py" = ["E501"]
 
 [tool.ruff.format]
 quote-style = "double"

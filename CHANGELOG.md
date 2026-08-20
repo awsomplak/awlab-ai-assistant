@@ -1,4 +1,29 @@
 # Changelog
+## [3.0.4]
+
+### Added
+- **Large-graph HTML viz (graph.html / family.html)** — every rendered visualization now embeds a self-contained client-side layer so projects with thousands of nodes stay usable:
+  - **Filter bar** — filter by file path (`src/components`), by minimum degree (de-hairball), or **Focus 2-hop** (neighborhood of the selected node); edges clip to the visible nodes; **Reset** restores the initial view.
+  - **Physics guard** — above ~2000 visible nodes the forceAtlas2 layout is disabled (would freeze the browser); narrow the view, then **Stabilize** re-runs the layout.
+  - **Community drill-down** — when a graph is over `node_limit` (aggregated community view), the full member node/edge dataset is embedded alongside the meta-graph; clicking a community node opens a searchable member list and **Load members into graph** rebuilds the view from that community's member subgraph.
+  - **Heuristic community labels (non-LLM)** — top-degree member labels per community (e.g. `apiHandler, helper`) now populate the Communities legend (previously only "Select All") and the drill-down/node-info headings; `to_html` receives `community_labels` for both full and aggregated views.
+  - **Resizable sidebar panes** — a draggable splitter between **Node Info** and **Communities** lets either pane take more room (double-click resets); the Node Info panel is `flex: 0 0 auto` + capped + internally scrollable so a long neighbor list never overlaps or pushes the Communities legend.
+  - **Collapsible Filter bar** — a **Filters** header button collapses/expands the filter controls to free sidebar space.
+- **Non-blocking `graph_build`** — `background` now defaults to `true`: the call is a fire-and-forget trigger (returns `triggered: true, background_started: true`) and the chunk worker drains `remaining_files` to 0; graph reads return `mode: "pending"` while a build is incomplete so stale/partial data is never served.
+
+### Fixed
+- **Background chunk-worker stall on large projects (eka-panel)** — a bare `*` in a Laravel-style nested `.gitignore` (`*` + `!.gitignore` re-inclusions) became a GLOBAL basename glob that excluded every file, so `_source_manifest` returned 0, the incremental/chunked branch was skipped, and a full-corpus extract ran in ONE call ignoring `chunk_size`. `.gitignore` + `.graphignore` now parse into ONE additive rule set with identical file/dir glob semantics; bare `*`/`**` ignore-all lines are skipped; `_source_manifest` has a blank-detection guard. Verified end-to-end on eka-panel: the background worker drains `remaining_files` to 0 (2673 → 0) and reaches `fresh: true`.
+- **`background: false` blocked by a stale in-flight guard (Bug 3)** — a synchronous build now always proceeds (serialized on a bounded per-project lock) instead of returning "rebuild already in progress"; `force: true` bypasses the guard entirely.
+- **`graph_status` staleness** — `processed_files` is now cumulative (`total − remaining`); a partial build reports `exists: true`; `rebuilding` reflects a live worker and a stale persisted flag is auto-cleared on read; `background_error` surfaces worker failures and survives server restarts.
+- **Worker lifecycle hardening** — the chunk-drain loop distinguishes `remaining_files` `None` vs `0`; a stall watchdog surfaces a real `background_error` and stops treating a zombie thread as in-flight; the per-project build lock is bounded (600s).
+
+### Changed
+- **Exclusion visibility** — `graph_status` reports `scanned_files` / `excluded_files` / `supported_files` (scanned count memoized); `.gitignore` / `.graphignore` are no longer counted as graph source.
+
+### Builds
+- `v3.0.4+build.103` — non-blocking fire-and-forget background graph builds (pending-read guards).
+- `v3.0.4+build.104` — large-graph HTML viz (filter bar + physics guard + community drill-down + heuristic community labels + resizable panes + collapsible Filter bar) + graph background-worker stall fix (unified exclusion engine, worker hardening, persisted rebuilding lifecycle, graph_status accuracy, force). Tests + lint clean.
+
 ## [3.0.3] - 2026-08-19
 
 ### Added

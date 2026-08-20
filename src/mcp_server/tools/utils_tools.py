@@ -133,7 +133,7 @@ async def get_server_version() -> dict[str, Any]:
     Return the server build version string.
 
     Returns:
-        { "version": VERSION_STRING }   # e.g. "awlab-ai-assistant v3.0.2+build.100"
+        { "version": VERSION_STRING }   # e.g. "awlab-ai-assistant v3.0.4+build.104"
     """
     return resp_obj(version=VERSION_STRING)
 

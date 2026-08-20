@@ -1404,8 +1404,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "desc": (
                     "HTML viz node limit for graph.html (default 20000 via "
                     "GRAPHIFY_VIZ_NODE_LIMIT/config). Graphs over the limit render "
-                    "as the aggregated community view instead of failing; 0 skips "
-                    "HTML entirely"
+                    "as the aggregated community view with drill-down (click a "
+                    "community to expand its members) instead of failing; 0 skips "
+                    "HTML entirely. Every graph.html also has a filter bar (path / "
+                    "min degree / 2-hop focus) for managing large graphs"
                 ),
             },
             "max_files": {
@@ -1435,19 +1437,30 @@ REGISTRY: dict[str, dict[str, Any]] = {
                     "to process one chunk synchronously."
                 ),
             },
+            "force": {
+                "type": "boolean",
+                "default": False,
+                "desc": (
+                    "Bypass the in-flight guard: start a fresh build even when a stale "
+                    "rebuilding flag/worker is present (escape hatch for a stuck state). "
+                    "background=false already bypasses the guard on its own."
+                ),
+            },
             "directed": {"type": "boolean", "default": False, "desc": "Directed graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for feedback-memory scoping"},
         },
         "returns": (
             "background=true returns immediately with {triggered, background_started, "
-            "processed_files, remaining_files}; background=false returns chunk build "
-            "details {success, out_dir, nodes, edges, files, processed_files, "
-            "remaining_files, artifacts, node_limit, html, chunked, partial, "
-            "pending_files} — poll graph_status until fresh=true. "
+            "processed_files (cumulative), remaining_files}; background=false always "
+            "processes one synchronous chunk (never blocked by the in-flight guard — "
+            "Bug 3 fix) and returns chunk details {success, out_dir, nodes, edges, "
+            "files, processed_files, remaining_files, artifacts, node_limit, html, "
+            "chunked, partial, pending_files} — poll graph_status until fresh=true. "
             "writes graphify_feedback memory obs when files changed; if a background "
-            "rebuild is already in flight this coalesces and returns "
-            "{rebuilding: true}; with background=true and remaining work it also "
-            "returns {background, background_started}"
+            "rebuild is already in flight (and force=false) this coalesces and returns "
+            "{rebuilding: true}; force=true bypasses that guard to start fresh. "
+            "With background=true and remaining work it also returns {background, "
+            "background_started}"
         ),
         "example": 'action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid", "graph_dir_ready"],
@@ -1467,7 +1480,16 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "desc": "Family slug — report on the merged family graph (member:: tagged nodes)",
             },
         },
-        "returns": "{exists, fresh, built_at, nodes, edges, changed_files}",
+        "returns": (
+            "{exists, fresh, built_at, nodes, edges, changed_files, removed_files, "
+            "total_files, processed_files (cumulative = total - remaining), "
+            "processed_total, processed_this_chunk (per-run), remaining_files, chunked, "
+            "scanned_files, excluded_files, supported_files, rebuilding, "
+            "rebuilding_started_at, rebuilding_last_progress_at, background_error}. "
+            "rebuilding reflects a live background worker; a stale persisted rebuilding "
+            "flag with no live worker is auto-cleared. background_error surfaces the "
+            "last worker failure (persisted across restarts)"
+        ),
         "example": 'action_call(action="graph_status", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid"],
     },

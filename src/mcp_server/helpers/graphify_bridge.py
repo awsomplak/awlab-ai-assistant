@@ -58,8 +58,31 @@ _BACKGROUND_THRESHOLD = 20  # changed files at/above which rebuild runs in backg
 # background); different projects use separate locks and build concurrently.
 _BUILD_LOCKS: dict[str, threading.RLock] = {}
 _BUILD_LOCKS_GUARD = threading.Lock()
+
+# ── Large-graph HTML viz (enhanced filter + drill-down layer) ──────────────
+# The injected client-side layer (path filter, min-degree slider, 2-hop focus,
+# community drill-down) makes graph.html usable on projects with thousands of
+# nodes. vis.js forceAtlas2 physics freezes the browser above this many visible
+# nodes, so the layer disables physics until the user narrows the view.
+_VIZ_PHYSICS_LIMIT = 2000
+# Per-community member cap embedded into the aggregated view's drill-down
+# payload (bounds the HTML size on very large graphs; the UI notes the overflow).
+_VIZ_DRILLDOWN_CAP = 1500
+# Marker used to make the injected layer idempotent across rebuilds.
+_VIZ_MARKER = "awlab-large-viz"
 _BACKGROUND_THREADS: dict[str, threading.Thread] = {}
 _BACKGROUND_ERRORS: dict[str, str] = {}
+# Last per-chunk progress timestamp (time.monotonic) per workspace — the stall
+# watchdog uses it to detect a worker that is alive but never finishes a chunk.
+_BACKGROUND_PROGRESS: dict[str, float] = {}
+
+# A background worker that has not finished a chunk within this window is treated
+# as stalled: its failure is surfaced via background_error and it no longer counts
+# as "in flight", so subsequent builds are not blocked forever by a zombie thread.
+_BACKGROUND_STALL_SECONDS = 600.0
+# Bounded wait on the per-project build lock — a genuinely stuck build can never
+# block a caller forever; it fails with a clear error instead.
+_BUILD_LOCK_TIMEOUT = 600.0
 
 
 def _build_lock(root: Path) -> threading.RLock:
@@ -67,6 +90,59 @@ def _build_lock(root: Path) -> threading.RLock:
     key = str(Path(root).resolve())
     with _BUILD_LOCKS_GUARD:
         return _BUILD_LOCKS.setdefault(key, threading.RLock())
+
+
+# Worker-lifecycle fields persisted into .build_state.json so a server restart
+# can detect (and auto-clear) a stale `rebuilding` flag that has no live worker.
+_REBUILD_STATE_KEYS = (
+    "rebuilding",
+    "rebuilding_started_at",
+    "rebuilding_last_progress_at",
+    "rebuilding_error",
+)
+
+
+def _manifest_update(out_dir: Path, **fields: Any) -> None:
+    """Merge metadata fields into .build_state.json without clobbering the rest.
+
+    Atomic (tmp file + os.replace) so a torn write can never corrupt the
+    manifest. Best-effort: no-ops when the manifest is missing/unreadable.
+    """
+    state_path = out_dir / ".build_state.json"
+    if not state_path.is_file():
+        return
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    state.update(fields)
+    tmp = state_path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, state_path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _bg_error(key: str, message: str) -> None:
+    """Record a background worker error for a workspace (thread-safe)."""
+    with _BUILD_LOCKS_GUARD:
+        _BACKGROUND_ERRORS[key] = message
+        # Persist so a restart can still surface why the worker died.
+        _manifest_update(_codegraph_dir(Path(key)), rebuilding_error=message)
+
+
+def _mark_progress(key: str) -> None:
+    """Stamp the latest per-chunk progress time for a workspace (thread-safe)."""
+    with _BUILD_LOCKS_GUARD:
+        _BACKGROUND_PROGRESS[key] = time.monotonic()
+        _manifest_update(
+            _codegraph_dir(Path(key)),
+            rebuilding_last_progress_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int | None = None) -> bool:
@@ -79,7 +155,9 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
 
     With ``chunk_size`` set, the worker runs Laravel-queue style: it keeps
     processing bounded chunks until ``remaining_files`` reaches 0, so a large
-    catch-up finishes smoothly in the background instead of one long spike.
+    catch-up finishes smoothly in the background instead of one long spike. A
+    stall watchdog surfaces a real ``background_error`` if the worker is alive
+    but never finishes a chunk, so a stuck build is never silently null.
     """
     key = str(Path(root).resolve())
     with _BUILD_LOCKS_GUARD:
@@ -87,6 +165,17 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
         if existing is not None and existing.is_alive():
             return False
         _BACKGROUND_ERRORS.pop(key, None)
+        _BACKGROUND_PROGRESS.pop(key, None)
+        # Persist the lifecycle marker so a restart can tell a build was running
+        # (and clear it once no live worker remains).
+        _started_at = datetime.now(timezone.utc).isoformat()
+        _manifest_update(
+            _codegraph_dir(Path(key)),
+            rebuilding=True,
+            rebuilding_started_at=_started_at,
+            rebuilding_last_progress_at=_started_at,
+            rebuilding_error=None,
+        )
 
         def _run() -> None:
             try:
@@ -97,46 +186,90 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     # manifest/advance bug can never spin the worker forever.
                     last_remaining = None
                     while True:
+                        _mark_progress(key)
                         res = build_graph(workspace_path, root, chunk_size=chunk_size)
+                        _mark_progress(key)
                         if not res.get("success"):
-                            with _BUILD_LOCKS_GUARD:
-                                _BACKGROUND_ERRORS[key] = str(res.get("error", "chunk build failed"))
+                            _bg_error(key, str(res.get("error", "chunk build failed")))
                             break
-                        if not res.get("remaining_files"):
+                        remaining = res.get("remaining_files")
+                        # 0 → complete; None → the build did not report a chunk
+                        # (not chunked / unknown) — stop rather than spin.
+                        if remaining == 0 or remaining is None:
                             break
-                        if res.get("remaining_files") == last_remaining:
-                            with _BUILD_LOCKS_GUARD:
-                                _BACKGROUND_ERRORS[key] = (
-                                    "chunk worker stopped because remaining_files did not decrease "
-                                    f"(still {res.get('remaining_files')})"
-                                )
+                        if remaining == last_remaining:
+                            _bg_error(
+                                key,
+                                f"chunk worker stopped because remaining_files did not decrease (still {remaining})",
+                            )
                             break
-                        last_remaining = res.get("remaining_files")
+                        last_remaining = remaining
                 else:
+                    _mark_progress(key)
                     res = build_graph(workspace_path, root)
+                    _mark_progress(key)
                     if not res.get("success"):
-                        with _BUILD_LOCKS_GUARD:
-                            _BACKGROUND_ERRORS[key] = str(res.get("error", "background build failed"))
+                        _bg_error(key, str(res.get("error", "background build failed")))
             except Exception as exc:  # noqa: BLE001 — background, never crash the server
-                with _BUILD_LOCKS_GUARD:
-                    _BACKGROUND_ERRORS[key] = f"background worker exception: {exc}"
+                _bg_error(key, f"background worker exception: {exc}")
             finally:
                 with _BUILD_LOCKS_GUARD:
                     _BACKGROUND_THREADS.pop(key, None)
+                    # Worker finished (success/error/stall) — clear the live
+                    # marker; keep rebuilding_error so status can report it.
+                    _manifest_update(
+                        _codegraph_dir(Path(key)),
+                        rebuilding=False,
+                        rebuilding_last_progress_at=None,
+                    )
 
         t = threading.Thread(target=_run, name=f"graph-rebuild-{key[-24:]}", daemon=True)
         _BACKGROUND_THREADS[key] = t
         t.start()
+
+        # Stall watchdog: a worker that is alive but never finishes a chunk must
+        # surface a real background_error (never silently null) and stop blocking
+        # the in-flight guard. Python cannot kill a stuck thread, but clearing
+        # the in-flight marker lets callers attempt recovery — they will wait on
+        # the bounded build lock and get a clear error if the zombie holds it.
+        def _watchdog() -> None:
+            while True:
+                time.sleep(5)
+                with _BUILD_LOCKS_GUARD:
+                    current = _BACKGROUND_THREADS.get(key)
+                    if current is not t or not t.is_alive():
+                        return  # worker finished or replaced
+                    last = _BACKGROUND_PROGRESS.get(key)
+                    stalled = last is None or (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
+                if stalled and key not in _BACKGROUND_ERRORS:
+                    _bg_error(
+                        key,
+                        "background worker stalled: no chunk completed within "
+                        f"{_BACKGROUND_STALL_SECONDS:.0f}s — the build lock may be stuck; "
+                        "restart the server if it never drains",
+                    )
+
+        threading.Thread(target=_watchdog, name=f"graph-watchdog-{key[-16:]}", daemon=True).start()
         return True
 
 
 def _rebuild_in_flight(workspace_path: str | Path, root: str | Path | None = None) -> bool:
-    """True if a background rebuild is currently running for this project."""
+    """True if a background rebuild is currently running AND making progress.
+
+    A worker that has not finished a chunk within the stall window is treated as
+    stuck → not "in flight", so subsequent builds are not blocked forever by a
+    zombie thread (they will wait on the bounded build lock instead).
+    """
     # The output root identifies the project; ``root`` may only scope the scan.
     key = str(_resolve_root(workspace_path))
     with _BUILD_LOCKS_GUARD:
         t = _BACKGROUND_THREADS.get(key)
-    return t is not None and t.is_alive()
+        if t is None or not t.is_alive():
+            return False
+        last = _BACKGROUND_PROGRESS.get(key)
+        if last is not None and (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS:
+            return False  # alive but stalled → not a healthy in-flight build
+        return True
 
 
 def _graph_freshness(
@@ -246,7 +379,9 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
             parent = "" if rel_dir == "." else rel_dir
             dirnames[:] = [d for d in dirnames if not exclusions.excludes_dir(parent, d)]
         for name in filenames:
-            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name):
+            # Config/ignore files are metadata, not graph source — they must not
+            # count toward scanned/supported files (or drift the freshness diff).
+            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name) or name in _EXCLUSION_FILENAMES:
                 continue
             path = Path(dirpath) / name
             if exclusions is not None and _gitignored(root, path, exclusions):
@@ -257,7 +392,38 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
                 manifest[rel] = f"{st.st_mtime_ns}:{st.st_size}"
             except OSError:
                 continue
+    if not manifest and exclusions is not None:
+        # BLANK-DETECTION GUARD: exclusion rules would empty the source set —
+        # fall back to _NOISE_DIRS-only so the freshness manifest always matches
+        # what the graph actually indexes (and a chunked build can never see an
+        # empty diff that forces the full-rebuild path). Mirrors the blank-
+        # detection guard on the ``files`` list in ``_build_graph_impl``.
+        return _source_manifest(root, None)
     return manifest
+
+
+# Pre-exclusion scanned-file count, memoized briefly so graph_status polling on
+# large repos doesn't walk the tree twice per call (exclusion visibility only).
+_SCANNED_COUNT_CACHE: dict[str, tuple[float, int]] = {}
+_SCANNED_TTL = 10.0
+
+
+def _scanned_count(root: Path) -> int:
+    """Number of source files under root BEFORE project exclusion rules apply.
+
+    Uses the _NOISE_DIRS-only manifest (same walk graph_status already relies on
+    for the supported set), memoized for ``_SCANNED_TTL`` seconds. Lets
+    ``graph_status`` report how much of the scanned corpus .gitignore /
+    .graphignore actually excluded (exclusion effectiveness).
+    """
+    key = str(Path(root).resolve())
+    now = time.monotonic()
+    cached = _SCANNED_COUNT_CACHE.get(key)
+    if cached is not None and now - cached[0] < _SCANNED_TTL:
+        return cached[1]
+    n = len(_source_manifest(root, None))
+    _SCANNED_COUNT_CACHE[key] = (now, n)
+    return n
 
 
 # ── Project .gitignore-aware exclusion (ADDITIVE to _NOISE_DIRS) ───────────
@@ -267,30 +433,47 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
 class _ProjectExclusions:
     """Project-derived exclusion rules (parsed from .gitignore + .graphignore).
 
-    Both files use gitignore syntax and are SUPPLEMENTS on top of the
-    ALWAYS-applied ``_NOISE_DIRS`` safety net — they can exclude MORE (project
-    junk: dist/, build/, coverage/, ...; graph-only exclusions via .graphignore)
-    but can NEVER re-include a ``_NOISE_DIRS`` path. Only positive patterns are
-    applied (``!`` negations are ignored — conservative), and a blank-detection
-    guard keeps exclusions from ever emptying the source set.
+    Both files use gitignore syntax and are parsed into ONE additive rule set —
+    a file/dir excluded by either is excluded from the graph. Patterns are
+    applied with the SAME glob semantics to files AND directories (a glob like
+    ``dist-*/`` prunes whole directories, not just matching filenames), so
+    `.gitignore` and `.graphignore` behave identically for files and dirs.
+
+    Supplements the ALWAYS-applied ``_NOISE_DIRS`` safety net — it can exclude
+    MORE (project junk: dist/, build/, coverage/, ...; graph-only exclusions via
+    .graphignore) but can NEVER re-include a ``_NOISE_DIRS`` path. Only positive
+    patterns are applied (``!`` negations are ignored — conservative), a bare
+    ``*``/``**`` (ignore-all, which needs ``!`` re-inclusions) is skipped, and a
+    blank-detection guard keeps exclusions from ever emptying the source set.
     """
 
-    dir_names: set[str] = field(default_factory=set)  # any-level directory names (O(1) prune)
-    dir_paths: set[str] = field(default_factory=set)  # anchored relative dir paths (fwd-slash)
-    name_globs: list[str] = field(default_factory=list)  # basename globs (e.g. *.log)
-    path_globs: list[str] = field(default_factory=list)  # relative-path globs
+    dir_names: set[str] = field(default_factory=set)  # exact basenames (file OR dir, any level)
+    dir_paths: set[str] = field(default_factory=set)  # exact relative paths (file OR dir → subtree)
+    name_globs: list[str] = field(default_factory=list)  # basename globs (files AND dirs, any level)
+    path_globs: list[str] = field(default_factory=list)  # relative-path globs (files AND dirs)
+    dir_name_globs: list[str] = field(default_factory=list)  # dir-only basename globs (e.g. dist-*/)
+    dir_path_globs: list[str] = field(default_factory=list)  # dir-only relative-path globs (e.g. build/*/)
 
     def excludes_dir(self, parent_rel: str, name: str) -> bool:
         """True when a directory (name under parent_rel) should be pruned."""
+        rel = f"{parent_rel}/{name}" if parent_rel else name
         if name in self.dir_names:
             return True
-        if parent_rel:
-            return f"{parent_rel}/{name}" in self.dir_paths
-        return name in self.dir_paths
+        if rel in self.dir_paths:
+            return True
+        if any(fnmatch.fnmatch(name, g) for g in self.name_globs):
+            return True
+        if any(fnmatch.fnmatch(rel, g) for g in self.path_globs):
+            return True
+        if any(fnmatch.fnmatch(name, g) for g in self.dir_name_globs):
+            return True
+        return any(fnmatch.fnmatch(rel, g) for g in self.dir_path_globs)
 
     def excludes_file(self, rel: str, name: str) -> bool:
         """True when a file (rel path + basename) should be excluded."""
         if name in self.dir_names:
+            return True
+        if rel in self.dir_paths:
             return True
         if any(fnmatch.fnmatch(name, g) for g in self.name_globs):
             return True
@@ -298,11 +481,25 @@ class _ProjectExclusions:
 
 
 def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> None:
-    """Parse one .gitignore into the exclusion set (base_rel = dir rel to scan root)."""
+    """Parse one exclusion file (.gitignore OR .graphignore) into the shared set.
+
+    ``base_rel`` = the file's directory relative to the scan root, so relative
+    path patterns are anchored correctly. Files and directories use the SAME
+    gitignore-style glob semantics (``*`` / ``?`` / ``[...]``; ``**`` crosses
+    directories). Directory-only patterns (trailing ``/``) prune directories;
+    plain patterns match a file OR a directory of that name/path.
+    """
     for raw in content.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("!"):
             continue  # skip blanks, comments, and negations (conservative)
+        # Bare '*'/'**' = "ignore everything in this directory". Without '!'
+        # re-inclusions we cannot honor it, and as a GLOBAL basename glob it
+        # would exclude every file (the eka-panel stall root cause). Skip it —
+        # the directories it guards are normally also excluded by more specific
+        # rules or _NOISE_DIRS.
+        if line in ("*", "**"):
+            continue
         dir_only = line.endswith("/")
         if dir_only:
             line = line[:-1].strip()
@@ -311,17 +508,36 @@ def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> Non
             line = line[1:].strip()
         if not line:
             continue
+        is_glob = any(ch in line for ch in "*?[")
         if anchored or "/" in line:
+            # Relative-path pattern (anchored at the file's dir).
             rel = f"{base_rel}/{line}" if base_rel else line
             rel = rel.strip("/")
             if dir_only:
-                ex.dir_paths.add(rel)
+                if is_glob:
+                    ex.dir_path_globs.append(rel)
+                else:
+                    ex.dir_paths.add(rel)
             else:
-                ex.path_globs.append(rel)
+                if is_glob:
+                    ex.path_globs.append(rel)
+                else:
+                    # Exact path → excludes that file OR dir (and, for a dir,
+                    # everything beneath it via dir pruning).
+                    ex.dir_paths.add(rel)
         else:
-            ex.dir_names.add(line)  # plain name → prunes a dir OR excludes a file with that name
-            if any(ch in line for ch in "*?["):
-                ex.name_globs.append(line)
+            # Basename pattern (any level).
+            if dir_only:
+                if is_glob:
+                    ex.dir_name_globs.append(line)
+                else:
+                    ex.dir_names.add(line)
+            else:
+                if is_glob:
+                    ex.name_globs.append(line)
+                else:
+                    # Exact name → excludes a file OR a dir with that name.
+                    ex.dir_names.add(line)
 
 
 _EXCLUSION_CACHE: dict[
@@ -784,6 +1000,512 @@ def _resolve_graph_root(
     return _resolve_root(workspace_path)
 
 
+# ── Large-graph HTML viz (enhanced filter + drill-down layer) ──────────────
+
+
+# Colour palette for the injected member-level views (mirrors graphify's
+# community colours closely enough for visual distinction).
+_VIZ_PALETTE = [
+    "#4E79A7",
+    "#F28E2B",
+    "#E15759",
+    "#76B7B2",
+    "#59A14F",
+    "#EDC948",
+    "#B07AA1",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC",
+    "#86BCB6",
+    "#D37295",
+]
+
+
+def _viz_js_safe(obj: Any) -> str:
+    """JSON-encode for embedding inside a <script> tag (no </script> breakout)."""
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _community_labels(graph, communities: dict[int, list[str]], top_k: int = 3, max_len: int = 48) -> dict[int, str]:
+    """Non-LLM heuristic community labels (for the HTML legend + drill-down).
+
+    Ranks each community's members by degree and joins the top labels (e.g.
+    ``"apiHandler, helper"``), falling back to ``"Community N"``. Mirrors
+    graphify's CLI label generation but stays AST-only (no LLM pass). Without
+    these, graphify's HTML legend renders empty (just "Select All").
+    """
+    degree = dict(graph.degree())
+    labels: dict[int, str] = {}
+    for cid, members in communities.items():
+        ranked = sorted(members, key=lambda m: degree.get(m, 0), reverse=True)
+        names: list[str] = []
+        seen: set[str] = set()
+        for mid in ranked:
+            data = graph.nodes.get(mid, {}) or {}
+            label = str(data.get("label") or mid).strip().strip("()")
+            if not label or label.lower() in seen:
+                continue
+            seen.add(label.lower())
+            names.append(label)
+            if len(names) >= top_k:
+                break
+        label = ", ".join(names)
+        if len(label) > max_len:
+            label = label[: max_len - 1] + "…"
+        labels[int(cid)] = label or f"Community {cid}"
+    return labels
+
+
+def _drilldown_data(
+    graph,
+    communities: dict[int, list[str]],
+    cap: int | None = None,
+    community_labels: dict[int, str] | None = None,
+) -> dict:
+    """Build community → member rows for the aggregated view's drill-down.
+
+    Returns ``{str(cid): {"label", "count", "members": [[id, label, source_file], ...]}}``
+    — the exact data the injected layer needs to expand a community node into
+    its member nodes. Bounded by ``cap`` per community to keep the embedded
+    payload sane on huge graphs.
+    """
+    cap = _VIZ_DRILLDOWN_CAP if cap is None else cap
+    labels = community_labels or {}
+    out: dict[str, Any] = {}
+    for cid, members in communities.items():
+        rows: list[list[str]] = []
+        for mid in members:
+            if len(rows) >= cap:
+                break
+            data = graph.nodes.get(mid, {}) or {}
+            rows.append(
+                [
+                    str(mid),
+                    str(data.get("label") or mid),
+                    str(data.get("source_file") or ""),
+                ]
+            )
+        out[str(cid)] = {
+            "label": labels.get(int(cid), f"Community {cid}"),
+            "count": len(members),
+            "members": rows,
+        }
+    return out
+
+
+def _full_member_view(
+    graph,
+    communities: dict[int, list[str]],
+    community_labels: dict[int, str] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Full node/edge data for the aggregated view's member-level exploration.
+
+    graphify's over-limit ``to_html`` embeds ONLY the community meta-graph in
+    ``graph.html`` — the member nodes are not present, so drill-down cannot
+    rebuild a member subgraph from the page alone. We embed the FULL member
+    node/edge list alongside the aggregated view (same shape as graphify's
+    RAW_NODES/RAW_EDGES) so the injected layer can swap views. Payload is the
+    size of graph.json — fine for a local file.
+    """
+    labels = community_labels or {}
+    node_community = {nid: cid for cid, members in communities.items() for nid in members}
+    degree = dict(graph.degree())
+    max_deg = max(degree.values(), default=1) or 1
+    nodes: list[dict[str, Any]] = []
+    for node_id, data in graph.nodes(data=True):
+        data = data or {}
+        cid = node_community.get(node_id, 0)
+        label = str(data.get("label") or node_id)
+        deg = degree.get(node_id, 1)
+        nodes.append(
+            {
+                "id": str(node_id),
+                "label": label,
+                "color": _VIZ_PALETTE[cid % len(_VIZ_PALETTE)],
+                "size": round(10 + 30 * (deg / max_deg), 1),
+                "font": {"size": 12 if deg >= max_deg * 0.15 else 0, "color": "#ffffff"},
+                "title": label,
+                "community": cid,
+                "community_name": labels.get(int(cid), f"Community {cid}"),
+                "source_file": str(data.get("source_file") or ""),
+                "file_type": str(data.get("file_type") or ""),
+                "degree": deg,
+            }
+        )
+    edges: list[dict[str, Any]] = []
+    for u, v, edata in graph.edges(data=True):
+        extracted = edata.get("confidence") == "EXTRACTED"
+        edges.append(
+            {
+                "from": str(u),
+                "to": str(v),
+                "title": str(edata.get("relation") or ""),
+                "dashes": not extracted,
+                "width": 2 if extracted else 1,
+                "color": {"opacity": 0.7 if extracted else 0.35},
+            }
+        )
+    return nodes, edges
+
+
+def _viz_injection_fragment(
+    drilldown: dict,
+    master_nodes: list[dict] | None = None,
+    master_edges: list[dict] | None = None,
+) -> str:
+    """Self-contained <style>+<script> that adds filtering + drill-down to a
+    graphify-generated graph.html.
+
+    Reuses the globals graphify's exporter leaves in page scope (RAW_NODES,
+    RAW_EDGES, nodesDS, edgesDS, network, LEGEND) — no forking of graphify.
+    Keeps the SAME DataSet instances (mutated via clear()/add()) so graphify's
+    own showInfo/focusNode/community-toggle handlers keep working.
+
+    ``master_nodes/master_edges`` (aggregated view only) carry the FULL member
+    node/edge data so the filter bar + drill-down can rebuild a real member
+    subgraph (graphify's over-limit HTML embeds only the community meta-graph).
+    When absent, the page's RAW_NODES/RAW_EDGES ARE the master dataset.
+    """
+    drill_json = _viz_js_safe(drilldown)
+    master_nodes_json = _viz_js_safe(master_nodes or [])
+    master_edges_json = _viz_js_safe(master_edges or [])
+    return f"""<!-- {_VIZ_MARKER}: enhanced filter + drill-down layer (self-contained) -->
+<style>
+  #viz-controls {{ padding: 8px 12px; border-bottom: 1px solid #2a2a4e; font-size: 12px; display: flex; flex-direction: column; gap: 8px; background: #14142a; }}
+  #viz-controls .vhead {{ display: flex; align-items: center; justify-content: space-between; }}
+  #viz-controls .vhead b {{ color: #aaa; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }}
+  #viz-controls .vbody {{ display: flex; flex-direction: column; gap: 8px; }}
+  #viz-controls.collapsed .vbody {{ display: none; }}
+  #viz-controls .vrow {{ display: flex; align-items: center; gap: 8px; }}
+  #viz-controls input[type=text] {{ width: 100%; background: #0f0f1a; border: 1px solid #3a3a5e; color: #e0e0e0; padding: 6px 8px; border-radius: 5px; font-size: 12px; outline: none; box-sizing: border-box; }}
+  #viz-controls input[type=text]:focus {{ border-color: #4E79A7; }}
+  #viz-controls input[type=range] {{ flex: 1; accent-color: #4E79A7; }}
+  #viz-controls label {{ color: #aaa; display: flex; align-items: center; gap: 5px; white-space: nowrap; }}
+  #viz-controls button {{ background: #2a2a4e; color: #e0e0e0; border: 1px solid #3a3a5e; border-radius: 5px; padding: 4px 10px; font-size: 12px; cursor: pointer; }}
+  #viz-controls button:hover {{ background: #3a3a5e; }}
+  #viz-controls .vstat {{ color: #888; font-size: 11px; }}
+  #viz-controls .vwarn {{ color: #d9a13b; font-size: 11px; line-height: 1.5; }}
+  #viz-drill {{ border-top: 1px solid #2a2a4e; max-height: 42%; overflow-y: auto; padding: 8px 12px; background: #14142a; display: flex; flex-direction: column; gap: 6px; }}
+  #viz-drill h4 {{ font-size: 12px; color: #aaa; margin: 0; text-transform: uppercase; letter-spacing: .05em; }}
+  #viz-drill input[type=text] {{ width: 100%; background: #0f0f1a; border: 1px solid #3a3a5e; color: #e0e0e0; padding: 5px 8px; border-radius: 5px; font-size: 12px; outline: none; box-sizing: border-box; }}
+  #viz-drill .drow {{ padding: 3px 6px; border-radius: 3px; cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+  #viz-drill .drow:hover {{ background: #2a2a4e; }}
+  #viz-drill .dpath {{ color: #666; font-size: 10px; margin-left: 6px; }}
+  /* Node Info box: graphify's CSS leaves #info-panel as `flex: 0 1 auto;
+     overflow: visible`, so in the fixed-height sidebar it gets squeezed and its
+     content spills over the Communities legend below. Fix: never shrink the
+     panel below its content (flex 0 0 auto) and cap it so the box scrolls
+     internally — long neighbor lists no longer overlap or push the legend,
+     which keeps the remaining sidebar height. */
+  #info-panel {{ flex: 0 0 auto; max-height: 240px; overflow-y: auto; }}
+  /* Draggable splitter between Node Info and Communities: drag to give either
+     pane more room; double-click resets to the automatic height. */
+  #viz-splitter {{ flex: 0 0 auto; height: 7px; cursor: row-resize; background: #1a1a2e; border-top: 1px solid #2a2a4e; border-bottom: 1px solid #2a2a4e; }}
+  #viz-splitter:hover, #viz-splitter.dragging {{ background: #3a3a5e; }}
+  body.viz-resizing {{ cursor: row-resize; user-select: none; }}
+</style>
+<script>
+(function () {{
+  if (typeof RAW_NODES === 'undefined' || typeof RAW_EDGES === 'undefined' || typeof network === 'undefined') return;
+  var DRILLDOWN = {drill_json};
+  var PHYSICS_LIMIT = {_VIZ_PHYSICS_LIMIT};
+  var FILTER_HOPS = 2;
+  var FOCUSED_ID = null;
+
+  // Master dataset = full member data (aggregated view) or the page's RAW
+  // (full view). RAW_NODES/RAW_EDGES always hold the INITIAL rendered view
+  // (meta-graph for aggregated), so Reset restores it.
+  var MASTER_NODES = {master_nodes_json};
+  var MASTER_EDGES = {master_edges_json};
+  var nodes = MASTER_NODES.length ? MASTER_NODES : RAW_NODES;
+  var edges = MASTER_EDGES.length ? MASTER_EDGES : RAW_EDGES;
+  var TOTAL_NODES = nodes.length;
+  var TOTAL_EDGES = edges.length;
+
+  function esc(s) {{ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }}
+
+  // Adjacency from the master dataset so focus mode uses the FULL graph (not
+  // the current, possibly filtered, view).
+  var ADJ = {{}};
+  edges.forEach(function (e) {{ var a = String(e.from), b = String(e.to); (ADJ[a] = ADJ[a] || []).push(b); (ADJ[b] = ADJ[b] || []).push(a); }});
+  function neighborsOf(id) {{ return ADJ[id] || []; }}
+
+  var wrap = document.getElementById('search-wrap');
+  if (!wrap) return;
+  var ctl = document.createElement('div');
+  ctl.id = 'viz-controls';
+  ctl.innerHTML =
+    '<div class="vhead"><b>Filters</b><button id="f-toggle" title="Show / hide the filter bar">−</button></div>' +
+    '<div class="vbody">' +
+      '<div class="vrow"><input id="f-path" type="text" placeholder="Filter by path (e.g. src/components)…" autocomplete="off"></div>' +
+      '<div class="vrow"><input id="f-deg" type="range" min="0" max="1" value="0"><label>min degree <b id="f-deg-v">0</b></label></div>' +
+      '<div class="vrow"><label><input id="f-focus" type="checkbox"> Focus 2-hop</label><span style="flex:1"></span><button id="f-stab" title="Run the layout on the visible nodes">Stabilize</button></div>' +
+      '<div class="vrow"><button id="f-apply" style="flex:1">Apply filters</button><button id="f-reset">Reset</button></div>' +
+      '<div class="vstat" id="f-stats"></div>' +
+      '<div class="vwarn" id="f-warn" style="display:none"></div>' +
+    '</div>';
+  wrap.after(ctl);
+
+  // Filter bar show/hide toggle — collapse it to free sidebar space.
+  document.getElementById('f-toggle').addEventListener('click', function () {{
+    ctl.classList.toggle('collapsed');
+    this.textContent = ctl.classList.contains('collapsed') ? '+' : '−';
+  }});
+
+  // Draggable splitter between Node Info and Communities.
+  var infoPanel = document.getElementById('info-panel');
+  var legendWrap = document.getElementById('legend-wrap');
+  if (infoPanel && legendWrap) {{
+    var splitter = document.createElement('div');
+    splitter.id = 'viz-splitter';
+    splitter.title = 'Drag to resize · double-click to reset';
+    infoPanel.after(splitter);
+    var dragging = false, startY = 0, startH = 0;
+    splitter.addEventListener('mousedown', function (e) {{
+      dragging = true; startY = e.clientY;
+      startH = infoPanel.getBoundingClientRect().height;
+      splitter.classList.add('dragging');
+      document.body.classList.add('viz-resizing');
+      if (e.preventDefault) e.preventDefault();
+    }});
+    window.addEventListener('mousemove', function (e) {{
+      if (!dragging) return;
+      var top = infoPanel.getBoundingClientRect().top;
+      var max = legendWrap.getBoundingClientRect().bottom - top - 60;
+      var h = Math.min(Math.max(startH + (e.clientY - startY), 60), Math.max(max, 60));
+      infoPanel.style.height = h + 'px';
+      infoPanel.style.maxHeight = 'none';
+    }});
+    window.addEventListener('mouseup', function () {{
+      if (!dragging) return;
+      dragging = false;
+      splitter.classList.remove('dragging');
+      document.body.classList.remove('viz-resizing');
+    }});
+    splitter.addEventListener('dblclick', function () {{
+      infoPanel.style.height = '';
+      infoPanel.style.maxHeight = '';
+    }});
+  }}
+
+  var maxDeg = 0;
+  nodes.forEach(function (n) {{ if ((n.degree || 0) > maxDeg) maxDeg = n.degree || 0; }});
+  document.getElementById('f-deg').max = Math.max(1, maxDeg);
+
+  function nodeObj(n) {{
+    return {{ id: n.id, label: n.label, color: n.color, size: n.size, font: n.font, title: n.title, _community: n.community, _community_name: n.community_name, _source_file: n.source_file, _file_type: n.file_type, _degree: n.degree }};
+  }}
+  function edgeObj(e, i) {{
+    return {{ id: i, from: e.from, to: e.to, label: '', title: e.title, dashes: e.dashes, width: e.width, color: e.color, arrows: {{ to: {{ enabled: true, scaleFactor: 0.5 }} }} }};
+  }}
+  function statsLine(vn, ve) {{
+    var nc = (typeof LEGEND !== 'undefined' && LEGEND) ? LEGEND.length : 0;
+    document.getElementById('f-stats').textContent = vn.length + ' / ' + TOTAL_NODES + ' nodes · ' + ve.length + ' edges · ' + nc + ' communities';
+  }}
+  function showWarn(msg) {{ var w = document.getElementById('f-warn'); if (msg) {{ w.textContent = msg; w.style.display = 'block'; }} else {{ w.style.display = 'none'; }} }}
+
+  function computeVisible() {{
+    var q = document.getElementById('f-path').value.trim().toLowerCase();
+    var minDeg = parseInt(document.getElementById('f-deg').value, 10) || 0;
+    var focusOn = document.getElementById('f-focus').checked;
+    var vis = {{}};
+    for (var i = 0; i < nodes.length; i++) {{
+      var n = nodes[i], id = String(n.id);
+      if ((n.degree || 0) < minDeg) continue;
+      if (q && (String(n.source_file || '').toLowerCase().indexOf(q) === -1)) continue;
+      vis[id] = true;
+    }}
+    if (focusOn && FOCUSED_ID) {{
+      var keep = {{}}; keep[FOCUSED_ID] = true;
+      var frontier = [FOCUSED_ID];
+      for (var h = 0; h < FILTER_HOPS; h++) {{
+        var next = [];
+        frontier.forEach(function (f) {{
+          neighborsOf(f).forEach(function (nb) {{ if (!keep[nb]) {{ keep[nb] = true; next.push(nb); }} }});
+        }});
+        frontier = next;
+      }}
+      var merged = {{}};
+      for (var k in vis) {{ if (keep[k]) merged[k] = true; }}
+      vis = merged;
+    }}
+    return vis;
+  }}
+
+  function setView(vn, ve) {{
+    nodesDS.clear(); edgesDS.clear();
+    nodesDS.add(vn.map(nodeObj));
+    edgesDS.add(ve.map(edgeObj));
+    network.setData({{ nodes: nodesDS, edges: edgesDS }});
+    if (vn.length > 0 && vn.length <= PHYSICS_LIMIT) {{
+      network.setOptions({{ physics: {{ enabled: true, solver: 'forceAtlas2Based', forceAtlas2Based: {{ gravitationalConstant: -60, centralGravity: 0.005, springLength: 120, springConstant: 0.08, damping: 0.4, avoidOverlap: 0.8 }}, stabilization: {{ iterations: 200, fit: true }} }} }});
+      network.stabilize(200, function () {{ network.setOptions({{ physics: {{ enabled: false }} }}); }});
+    }} else {{
+      network.setOptions({{ physics: {{ enabled: false }} }});
+    }}
+    statsLine(vn, ve);
+    showWarn(vn.length > PHYSICS_LIMIT ? 'Too many nodes for physics (' + vn.length + '). Narrow with filters, then Stabilize.' : '');
+  }}
+
+  function applyFilters() {{
+    var vis = computeVisible();
+    var vn = [], ve = [];
+    nodes.forEach(function (n) {{ if (vis[String(n.id)]) vn.push(n); }});
+    edges.forEach(function (e) {{ if (vis[String(e.from)] && vis[String(e.to)]) ve.push(e); }});
+    setView(vn, ve);
+  }}
+
+  function hideDrill() {{ var d = document.getElementById('viz-drill'); if (d) d.parentNode.removeChild(d); }}
+
+  function showDrill(cid) {{
+    hideDrill();
+    var d = DRILLDOWN[cid];
+    var panel = document.createElement('div');
+    panel.id = 'viz-drill';
+    var total = d.count, rows = d.members;
+    panel.innerHTML =
+      '<h4>' + esc(d.label) + ' · ' + total + ' members</h4>' +
+      '<div class="vrow"><button id="d-load" style="flex:1">Load members into graph</button><button id="d-close">Close</button></div>' +
+      (rows.length < total ? '<div class="vwarn">Showing first ' + rows.length + ' of ' + total + ' members — use the path filter to narrow.</div>' : '') +
+      '<input id="d-q" type="text" placeholder="Filter members…" autocomplete="off">' +
+      '<div id="d-list" style="margin-top:2px"></div>';
+    document.getElementById('sidebar').appendChild(panel);
+    function render(q) {{
+      q = (q || '').toLowerCase();
+      var items = rows.filter(function (r) {{ return !q || r[1].toLowerCase().indexOf(q) !== -1 || (r[2] || '').toLowerCase().indexOf(q) !== -1; }});
+      document.getElementById('d-list').innerHTML = items.slice(0, 200).map(function (r) {{
+        return '<div class="drow" data-nid="' + esc(r[0]) + '"><span>' + esc(r[1]) + '</span><span class="dpath">' + esc(r[2] || '') + '</span></div>';
+      }}).join('');
+    }}
+    render('');
+    document.getElementById('d-q').addEventListener('input', function () {{ render(this.value); }});
+    document.getElementById('d-close').addEventListener('click', hideDrill);
+    document.getElementById('d-list').addEventListener('click', function (e) {{
+      var el = e.target.closest('.drow'); if (!el) return;
+      var nid = el.dataset.nid;
+      if (nodesDS.get(nid)) {{ network.focus(nid, {{ scale: 1.5, animation: true }}); network.selectNodes([nid]); }}
+    }});
+    document.getElementById('d-load').addEventListener('click', function () {{
+      var keep = {{}}; rows.forEach(function (r) {{ keep[String(r[0])] = true; }});
+      var vn = nodes.filter(function (n) {{ return keep[String(n.id)]; }});
+      var ve = edges.filter(function (e) {{ return keep[String(e.from)] && keep[String(e.to)]; }});
+      setView(vn, ve);
+      hideDrill();
+      showWarn('Community loaded: ' + vn.length + ' nodes. Reset to return to the overview.');
+    }});
+  }}
+
+  function bindEvents() {{
+    document.getElementById('f-apply').addEventListener('click', applyFilters);
+    document.getElementById('f-reset').addEventListener('click', function () {{
+      document.getElementById('f-path').value = '';
+      document.getElementById('f-deg').value = '0';
+      document.getElementById('f-deg-v').textContent = '0';
+      document.getElementById('f-focus').checked = false;
+      FOCUSED_ID = null;
+      hideDrill();
+      // Restore the initial rendered view (meta-graph for aggregated, full
+      // node view for full renders).
+      setView(RAW_NODES, RAW_EDGES);
+    }});
+    document.getElementById('f-deg').addEventListener('input', function () {{ document.getElementById('f-deg-v').textContent = this.value; }});
+    document.getElementById('f-path').addEventListener('keydown', function (e) {{ if (e.key === 'Enter') applyFilters(); }});
+    document.getElementById('f-stab').addEventListener('click', function () {{
+      var cur = nodesDS.length;
+      if (cur === 0 || cur > PHYSICS_LIMIT) {{ showWarn('Cannot stabilize ' + cur + ' nodes — narrow the view first.'); return; }}
+      network.setOptions({{ physics: {{ enabled: true, stabilization: {{ iterations: 200, fit: true }} }} }});
+      network.stabilize(200, function () {{ network.setOptions({{ physics: {{ enabled: false }} }}); }});
+      showWarn('');
+    }});
+    network.on('click', function (params) {{
+      if (params.nodes && params.nodes.length) {{ FOCUSED_ID = String(params.nodes[0]); if (document.getElementById('f-focus').checked) applyFilters(); }}
+    }});
+    network.on('selectNode', function (params) {{ if (params.nodes && params.nodes.length) FOCUSED_ID = String(params.nodes[0]); }});
+    if (Object.keys(DRILLDOWN).length) {{
+      network.on('click', function (params) {{
+        if (params.nodes && params.nodes.length) {{ var id = String(params.nodes[0]); if (DRILLDOWN[id]) showDrill(id); }}
+      }});
+    }}
+  }}
+
+  statsLine(RAW_NODES, RAW_EDGES);
+  if (RAW_NODES.length > PHYSICS_LIMIT) {{
+    // Halt the initial forceAtlas2 stabilization before it freezes the browser.
+    if (network.stopSimulation) network.stopSimulation();
+    network.setOptions({{ physics: {{ enabled: false }} }});
+    showWarn('Large graph (' + RAW_NODES.length + ' nodes): physics disabled. Filter by path / degree / focus, then Stabilize.');
+  }}
+  bindEvents();
+}})();
+</script>"""
+
+
+def _inject_large_viz(html_path: Path, drilldown: dict, master: tuple | None = None) -> None:
+    """Append the enhanced filter/drill-down layer to a generated graph.html.
+
+    Idempotent (guarded by the ``_VIZ_MARKER`` comment). Self-contained — the
+    injected fragment reuses graphify's page-scope globals, so no forking of
+    graphify is required and the structural graph.json stays authoritative.
+    ``master`` = ``(nodes, edges)`` full member data to embed alongside an
+    aggregated view (so drill-down/filter can rebuild a real member subgraph).
+    """
+    if not html_path.is_file():
+        return
+    text = html_path.read_text(encoding="utf-8")
+    if f"<!-- {_VIZ_MARKER}" in text:
+        return
+    master_nodes = master[0] if master else None
+    master_edges = master[1] if master else None
+    frag = _viz_injection_fragment(drilldown, master_nodes=master_nodes, master_edges=master_edges)
+    if "</body>" in text:
+        text = text.replace("</body>", frag + "\n</body>", 1)
+    else:
+        text += frag
+    html_path.write_text(text, encoding="utf-8")
+
+
+def _html_export(graph, communities: dict[int, list[str]], output_path: Path, node_limit: int) -> str:
+    """graphify's ``to_html`` + our large-viz enhancement layer.
+
+    Returns the html status string the build callers report: ``"full"``,
+    ``"aggregated"``, or ``"skipped (...)"``. The enhanced filter layer is
+    injected into every rendered HTML. For the over-limit aggregated view the
+    full member node/edge data is embedded alongside the community meta-graph
+    so drill-down can expand a community into its member subgraph.
+
+    Heuristic (non-LLM) community labels are passed to ``to_html`` so the
+    Communities legend actually lists per-community toggles instead of only
+    "Select All".
+    """
+    g = _graphify_imports()
+    if g is None:
+        return "skipped (graphifyy not installed)"
+    community_labels = _community_labels(graph, communities)
+    try:
+        g["to_html"](
+            graph,
+            communities,
+            str(output_path),
+            node_limit=node_limit,
+            community_labels=community_labels,
+        )
+    except ValueError as e:  # non-fatal: structural graph.json + manifest still land
+        return f"skipped ({e})"
+    aggregated = graph.number_of_nodes() > node_limit
+    if output_path.is_file():
+        master: tuple | None = None
+        if aggregated:
+            drilldown = _drilldown_data(graph, communities, community_labels=community_labels)
+            master = _full_member_view(graph, communities, community_labels=community_labels)
+        else:
+            drilldown = {}
+        try:
+            _inject_large_viz(output_path, drilldown, master=master)
+        except Exception:  # pragma: no cover - non-fatal (base viz already written)
+            pass
+    return "aggregated" if aggregated else "full"
+
+
 # ── Family graph (graphify native global-graph mechanism) ─────────────────
 
 
@@ -901,19 +1623,16 @@ def _build_family_graph(
     html = None
     if render_html:
         fam_html = fam_out / "family.html"
-        try:
-            g["to_html"](combined, communities, str(fam_html), node_limit=node_limit)
+        # Same enhanced filter/drill-down layer as per-project graph.html.
+        html = _html_export(combined, communities, fam_html, node_limit)
+        if html in ("full", "aggregated"):
             artifacts["family.html"] = str(fam_html)
-            html = "full" if combined.number_of_nodes() <= node_limit else "aggregated"
             # Mirror the merged visualization into every member location (project
             # .ai/codegraph, or the sandbox member dir) so opening family.html
             # from any member shows the SAME combined graph.
             for tag, member_out in member_out_dirs.items():
                 member_out.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(fam_html, member_out / "family.html")
-        except ValueError as e:
-            # Non-fatal: structural graph.json + manifest still land.
-            html = f"skipped ({e})"
     built_at = datetime.now(timezone.utc).isoformat()
     (fam_out / ".build_state.json").write_text(
         json.dumps(
@@ -1208,16 +1927,32 @@ def build_graph(
     ``.ai/codegraph`` regardless of ``root`` (which only scopes the scan).
 
     ``node_limit`` bounds the interactive ``graph.html`` export (default from
-    ``settings.graph_viz_limit`` = 20000; ``0`` skips HTML). ``max_files`` caps
+    ``settings.graph_viz_limit`` = 20000; ``0`` skips HTML). Every rendered
+    ``graph.html`` carries an enhanced client-side layer for large graphs:
+    filter by file path / min degree / 2-hop focus, and a community drill-down
+    when the over-limit aggregated view is produced. ``max_files`` caps
     the corpus of the FIRST build so the initial pass on a large project is
     light. ``chunk_size`` (queue-chunk semantics, default 200) bounds EVERY run
     — each build processes at most that many files and returns ``remaining_files``
     for the next call or background worker to continue.
+
+    The per-project lock wait is bounded (``_BUILD_LOCK_TIMEOUT``): a genuinely
+    stuck build can never block a caller forever — it fails with a clear error.
     """
-    with _build_lock(_resolve_root(workspace_path)):
+    lock = _build_lock(_resolve_root(workspace_path))
+    if not lock.acquire(timeout=_BUILD_LOCK_TIMEOUT):
+        return fail_obj(
+            error=(
+                "another graph build is stuck holding the build lock for this project "
+                f"(>{_BUILD_LOCK_TIMEOUT:.0f}s) — restart the server or wait for it to drain"
+            )
+        )
+    try:
         return _build_graph_impl(
             workspace_path, root, include_html, directed, project_id, out_dir, node_limit, max_files, chunk_size
         )
+    finally:
+        lock.release()
 
 
 def graph_build_action(
@@ -1231,6 +1966,7 @@ def graph_build_action(
     max_files: int | None = None,
     chunk_size: int | None = None,
     background: bool = True,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
 
@@ -1238,12 +1974,18 @@ def graph_build_action(
     it starts the worker immediately and returns without processing a chunk.
     ``graph_status`` reports progress. With ``background=False``, one synchronous
     chunk is processed for callers that explicitly need blocking behavior.
-    ``family`` builds the merged family graph instead.
+    ``force=True`` bypasses the in-flight guard so a fresh build can be started
+    even when a stale ``rebuilding`` flag/worker is present. ``family`` builds
+    the merged family graph instead.
     """
     if family:
         return _build_family_graph(family, include_html=include_html, directed=directed, node_limit=node_limit)
     out_root = _resolve_root(workspace_path)
-    if _rebuild_in_flight(workspace_path, root):
+    # Only the fire-and-forget background trigger coalesces with an in-flight
+    # worker. A synchronous build (background=False) always proceeds (Bug 3): it
+    # serializes on the bounded per-project lock and returns chunk details. The
+    # stale guard is also bypassed by force=True (Phase 4 escape hatch).
+    if background and not force and _rebuild_in_flight(workspace_path, root):
         return ok_obj(
             success=True,
             rebuilding=True,
@@ -1521,16 +2263,12 @@ def _build_graph_impl(
         # makes chunked builds appear stuck on big projects.
         if render_html and (not chunked or remaining_files == 0):
             html_path = out_dir / "graph.html"
-            try:
-                # Explicit node_limit → over-limit graphs render the aggregated
-                # community meta-graph view (graceful) instead of raising.
-                g["to_html"](graph, communities, str(html_path), node_limit=node_limit)
+            # Explicit node_limit → over-limit graphs render the aggregated
+            # community meta-graph view (graceful) instead of raising; the
+            # enhanced filter/drill-down layer is injected into either view.
+            html = _html_export(graph, communities, html_path, node_limit)
+            if html in ("full", "aggregated"):
                 artifacts["graph.html"] = str(html_path)
-                html = "full" if graph.number_of_nodes() <= node_limit else "aggregated"
-            except ValueError as e:
-                # Non-fatal: the structural graph.json + manifest still land;
-                # only the optional interactive viz is skipped.
-                html = f"skipped ({e})"
 
         # Chunked builds advance the manifest ONLY for the files processed this
         # run: pending supported files keep their previous signature (so they
@@ -1561,6 +2299,11 @@ def _build_graph_impl(
         }
         if chunked:
             manifest["chunked"] = True
+        # Carry the worker-lifecycle flags forward so a chunk write can never
+        # clobber an in-flight rebuilding marker (started/last-progress/error).
+        for k in _REBUILD_STATE_KEYS:
+            if prev_manifest and k in prev_manifest:
+                manifest[k] = prev_manifest[k]
         (out_dir / ".build_state.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         _ensure_readme(out_dir)
 
@@ -1642,17 +2385,44 @@ def graph_status(
     pending_build = bool(state.get("remaining_files", 0) > 0)
     fresh = not changed and not removed and not pending_build
 
+    # Worker lifecycle: a live (progressing) worker is "rebuilding". A persisted
+    # `rebuilding: true` with NO live worker is stale (worker died / server
+    # restarted) — auto-clear it so status never reports a phantom rebuild.
+    live = _rebuild_in_flight(workspace_path, root)
+    persisted_rebuilding = bool(state.get("rebuilding"))
+    if persisted_rebuilding and not live:
+        _manifest_update(out_dir, rebuilding=False)
+        persisted_rebuilding = False
+
+    total = max(len(cur), int(state.get("total_files", 0) or 0))
+    remaining = int(state.get("remaining_files", 0) or 0)
+    processed_total = max(0, total - remaining)
+
+    # Exclusion visibility: how much of the scanned corpus the project rules
+    # (.gitignore + .graphignore + _NOISE_DIRS) actually exclude from the graph.
+    supported_files = len(cur)
+    scanned_files = _scanned_count(scan_root)
+    excluded_files = max(0, scanned_files - supported_files)
+
     return ok_obj(
         exists=True,
         fresh=fresh,
         built_at=state.get("built_at"),
         nodes=state.get("nodes"),
         edges=state.get("edges"),
-        total_files=max(len(cur), int(state.get("total_files", 0) or 0)),
-        processed_files=state.get("processed_files"),
-        remaining_files=state.get("remaining_files", 0),
+        total_files=total,
+        processed_files=processed_total,  # cumulative (total - remaining)
+        processed_total=processed_total,
+        processed_this_chunk=state.get("processed_files"),
+        remaining_files=remaining,
         chunked=bool(state.get("chunked")),
-        background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))),
+        rebuilding=bool(live or persisted_rebuilding),
+        rebuilding_started_at=state.get("rebuilding_started_at"),
+        rebuilding_last_progress_at=state.get("rebuilding_last_progress_at"),
+        scanned_files=scanned_files,
+        excluded_files=excluded_files,
+        supported_files=supported_files,
+        background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))) or state.get("rebuilding_error"),
         changed_files=changed[:20],
         removed_files=removed[:10],
     )
