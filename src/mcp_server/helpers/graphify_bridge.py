@@ -72,6 +72,17 @@ _VIZ_DRILLDOWN_CAP = 1500
 _VIZ_MARKER = "awlab-large-viz"
 _BACKGROUND_THREADS: dict[str, threading.Thread] = {}
 _BACKGROUND_ERRORS: dict[str, str] = {}
+# Last per-chunk progress timestamp (time.monotonic) per workspace — the stall
+# watchdog uses it to detect a worker that is alive but never finishes a chunk.
+_BACKGROUND_PROGRESS: dict[str, float] = {}
+
+# A background worker that has not finished a chunk within this window is treated
+# as stalled: its failure is surfaced via background_error and it no longer counts
+# as "in flight", so subsequent builds are not blocked forever by a zombie thread.
+_BACKGROUND_STALL_SECONDS = 600.0
+# Bounded wait on the per-project build lock — a genuinely stuck build can never
+# block a caller forever; it fails with a clear error instead.
+_BUILD_LOCK_TIMEOUT = 600.0
 
 
 def _build_lock(root: Path) -> threading.RLock:
@@ -79,6 +90,59 @@ def _build_lock(root: Path) -> threading.RLock:
     key = str(Path(root).resolve())
     with _BUILD_LOCKS_GUARD:
         return _BUILD_LOCKS.setdefault(key, threading.RLock())
+
+
+# Worker-lifecycle fields persisted into .build_state.json so a server restart
+# can detect (and auto-clear) a stale `rebuilding` flag that has no live worker.
+_REBUILD_STATE_KEYS = (
+    "rebuilding",
+    "rebuilding_started_at",
+    "rebuilding_last_progress_at",
+    "rebuilding_error",
+)
+
+
+def _manifest_update(out_dir: Path, **fields: Any) -> None:
+    """Merge metadata fields into .build_state.json without clobbering the rest.
+
+    Atomic (tmp file + os.replace) so a torn write can never corrupt the
+    manifest. Best-effort: no-ops when the manifest is missing/unreadable.
+    """
+    state_path = out_dir / ".build_state.json"
+    if not state_path.is_file():
+        return
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    state.update(fields)
+    tmp = state_path.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(tmp, state_path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _bg_error(key: str, message: str) -> None:
+    """Record a background worker error for a workspace (thread-safe)."""
+    with _BUILD_LOCKS_GUARD:
+        _BACKGROUND_ERRORS[key] = message
+        # Persist so a restart can still surface why the worker died.
+        _manifest_update(_codegraph_dir(Path(key)), rebuilding_error=message)
+
+
+def _mark_progress(key: str) -> None:
+    """Stamp the latest per-chunk progress time for a workspace (thread-safe)."""
+    with _BUILD_LOCKS_GUARD:
+        _BACKGROUND_PROGRESS[key] = time.monotonic()
+        _manifest_update(
+            _codegraph_dir(Path(key)),
+            rebuilding_last_progress_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int | None = None) -> bool:
@@ -91,7 +155,9 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
 
     With ``chunk_size`` set, the worker runs Laravel-queue style: it keeps
     processing bounded chunks until ``remaining_files`` reaches 0, so a large
-    catch-up finishes smoothly in the background instead of one long spike.
+    catch-up finishes smoothly in the background instead of one long spike. A
+    stall watchdog surfaces a real ``background_error`` if the worker is alive
+    but never finishes a chunk, so a stuck build is never silently null.
     """
     key = str(Path(root).resolve())
     with _BUILD_LOCKS_GUARD:
@@ -99,6 +165,17 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
         if existing is not None and existing.is_alive():
             return False
         _BACKGROUND_ERRORS.pop(key, None)
+        _BACKGROUND_PROGRESS.pop(key, None)
+        # Persist the lifecycle marker so a restart can tell a build was running
+        # (and clear it once no live worker remains).
+        _started_at = datetime.now(timezone.utc).isoformat()
+        _manifest_update(
+            _codegraph_dir(Path(key)),
+            rebuilding=True,
+            rebuilding_started_at=_started_at,
+            rebuilding_last_progress_at=_started_at,
+            rebuilding_error=None,
+        )
 
         def _run() -> None:
             try:
@@ -109,46 +186,90 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     # manifest/advance bug can never spin the worker forever.
                     last_remaining = None
                     while True:
+                        _mark_progress(key)
                         res = build_graph(workspace_path, root, chunk_size=chunk_size)
+                        _mark_progress(key)
                         if not res.get("success"):
-                            with _BUILD_LOCKS_GUARD:
-                                _BACKGROUND_ERRORS[key] = str(res.get("error", "chunk build failed"))
+                            _bg_error(key, str(res.get("error", "chunk build failed")))
                             break
-                        if not res.get("remaining_files"):
+                        remaining = res.get("remaining_files")
+                        # 0 → complete; None → the build did not report a chunk
+                        # (not chunked / unknown) — stop rather than spin.
+                        if remaining == 0 or remaining is None:
                             break
-                        if res.get("remaining_files") == last_remaining:
-                            with _BUILD_LOCKS_GUARD:
-                                _BACKGROUND_ERRORS[key] = (
-                                    "chunk worker stopped because remaining_files did not decrease "
-                                    f"(still {res.get('remaining_files')})"
-                                )
+                        if remaining == last_remaining:
+                            _bg_error(
+                                key,
+                                f"chunk worker stopped because remaining_files did not decrease (still {remaining})",
+                            )
                             break
-                        last_remaining = res.get("remaining_files")
+                        last_remaining = remaining
                 else:
+                    _mark_progress(key)
                     res = build_graph(workspace_path, root)
+                    _mark_progress(key)
                     if not res.get("success"):
-                        with _BUILD_LOCKS_GUARD:
-                            _BACKGROUND_ERRORS[key] = str(res.get("error", "background build failed"))
+                        _bg_error(key, str(res.get("error", "background build failed")))
             except Exception as exc:  # noqa: BLE001 — background, never crash the server
-                with _BUILD_LOCKS_GUARD:
-                    _BACKGROUND_ERRORS[key] = f"background worker exception: {exc}"
+                _bg_error(key, f"background worker exception: {exc}")
             finally:
                 with _BUILD_LOCKS_GUARD:
                     _BACKGROUND_THREADS.pop(key, None)
+                    # Worker finished (success/error/stall) — clear the live
+                    # marker; keep rebuilding_error so status can report it.
+                    _manifest_update(
+                        _codegraph_dir(Path(key)),
+                        rebuilding=False,
+                        rebuilding_last_progress_at=None,
+                    )
 
         t = threading.Thread(target=_run, name=f"graph-rebuild-{key[-24:]}", daemon=True)
         _BACKGROUND_THREADS[key] = t
         t.start()
+
+        # Stall watchdog: a worker that is alive but never finishes a chunk must
+        # surface a real background_error (never silently null) and stop blocking
+        # the in-flight guard. Python cannot kill a stuck thread, but clearing
+        # the in-flight marker lets callers attempt recovery — they will wait on
+        # the bounded build lock and get a clear error if the zombie holds it.
+        def _watchdog() -> None:
+            while True:
+                time.sleep(5)
+                with _BUILD_LOCKS_GUARD:
+                    current = _BACKGROUND_THREADS.get(key)
+                    if current is not t or not t.is_alive():
+                        return  # worker finished or replaced
+                    last = _BACKGROUND_PROGRESS.get(key)
+                    stalled = last is None or (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
+                if stalled and key not in _BACKGROUND_ERRORS:
+                    _bg_error(
+                        key,
+                        "background worker stalled: no chunk completed within "
+                        f"{_BACKGROUND_STALL_SECONDS:.0f}s — the build lock may be stuck; "
+                        "restart the server if it never drains",
+                    )
+
+        threading.Thread(target=_watchdog, name=f"graph-watchdog-{key[-16:]}", daemon=True).start()
         return True
 
 
 def _rebuild_in_flight(workspace_path: str | Path, root: str | Path | None = None) -> bool:
-    """True if a background rebuild is currently running for this project."""
+    """True if a background rebuild is currently running AND making progress.
+
+    A worker that has not finished a chunk within the stall window is treated as
+    stuck → not "in flight", so subsequent builds are not blocked forever by a
+    zombie thread (they will wait on the bounded build lock instead).
+    """
     # The output root identifies the project; ``root`` may only scope the scan.
     key = str(_resolve_root(workspace_path))
     with _BUILD_LOCKS_GUARD:
         t = _BACKGROUND_THREADS.get(key)
-    return t is not None and t.is_alive()
+        if t is None or not t.is_alive():
+            return False
+        last = _BACKGROUND_PROGRESS.get(key)
+        if last is not None and (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS:
+            return False  # alive but stalled → not a healthy in-flight build
+        return True
 
 
 def _graph_freshness(
@@ -258,7 +379,9 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
             parent = "" if rel_dir == "." else rel_dir
             dirnames[:] = [d for d in dirnames if not exclusions.excludes_dir(parent, d)]
         for name in filenames:
-            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name):
+            # Config/ignore files are metadata, not graph source — they must not
+            # count toward scanned/supported files (or drift the freshness diff).
+            if name.endswith((".pyc", ".pyo")) or _is_lock_file(name) or name in _EXCLUSION_FILENAMES:
                 continue
             path = Path(dirpath) / name
             if exclusions is not None and _gitignored(root, path, exclusions):
@@ -269,7 +392,38 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
                 manifest[rel] = f"{st.st_mtime_ns}:{st.st_size}"
             except OSError:
                 continue
+    if not manifest and exclusions is not None:
+        # BLANK-DETECTION GUARD: exclusion rules would empty the source set —
+        # fall back to _NOISE_DIRS-only so the freshness manifest always matches
+        # what the graph actually indexes (and a chunked build can never see an
+        # empty diff that forces the full-rebuild path). Mirrors the blank-
+        # detection guard on the ``files`` list in ``_build_graph_impl``.
+        return _source_manifest(root, None)
     return manifest
+
+
+# Pre-exclusion scanned-file count, memoized briefly so graph_status polling on
+# large repos doesn't walk the tree twice per call (exclusion visibility only).
+_SCANNED_COUNT_CACHE: dict[str, tuple[float, int]] = {}
+_SCANNED_TTL = 10.0
+
+
+def _scanned_count(root: Path) -> int:
+    """Number of source files under root BEFORE project exclusion rules apply.
+
+    Uses the _NOISE_DIRS-only manifest (same walk graph_status already relies on
+    for the supported set), memoized for ``_SCANNED_TTL`` seconds. Lets
+    ``graph_status`` report how much of the scanned corpus .gitignore /
+    .graphignore actually excluded (exclusion effectiveness).
+    """
+    key = str(Path(root).resolve())
+    now = time.monotonic()
+    cached = _SCANNED_COUNT_CACHE.get(key)
+    if cached is not None and now - cached[0] < _SCANNED_TTL:
+        return cached[1]
+    n = len(_source_manifest(root, None))
+    _SCANNED_COUNT_CACHE[key] = (now, n)
+    return n
 
 
 # ── Project .gitignore-aware exclusion (ADDITIVE to _NOISE_DIRS) ───────────
@@ -279,30 +433,47 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
 class _ProjectExclusions:
     """Project-derived exclusion rules (parsed from .gitignore + .graphignore).
 
-    Both files use gitignore syntax and are SUPPLEMENTS on top of the
-    ALWAYS-applied ``_NOISE_DIRS`` safety net — they can exclude MORE (project
-    junk: dist/, build/, coverage/, ...; graph-only exclusions via .graphignore)
-    but can NEVER re-include a ``_NOISE_DIRS`` path. Only positive patterns are
-    applied (``!`` negations are ignored — conservative), and a blank-detection
-    guard keeps exclusions from ever emptying the source set.
+    Both files use gitignore syntax and are parsed into ONE additive rule set —
+    a file/dir excluded by either is excluded from the graph. Patterns are
+    applied with the SAME glob semantics to files AND directories (a glob like
+    ``dist-*/`` prunes whole directories, not just matching filenames), so
+    `.gitignore` and `.graphignore` behave identically for files and dirs.
+
+    Supplements the ALWAYS-applied ``_NOISE_DIRS`` safety net — it can exclude
+    MORE (project junk: dist/, build/, coverage/, ...; graph-only exclusions via
+    .graphignore) but can NEVER re-include a ``_NOISE_DIRS`` path. Only positive
+    patterns are applied (``!`` negations are ignored — conservative), a bare
+    ``*``/``**`` (ignore-all, which needs ``!`` re-inclusions) is skipped, and a
+    blank-detection guard keeps exclusions from ever emptying the source set.
     """
 
-    dir_names: set[str] = field(default_factory=set)  # any-level directory names (O(1) prune)
-    dir_paths: set[str] = field(default_factory=set)  # anchored relative dir paths (fwd-slash)
-    name_globs: list[str] = field(default_factory=list)  # basename globs (e.g. *.log)
-    path_globs: list[str] = field(default_factory=list)  # relative-path globs
+    dir_names: set[str] = field(default_factory=set)  # exact basenames (file OR dir, any level)
+    dir_paths: set[str] = field(default_factory=set)  # exact relative paths (file OR dir → subtree)
+    name_globs: list[str] = field(default_factory=list)  # basename globs (files AND dirs, any level)
+    path_globs: list[str] = field(default_factory=list)  # relative-path globs (files AND dirs)
+    dir_name_globs: list[str] = field(default_factory=list)  # dir-only basename globs (e.g. dist-*/)
+    dir_path_globs: list[str] = field(default_factory=list)  # dir-only relative-path globs (e.g. build/*/)
 
     def excludes_dir(self, parent_rel: str, name: str) -> bool:
         """True when a directory (name under parent_rel) should be pruned."""
+        rel = f"{parent_rel}/{name}" if parent_rel else name
         if name in self.dir_names:
             return True
-        if parent_rel:
-            return f"{parent_rel}/{name}" in self.dir_paths
-        return name in self.dir_paths
+        if rel in self.dir_paths:
+            return True
+        if any(fnmatch.fnmatch(name, g) for g in self.name_globs):
+            return True
+        if any(fnmatch.fnmatch(rel, g) for g in self.path_globs):
+            return True
+        if any(fnmatch.fnmatch(name, g) for g in self.dir_name_globs):
+            return True
+        return any(fnmatch.fnmatch(rel, g) for g in self.dir_path_globs)
 
     def excludes_file(self, rel: str, name: str) -> bool:
         """True when a file (rel path + basename) should be excluded."""
         if name in self.dir_names:
+            return True
+        if rel in self.dir_paths:
             return True
         if any(fnmatch.fnmatch(name, g) for g in self.name_globs):
             return True
@@ -310,11 +481,25 @@ class _ProjectExclusions:
 
 
 def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> None:
-    """Parse one .gitignore into the exclusion set (base_rel = dir rel to scan root)."""
+    """Parse one exclusion file (.gitignore OR .graphignore) into the shared set.
+
+    ``base_rel`` = the file's directory relative to the scan root, so relative
+    path patterns are anchored correctly. Files and directories use the SAME
+    gitignore-style glob semantics (``*`` / ``?`` / ``[...]``; ``**`` crosses
+    directories). Directory-only patterns (trailing ``/``) prune directories;
+    plain patterns match a file OR a directory of that name/path.
+    """
     for raw in content.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("!"):
             continue  # skip blanks, comments, and negations (conservative)
+        # Bare '*'/'**' = "ignore everything in this directory". Without '!'
+        # re-inclusions we cannot honor it, and as a GLOBAL basename glob it
+        # would exclude every file (the eka-panel stall root cause). Skip it —
+        # the directories it guards are normally also excluded by more specific
+        # rules or _NOISE_DIRS.
+        if line in ("*", "**"):
+            continue
         dir_only = line.endswith("/")
         if dir_only:
             line = line[:-1].strip()
@@ -323,17 +508,36 @@ def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> Non
             line = line[1:].strip()
         if not line:
             continue
+        is_glob = any(ch in line for ch in "*?[")
         if anchored or "/" in line:
+            # Relative-path pattern (anchored at the file's dir).
             rel = f"{base_rel}/{line}" if base_rel else line
             rel = rel.strip("/")
             if dir_only:
-                ex.dir_paths.add(rel)
+                if is_glob:
+                    ex.dir_path_globs.append(rel)
+                else:
+                    ex.dir_paths.add(rel)
             else:
-                ex.path_globs.append(rel)
+                if is_glob:
+                    ex.path_globs.append(rel)
+                else:
+                    # Exact path → excludes that file OR dir (and, for a dir,
+                    # everything beneath it via dir pruning).
+                    ex.dir_paths.add(rel)
         else:
-            ex.dir_names.add(line)  # plain name → prunes a dir OR excludes a file with that name
-            if any(ch in line for ch in "*?["):
-                ex.name_globs.append(line)
+            # Basename pattern (any level).
+            if dir_only:
+                if is_glob:
+                    ex.dir_name_globs.append(line)
+                else:
+                    ex.dir_names.add(line)
+            else:
+                if is_glob:
+                    ex.name_globs.append(line)
+                else:
+                    # Exact name → excludes a file OR a dir with that name.
+                    ex.dir_names.add(line)
 
 
 _EXCLUSION_CACHE: dict[
@@ -1731,11 +1935,24 @@ def build_graph(
     light. ``chunk_size`` (queue-chunk semantics, default 200) bounds EVERY run
     — each build processes at most that many files and returns ``remaining_files``
     for the next call or background worker to continue.
+
+    The per-project lock wait is bounded (``_BUILD_LOCK_TIMEOUT``): a genuinely
+    stuck build can never block a caller forever — it fails with a clear error.
     """
-    with _build_lock(_resolve_root(workspace_path)):
+    lock = _build_lock(_resolve_root(workspace_path))
+    if not lock.acquire(timeout=_BUILD_LOCK_TIMEOUT):
+        return fail_obj(
+            error=(
+                "another graph build is stuck holding the build lock for this project "
+                f"(>{_BUILD_LOCK_TIMEOUT:.0f}s) — restart the server or wait for it to drain"
+            )
+        )
+    try:
         return _build_graph_impl(
             workspace_path, root, include_html, directed, project_id, out_dir, node_limit, max_files, chunk_size
         )
+    finally:
+        lock.release()
 
 
 def graph_build_action(
@@ -1749,6 +1966,7 @@ def graph_build_action(
     max_files: int | None = None,
     chunk_size: int | None = None,
     background: bool = True,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Explicit ``graph_build`` — coalesces with an in-flight background rebuild.
 
@@ -1756,12 +1974,18 @@ def graph_build_action(
     it starts the worker immediately and returns without processing a chunk.
     ``graph_status`` reports progress. With ``background=False``, one synchronous
     chunk is processed for callers that explicitly need blocking behavior.
-    ``family`` builds the merged family graph instead.
+    ``force=True`` bypasses the in-flight guard so a fresh build can be started
+    even when a stale ``rebuilding`` flag/worker is present. ``family`` builds
+    the merged family graph instead.
     """
     if family:
         return _build_family_graph(family, include_html=include_html, directed=directed, node_limit=node_limit)
     out_root = _resolve_root(workspace_path)
-    if _rebuild_in_flight(workspace_path, root):
+    # Only the fire-and-forget background trigger coalesces with an in-flight
+    # worker. A synchronous build (background=False) always proceeds (Bug 3): it
+    # serializes on the bounded per-project lock and returns chunk details. The
+    # stale guard is also bypassed by force=True (Phase 4 escape hatch).
+    if background and not force and _rebuild_in_flight(workspace_path, root):
         return ok_obj(
             success=True,
             rebuilding=True,
@@ -2075,6 +2299,11 @@ def _build_graph_impl(
         }
         if chunked:
             manifest["chunked"] = True
+        # Carry the worker-lifecycle flags forward so a chunk write can never
+        # clobber an in-flight rebuilding marker (started/last-progress/error).
+        for k in _REBUILD_STATE_KEYS:
+            if prev_manifest and k in prev_manifest:
+                manifest[k] = prev_manifest[k]
         (out_dir / ".build_state.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         _ensure_readme(out_dir)
 
@@ -2156,17 +2385,44 @@ def graph_status(
     pending_build = bool(state.get("remaining_files", 0) > 0)
     fresh = not changed and not removed and not pending_build
 
+    # Worker lifecycle: a live (progressing) worker is "rebuilding". A persisted
+    # `rebuilding: true` with NO live worker is stale (worker died / server
+    # restarted) — auto-clear it so status never reports a phantom rebuild.
+    live = _rebuild_in_flight(workspace_path, root)
+    persisted_rebuilding = bool(state.get("rebuilding"))
+    if persisted_rebuilding and not live:
+        _manifest_update(out_dir, rebuilding=False)
+        persisted_rebuilding = False
+
+    total = max(len(cur), int(state.get("total_files", 0) or 0))
+    remaining = int(state.get("remaining_files", 0) or 0)
+    processed_total = max(0, total - remaining)
+
+    # Exclusion visibility: how much of the scanned corpus the project rules
+    # (.gitignore + .graphignore + _NOISE_DIRS) actually exclude from the graph.
+    supported_files = len(cur)
+    scanned_files = _scanned_count(scan_root)
+    excluded_files = max(0, scanned_files - supported_files)
+
     return ok_obj(
         exists=True,
         fresh=fresh,
         built_at=state.get("built_at"),
         nodes=state.get("nodes"),
         edges=state.get("edges"),
-        total_files=max(len(cur), int(state.get("total_files", 0) or 0)),
-        processed_files=state.get("processed_files"),
-        remaining_files=state.get("remaining_files", 0),
+        total_files=total,
+        processed_files=processed_total,  # cumulative (total - remaining)
+        processed_total=processed_total,
+        processed_this_chunk=state.get("processed_files"),
+        remaining_files=remaining,
         chunked=bool(state.get("chunked")),
-        background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))),
+        rebuilding=bool(live or persisted_rebuilding),
+        rebuilding_started_at=state.get("rebuilding_started_at"),
+        rebuilding_last_progress_at=state.get("rebuilding_last_progress_at"),
+        scanned_files=scanned_files,
+        excluded_files=excluded_files,
+        supported_files=supported_files,
+        background_error=_BACKGROUND_ERRORS.get(str(_resolve_root(workspace_path))) or state.get("rebuilding_error"),
         changed_files=changed[:20],
         removed_files=removed[:10],
     )
