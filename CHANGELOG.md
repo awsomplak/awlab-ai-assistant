@@ -1,4 +1,12 @@
 # Changelog
+## [3.0.5]
+
+### Fixed
+- **First-contact agent failures (3 predictable mistakes)** — the auto-generated `action_call` tool description, SKILL.md, and `action_help` overview now front-load the strict call contract: "TWO tools only (`action_call` + `action_help`)", "params is a SINGLE nested JSON object — never flatten at the top level", "`workspace_path` (absolute) is required for plan/task/memory/graph/ctx_info", "types are strict (int / bool / list / exact enum)", and the first-response workflow (`project_id` → `ctx_info mode=context` → action). The same contract is now embedded in every failed `action_call` response payload under a top-level `contract` key, so an agent that makes a wrong call is re-educated on the very next turn without re-reading docs. 4 new contract tests in `test_dispatcher_surface.py` lock the contract in. Source-level: 0 tests regressed (410 pass).
+
+### Removed
+- **Duplicate `_Settings()` instantiation in `config.py`** — `settings = _Settings()` was assigned twice (lines 332 and 336); the second instance silently overwrote the first. Both instances were equal, so no functional impact, but the dead store is removed.
+
 ## [3.0.4]
 
 ### Added
