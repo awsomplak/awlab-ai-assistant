@@ -212,7 +212,7 @@ def write_context_md_atomic(workspace_path: str | Path, content: str) -> bool:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(content)
             os.replace(tmp, str(target))
-        except BaseException:
+        except Exception:
             try:
                 os.unlink(tmp)
             except OSError:
