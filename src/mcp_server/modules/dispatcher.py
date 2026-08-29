@@ -40,15 +40,34 @@ def _dispatch_error(
     invalid: list[dict[str, str]] | None = None,
     suggestions: list[str] | None = None,
 ) -> str:
-    """Loud, actionable error payload (valid-actions list + did-you-mean + help pointer)."""
-    payload: dict[str, Any] = {"success": False, "action": action, "error": error}
+    """Loud, actionable error payload (valid-actions list + did-you-mean + help pointer).
+
+    The error payload embeds the strict call contract so the agent is re-educated
+    on the very next turn without needing to re-read SKILL.md. This is the
+    fastest possible feedback loop: same session, same tool call, corrected
+    immediately.
+    """
+    payload: dict[str, Any] = {
+        "success": False,
+        "action": action,
+        "error": error,
+        "contract": {
+            "shape": 'action_call(action="<name>", params={"workspace_path": "<abs root>", ...})',
+            "rules": [
+                "params is a SINGLE nested JSON object — never flatten at the top level",
+                "workspace_path (absolute) is required for plan/task/memory/graph/ctx_info",
+                "types are strict: int (not '10'), bool (not 0/1), list, exact enum",
+                "action_help is a SEPARATE tool — do NOT call it via action_call",
+            ],
+        },
+    }
     if invalid:
         payload["invalid"] = invalid
     if suggestions:
         payload["did_you_mean"] = suggestions
     if action not in REGISTRY:
         payload["valid_actions"] = sorted(REGISTRY)
-        payload["help"] = 'Use action_help(action="<name>") for usage.'
+        payload["help"] = 'Call the action_help tool (NOT action_call) with action="<name>".'
     return json.dumps(payload)
 
 

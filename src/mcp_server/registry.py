@@ -1779,23 +1779,67 @@ def validate_params(spec: dict[str, Any], params: dict[str, Any] | None) -> tupl
 
 
 def build_tool_description() -> str:
-    """Top-level description for the action_call tool (generated from REGISTRY)."""
+    """Top-level description for the action_call tool (generated from REGISTRY).
+
+    Designed to be the FIRST thing an agent reads about this MCP. It must
+    pre-empt the four predictable first-contact failures (call shape, missing
+    workspace_path, help-as-action, and "is it 2 tools or 23?"). See
+    docs/en/REGISTRY_SCHEMA.md §6 for the dispatcher flow.
+    """
     lines = [
-        "Dispatch an MCP action. Actions (group → name):",
+        "Dispatch an MCP action. The MCP server exposes exactly TWO tools to you:",
+        "  1. action_call(action, params) — the dispatcher (this tool).",
+        "  2. action_help(action=None) — per-action usage. Reach it as a SEPARATE",
+        "     tool call, never via action_call(action='action_help', ...).",
+        "",
+        "STRICT CALL SHAPE — read before your first call:",
+        "  • The second argument to this tool is `params` — a SINGLE nested JSON object.",
+        "    NEVER flatten: action_call(action='ctx_info', mode='context', workspace_path='...')",
+        "    is wrong; the tool only knows `action` and `params` as its two top-level keys.",
+        "  • Every file-touching action requires `workspace_path` (absolute project root).",
+        "    Omitting it returns {success:false, invalid:[{param:'workspace_path', reason:'required but missing'}]}.",
+        "  • Types are strict: integers are integers (not '10'), booleans are booleans (not 0/1),",
+        "    arrays are arrays, enums must match exactly. The server validates before running.",
+        "",
+        "Workflow on FIRST response of a session:",
+        "  1. action_call(action='project_id', params={'workspace_path': <root>})  ← memory isolation.",
+        "  2. action_call(action='ctx_info', params={'workspace_path': <root>, 'mode': 'context'})",
+        "     ← one server-owned call that returns plan + code + memory + patterns.",
+        "  3. Then the action you actually wanted.",
+        "",
+        "Available actions (group → name):",
     ]
     for group in sorted({s["group"] for s in REGISTRY.values()}):
         names = sorted(a for a, s in REGISTRY.items() if s["group"] == group)
         lines.append(f"- {group}: {', '.join(names)}")
-    lines.append('Use action_call(action="help") or action_help for per-action usage.')
+    lines.append('For per-action params/examples, call the action_help tool (NOT action_call).')
     return "\n".join(lines)
 
 
 def build_help(action: str | None = None) -> str:
-    """action_help output. action=None → grouped overview; else full spec."""
+    """action_help output. action=None → grouped overview; else full spec.
+
+    The overview path front-loads the same strict call contract the
+    action_call tool description and SKILL.md use, so an agent that lands
+    here after a wrong call is re-educated before seeing the action list.
+    """
+    _CONTRACT = (
+        "## ⚠️ Call shape (most failures happen here)\n"
+        "\n"
+        "This MCP exposes TWO tools: `action_call` (dispatcher) and `action_help` (this one).\n"
+        "`action_help` is NOT an action — call it as a separate tool, not via `action_call`.\n"
+        "\n"
+        "```\n"
+        "action_call(action='<name>', params={'workspace_path': '<abs root>', ...})\n"
+        "```\n"
+        "**`workspace_path` (absolute) is required** for plan/task/memory/graph/ctx_info.\n"
+        "Types are strict (int, bool, list, exact enum). The server validates before running.\n"
+    )
+
     if not action:
-        out = ["# Available Actions (group → name — summary)", ""]
+        out = ["# Available Actions (group → name — summary)", "", _CONTRACT, "## Actions", ""]
         for group in sorted({s["group"] for s in REGISTRY.values()}):
-            out.append(f"## {group}")
+            out.append(f"### {group}")
             for name in sorted(a for a, s in REGISTRY.items() if s["group"] == group):
                 spec = REGISTRY[name]
                 out.append(f"- `{name}` — {spec['summary']}")
@@ -1804,13 +1848,19 @@ def build_help(action: str | None = None) -> str:
 
     spec, canonical, suggestions = resolve_action(action)
     if spec is None:
-        lines = [f"Unknown action '{action}'.", "Valid actions:"]
+        lines = [
+            f"Unknown action '{action}'.",
+            "",
+            _CONTRACT,
+            "## Valid actions",
+        ]
         lines += [f"- {a}" for a in sorted(REGISTRY)]
         if suggestions:
             lines.append("Did you mean: " + ", ".join(suggestions) + "?")
         return "\n".join(lines)
 
     lines = [
+        _CONTRACT,
         f"# {canonical}  (group: {spec['group']})",
         "",
         spec["doc"],
@@ -1831,21 +1881,63 @@ def build_help(action: str | None = None) -> str:
 
 
 def build_skill_md() -> str:
-    """Generate the SKILL.md content from REGISTRY (single source of truth)."""
+    """Generate the SKILL.md content from REGISTRY (single source of truth).
+
+    Front-loads the strict call contract because the SKILL.md is the first
+    long-form reference an agent sees about this MCP. Without this preamble,
+    agents flatten params, omit `workspace_path`, and call `action_help` as
+    if it were an action — all real, observed failure modes.
+    """
     out = [
         "---",
         "name: awlab-ai-assistant",
-        "description: Dispatch consolidated MCP actions via action_call(action=...).",
+        "description: Dispatch consolidated MCP actions via action_call(action=...). "
+        "Two tools only: action_call + action_help. Always pass workspace_path; "
+        "params is a single nested JSON object — never flatten at the top level.",
         "---",
         "",
         "# awlab-ai-assistant — Action Reference",
         "",
-        "Call `action_call` with `action` + params. Server guarantees preconditions/pipeline;",
-        "responses include `executed`/`skipped` traces. Use `action_help(action)` for details.",
+        "## ⚠️ Read this first (most first-contact failures happen here)",
+        "",
+        "The MCP server exposes **exactly two tools** to you:",
+        "  1. `action_call(action, params)` — the dispatcher.",
+        "  2. `action_help(action=None)` — per-action usage. **Call it as a separate",
+        "     tool call, NOT via `action_call(action='action_help', ...)`**.",
+        "",
+        "**Call shape (strict):**",
+        "```",
+        "action_call(",
+        "  action='ctx_info',",
+        "  params={'workspace_path': '/abs/project/root', 'mode': 'context'},",
+        ")",
+        "```",
+        "❌ NEVER flatten params at the top level:",
+        "```",
+        "action_call(action='ctx_info', mode='context', workspace_path='...')  # WRONG",
+        "```",
+        "The tool only knows two top-level keys: `action` and `params`. Anything else is dropped.",
+        "",
+        "**`workspace_path` is required** by every file-touching action (plan, task, memory,",
+        "graph, ctx_info). Pass the absolute project root. Omitting it is the #1 first-call error.",
+        "",
+        "**Type strictness:** integers are `int` (not `'10'`), booleans are `bool` (not `0`/`1`),",
+        "arrays are `list`, enums must match exactly. The server validates before running.",
+        "",
+        "**First-response workflow:**",
+        "  1. `action_call(action='project_id', params={'workspace_path': <root>})` — isolation.",
+        "  2. `action_call(action='ctx_info', params={'workspace_path': <root>, 'mode': 'context'})`",
+        "     — one server-owned call: plan + next task + code + memory + patterns + context_md.",
+        "  3. Then the action you actually wanted.",
+        "",
+        "Server guarantees preconditions/pipeline run automatically; responses include",
+        "`executed` (steps that did work) and `skipped` (idempotent gates already satisfied).",
+        "",
+        "## Actions (group → name)",
         "",
     ]
     for group in sorted({s["group"] for s in REGISTRY.values()}):
-        out.append(f"## {group}")
+        out.append(f"### {group}")
         for name in sorted(a for a, s in REGISTRY.items() if s["group"] == group):
             spec = REGISTRY[name]
             out.append(f"- **{name}** — {spec['summary']}")
