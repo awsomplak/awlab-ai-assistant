@@ -128,3 +128,75 @@ async def test_graph_read_second_call_is_idempotent(tmp_path: Path):
     assert second["success"] is True
     assert second["executed"] == []  # nothing re-ran
     assert "graph_fresh" in second["skipped"]  # now fresh → skipped
+
+
+# ── Task 4: first-contact contract (the three predictable failures) ─────────
+#
+# Agents on first contact reliably make the same three mistakes:
+#  1. omit `workspace_path` (forgetting the precondition needs it)
+#  2. flatten params at the top level
+#  3. treat `action_help` as an action_call target
+# The dispatcher MUST return a corrective contract payload in each case so the
+# agent self-corrects on the very next turn (instead of guessing again).
+
+
+async def test_missing_workspace_path_returns_corrective_contract():
+    r = await action_call("ctx_info", {})
+    assert r["success"] is False
+    assert "contract" in r
+    assert "params" in r["contract"]["shape"]
+    assert "workspace_path" in r["contract"]["shape"]
+    # The 4 rules that prevent the predictable failures
+    rules_blob = " ".join(r["contract"]["rules"]).lower()
+    assert "single nested json object" in rules_blob
+    assert "workspace_path" in rules_blob
+    assert "strict" in rules_blob
+    assert "separate tool" in rules_blob  # action_help is a separate tool
+
+
+async def test_unknown_action_returns_corrective_contract():
+    """When the agent calls action_help as an action, the error must teach."""
+    r = await action_call("action_help", {})
+    assert r["success"] is False
+    assert "contract" in r
+    assert "valid_actions" in r
+    assert "help" in r
+
+
+async def test_tool_description_teaches_contract():
+    """The action_call tool description itself must front-load the contract —
+    this is the first thing an agent reads about the MCP."""
+    from mcp_server.registry import build_tool_description
+
+    desc = build_tool_description()
+    assert "TWO tools" in desc
+    assert "params" in desc and "SINGLE nested JSON object" in desc
+    assert "workspace_path" in desc
+    assert "separate" in desc.lower()  # action_help is separate
+
+
+async def test_skill_md_teaches_contract():
+    """The generated SKILL.md must include the strict contract preamble —
+    agents that discover this MCP via skill activation will read it first."""
+    from mcp_server.registry import build_skill_md
+
+    md = build_skill_md()
+    # Frontmatter description must mention both tools and the contract
+    assert "action_call" in md
+    assert "action_help" in md
+    # Body contract preamble
+    assert "TWO tools" in md or "two tools" in md
+    assert "workspace_path" in md
+    assert "flatten" in md.lower()  # explicitly forbid flattening
+
+
+async def test_action_help_overview_teaches_contract():
+    """When the agent lands on action_help() (the overview), it must be
+    re-educated about the call shape before seeing the action list."""
+    h = await action_help(None)
+    assert "TWO tools" in h or "two tools" in h
+    assert "params" in h
+    assert "workspace_path" in h
+    # Actions still listed (don't regress the overview)
+    for name in REGISTRY:
+        assert f"`{name}`" in h
