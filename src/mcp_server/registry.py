@@ -866,14 +866,22 @@ async def _wf(
     workspace_path: str = "",
     action: str = "list",
     workflow_name: str = "",
-    params: str | None = None,
+    params: str | dict | None = None,
     workflows_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Merge wf_list / wf_execute. Workflows are workspace-free; workspace_path optional."""
+    """Merge wf_list / wf_execute. Workflows are workspace-free; workspace_path optional.
+
+    ``params`` accepts BOTH shapes for backward compatibility: a JSON string
+    (legacy) OR a dict directly. Strings are ``json.loads``-ed once; dicts pass
+    through as-is. None means no workflow params.
+    """
     wf_dir = Path(workflows_dir) if workflows_dir else None
     ws = workspace_path or None
     if action == "execute":
-        parsed = json.loads(params) if params else None
+        if isinstance(params, str):
+            parsed = json.loads(params) if params else None
+        else:
+            parsed = params  # dict (or None) — pass through
         return await plan_tools.execute_workflow(
             workspace_path=ws, workflow_name=workflow_name, params=parsed, workflows_dir=wf_dir
         )
@@ -1055,7 +1063,14 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "workspace_path": {"type": "string", "desc": "Optional project root (workflows are workspace-free)"},
             "action": {"type": "string", "enum": ["list", "execute"], "default": "list"},
             "workflow_name": {"type": "string", "desc": "Workflow filename without .md"},
-            "params": {"type": "string", "desc": "Optional JSON string of workflow params"},
+            "params": {
+                "type": "object",
+                "desc": (
+                    "Optional workflow params. Accepts BOTH a dict (preferred, typed "
+                    "end-to-end) AND a JSON string (legacy, json.loads'd server-side). "
+                    "Pass None for workflows that take no params."
+                ),
+            },
             "workflows_dir": {"type": "string", "desc": "Optional override for the workflows directory"},
         },
         "returns": "{success, workflows|result}",
