@@ -16,6 +16,7 @@ Supports two project isolation strategies:
 
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_recall import MCPBridge, MemoryConfig
@@ -508,12 +509,28 @@ def add_observations(
     observations: list[dict],
     patterns: bool = False,
     family: str | None = None,
+    created_at: str | None = None,
 ) -> dict:
-    """Add observations to existing entities. Returns {added, blocked}."""
+    """Add observations to existing entities. Returns {added, blocked}.
+
+    ``created_at`` (G12): optional ISO-8601 timestamp. When provided, it's
+    stamped onto every observation dict (``obs["created_at"] = created_at``) so
+    downstream consumers (bake pipeline, retrospective, log scrapers) can
+    reason about timeline ordering. The agent-recall library itself ignores
+    extra fields — it uses its own internal timestamp for storage — but
+    the field rides along in the dict and is readable by callers.
+    Defaults to ``datetime.now(timezone.utc).isoformat()`` so callers
+    that don't pass it still get a sensible value.
+    """
+    if created_at is None:
+        created_at = datetime.now(timezone.utc).isoformat()
+    stamped = []
+    for obs in observations:
+        stamped.append({**obs, "created_at": created_at})
     with create_bridge(
         workspace_path=workspace_path, project_id=project_id, patterns=patterns, family=family
     ) as bridge:
-        return bridge.add_observations(observations=observations)
+        return bridge.add_observations(observations=stamped)
 
 
 def create_relations(
