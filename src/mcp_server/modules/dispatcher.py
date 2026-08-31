@@ -63,6 +63,21 @@ def _dispatch_error(
     }
     if invalid:
         payload["invalid"] = invalid
+        # Cross-host hint: when a list/object param fails the type check, the
+        # most common cause is a host that serializes arrays/objects as JSON
+        # strings. The server now auto-parses those (see validate_params), but
+        # if it still fails, the caller's value isn't valid JSON. Tell them
+        # how to recover.
+        for err in invalid:
+            if isinstance(err, dict) and err.get("reason") in ("expected array", "expected object"):
+                payload["hint"] = (
+                    f"If your host serializes list/object params as JSON strings, "
+                    f"pass a valid JSON string for `{err.get('param')}` (e.g. "
+                    f"'[{{\"signature\":\"x\",\"value\":\"y\"}}]' instead of an array). "
+                    f"The server will parse it back. If you already do, the value "
+                    f"isn't valid JSON — check quoting."
+                )
+                break
     if suggestions:
         payload["did_you_mean"] = suggestions
     if action not in REGISTRY:

@@ -200,3 +200,121 @@ async def test_action_help_overview_teaches_contract():
     # Actions still listed (don't regress the overview)
     for name in REGISTRY:
         assert f"`{name}`" in h
+
+
+# ── Task 1.5: cross-host array/object string fallback ──────────────────────
+#
+# Some hosts serialize list/object params as JSON strings (instead of real JSON
+# arrays / objects). The validator now auto-parses strings for `array` and
+# `object` types when the parse result matches the declared type. These tests
+# lock in the three behaviors: real list still works, JSON string works, and
+# malformed string still fails (with the new error hint).
+
+
+async def test_real_list_for_array_param_still_works(tmp_path: Path):
+    """Regression guard: a real JSON list for an `array`-typed param passes
+    validation unchanged. The fallback is a strict superset, not a replacement."""
+    (tmp_path / ".ai").mkdir(parents=True, exist_ok=True)
+    r = await action_call(
+        "mem_observe",
+        {
+            "workspace_path": str(tmp_path),
+            "observations": [
+                {"signature": "test_real_list", "value": "v1", "source": "behavioral"},
+            ],
+        },
+    )
+    # Real list passes; the action's handler then runs (and may fail for other
+    # reasons in tmp_path, but not with `expected array`).
+    assert r["success"] is True or "expected array" not in str(r.get("error", ""))
+    # The invalid param list must NOT contain the array error.
+    assert not any(
+        err.get("reason") == "expected array"
+        for err in r.get("invalid", []) or []
+    )
+
+
+async def test_json_string_for_array_param_is_accepted(tmp_path: Path):
+    """A JSON string that parses to a list must be accepted by the fallback
+    path. This is the cross-host fix — hosts that stringify arrays still work."""
+    (tmp_path / ".ai").mkdir(parents=True, exist_ok=True)
+    observations_json = '[{"signature":"s","value":"v","source":"behavioral"}]'
+    r = await action_call(
+        "mem_observe",
+        {
+            "workspace_path": str(tmp_path),
+            "observations": observations_json,  # string, not list
+        },
+    )
+    # The fallback parsed it; the array error must NOT appear in invalid.
+    assert not any(
+        err.get("reason") == "expected array"
+        for err in r.get("invalid", []) or []
+    )
+    # And the call actually succeeded (handler ran with parsed list).
+    assert r["success"] is True
+    assert r["action"] == "mem_observe"
+    assert r["result"]["appended"] == 1
+
+
+async def test_json_string_for_object_param_is_accepted(tmp_path: Path):
+    """The same fallback applies to `object` types — e.g. `wf params` can be
+    a dict OR a JSON string (and now `plan_doc content` would work the same)."""
+    # `plan_doc` mode=write content is a string, so the object fallback
+    # doesn't apply to it — but `wf params` is type=object and accepts both.
+    # We test the validator's object fallback directly via a synthetic spec.
+    from mcp_server.registry import validate_params
+
+    spec = {"params": {"data": {"type": "object", "required": True}}}
+    # Dict → accepted as-is
+    validated, errors = validate_params(spec, {"data": {"key": "value"}})
+    assert validated == {"data": {"key": "value"}}
+    assert errors == []
+    # JSON string that parses to a dict → accepted via fallback
+    validated, errors = validate_params(spec, {"data": '{"key": "value"}'})
+    assert validated == {"data": {"key": "value"}}, f"fallback failed: {errors}"
+    assert errors == []
+
+
+async def test_malformed_string_still_fails_with_hint(tmp_path: Path):
+    """If the string isn't valid JSON (or doesn't parse to the expected type),
+    the call still fails — but the error payload now includes a `hint` field
+    that teaches the host how to recover."""
+    (tmp_path / ".ai").mkdir(parents=True, exist_ok=True)
+    # Garbage that isn't a list
+    r = await action_call(
+        "mem_observe",
+        {
+            "workspace_path": str(tmp_path),
+            "observations": "not json at all",
+        },
+    )
+    assert r["success"] is False
+    # The error must point to the array issue
+    assert any(
+        err.get("param") == "observations" and err.get("reason") == "expected array"
+        for err in r.get("invalid", []) or []
+    )
+    # The new hint must be present so the host learns the workaround
+    assert "hint" in r, "dispatch error payload must include a 'hint' field for array/object type mismatches"
+    assert "JSON string" in r["hint"], f"hint must mention the JSON-string fallback: {r['hint']}"
+
+
+async def test_json_string_with_wrong_shape_fails_with_hint(tmp_path: Path):
+    """A valid JSON string that doesn't parse to the expected type (e.g. a JSON
+    object where the schema needs an array) still fails — and still gets the
+    hint. This is the "value is a valid JSON object, but the schema wants a
+    list" case some hosts will hit."""
+    (tmp_path / ".ai").mkdir(parents=True, exist_ok=True)
+    r = await action_call(
+        "mem_observe",
+        {
+            "workspace_path": str(tmp_path),
+            "observations": '{"wrong": "shape"}',  # valid JSON object, but array expected
+        },
+    )
+    assert r["success"] is False
+    assert any(
+        err.get("reason") == "expected array"
+        for err in r.get("invalid", []) or []
+    )

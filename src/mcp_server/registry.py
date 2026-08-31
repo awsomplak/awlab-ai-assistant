@@ -1756,7 +1756,15 @@ def resolve_action(action: str) -> tuple[dict[str, Any] | None, str, list[str]]:
 
 
 def validate_params(spec: dict[str, Any], params: dict[str, Any] | None) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    """Validate + default params against spec['params']. Returns (validated, errors)."""
+    """Validate + default params against spec['params']. Returns (validated, errors).
+
+    Cross-host string fallback: when a param's declared type is ``array`` or
+    ``object`` and the host serialized the value as a JSON string (some hosts
+    stringify list/object params), try ``json.loads`` once and accept the parsed
+    value if it matches the declared type. Hosts that deliver real lists/dicts
+    are unaffected; the fallback only kicks in for the most common host
+    serialization mistake.
+    """
     errors: list[dict[str, str]] = []
     validated: dict[str, Any] = {}
     spec_params = spec.get("params", {})
@@ -1776,9 +1784,32 @@ def validate_params(spec: dict[str, Any], params: dict[str, Any] | None) -> tupl
         elif pspec.get("type") == "boolean" and not isinstance(value, bool):
             errors.append({"param": name, "reason": "expected boolean"})
         elif pspec.get("type") == "array" and not isinstance(value, list):
-            errors.append({"param": name, "reason": "expected array"})
+            # Cross-host fallback: some hosts stringify list/object params.
+            # Try to parse the string as JSON and accept if it's a list.
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value)
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, list):
+                    value = parsed
+                else:
+                    errors.append({"param": name, "reason": "expected array"})
+            else:
+                errors.append({"param": name, "reason": "expected array"})
         elif pspec.get("type") == "object" and not isinstance(value, dict):
-            errors.append({"param": name, "reason": "expected object"})
+            # Same fallback for object types (e.g. wf params, plan_doc content alternatives).
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value)
+                except (ValueError, TypeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    value = parsed
+                else:
+                    errors.append({"param": name, "reason": "expected object"})
+            else:
+                errors.append({"param": name, "reason": "expected object"})
         # Enum / pattern
         if pspec.get("enum") and value not in pspec["enum"]:
             errors.append({"param": name, "reason": f"must be one of {pspec['enum']}"})
