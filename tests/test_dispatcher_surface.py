@@ -418,3 +418,68 @@ async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp
     assert _request_id_var.get() == "-", (
         f"dispatcher leaked request_id: {_request_id_var.get()!r}"
     )
+
+
+# ── Task 3.4: slow disk must not block the dispatcher (G10) ────────────────
+#
+# When LOG_ASYNC=1, the Logger queues writes and a daemon thread drains them.
+# A simulated slow disk (sleep inside _write) must NOT block the caller's
+# log call — otherwise the dispatcher's bake_tick / error paths would hang
+# whenever the filesystem stalls. This test patches _write to be slow, makes
+# several log calls, asserts each one returns well under the slow time, and
+# confirms flush() eventually drains everything.
+
+
+async def test_slow_disk_does_not_block_logger_when_async_enabled(monkeypatch, tmp_path: Path):
+    """When LOG_ASYNC=1, log calls return immediately even if _write is slow.
+
+    This is the property that protects the dispatcher (and bake_tick) from
+    filesystem stalls. Without it, every `logger.error(...)` path in the
+    dispatcher would block on disk I/O.
+    """
+    import os
+    import time
+
+    # Force async mode for this test. The env var is read in Logger.__init__,
+    # so we set it before constructing a new Logger.
+    monkeypatch.setenv("LOG_ASYNC", "1")
+
+    from mcp_server.helpers import logger as logger_mod
+    from mcp_server.helpers.logger import Logger
+
+    # Construct a fresh Logger in async mode; do NOT use the module-level
+    # singleton (other tests may have touched it).
+    log = Logger(log_dir=tmp_path)
+
+    # Simulate a slow disk: 1 second per write. The test threshold for
+    # "non-blocking" is generous (200ms) so a slow CI runner still passes.
+    SLOW_SLEEP = 1.0
+    SLOW_THRESHOLD = 0.2
+    write_count = 0
+
+    def slow_write(self, level, message, tool="", exc_info=False):
+        nonlocal write_count
+        write_count += 1
+        time.sleep(SLOW_SLEEP)
+
+    monkeypatch.setattr(Logger, "_write", slow_write)
+
+    # 3 calls × 1s write = 3s if synchronous. Async should make each call
+    # return in <200ms.
+    t0 = time.monotonic()
+    log.info("first")
+    t1 = time.monotonic()
+    log.error("second")
+    t2 = time.monotonic()
+    log.warning("third")
+    t3 = time.monotonic()
+
+    # Each call must return quickly (the drain thread is the slow one now).
+    assert (t1 - t0) < SLOW_THRESHOLD, f"first call blocked: {(t1 - t0):.3f}s"
+    assert (t2 - t1) < SLOW_THRESHOLD, f"second call blocked: {(t2 - t1):.3f}s"
+    assert (t3 - t2) < SLOW_THRESHOLD, f"third call blocked: {(t3 - t2):.3f}s"
+
+    # 3 entries should be queued. flush() blocks until the drain thread
+    # processes them, which takes 3 * SLOW_SLEEP seconds.
+    log.flush(timeout=10.0)
+    assert write_count == 3, f"drain thread processed {write_count}/3 writes"
