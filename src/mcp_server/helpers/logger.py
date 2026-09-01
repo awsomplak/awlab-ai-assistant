@@ -23,8 +23,37 @@ Policies:
 import os
 import sys
 import traceback
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Request ID — per-action_call correlation
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Async-safe via contextvars: each `asyncio.Task` (and the thread it spawns via
+# `to_thread`) gets its own copy of the context, so concurrent `action_call`
+# invocations cannot bleed their `request_id` into each other's log lines. The
+# dispatcher sets this at the top of `_action_call` and resets it in `finally`,
+# so a long-running handler can still `await` deep into the stack and every
+# `[req=abcd1234]` tag stays bound to the right invocation.
+#
+# Tag format: `[req=xxxxxxxx]` (8 hex chars, first 4 bytes of uuid4) — short
+# enough to fit in a single log line, unique enough that collisions within
+# a session are negligible.
+
+_request_id_var: ContextVar[str] = ContextVar("awlab_request_id", default="-")
+
+
+def set_request_id(rid: str) -> None:
+    """Stamp the current request_id for this async task / thread context."""
+    _request_id_var.set(rid)
+
+
+def get_request_id() -> str:
+    """Return the current request_id (or "-" outside any action_call)."""
+    return _request_id_var.get()
+
 
 # ══════════════════════════════════════════════════════════════════════════
 #  Tool context helper
@@ -104,7 +133,13 @@ class Logger:
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}"
         date_stamp = now.strftime("%Y-%m-%d")
 
-        tag = f"  [{tool}]" if tool else ""
+        # Request ID tag (async-safe via contextvars; "-" when not in an action_call)
+        rid = _request_id_var.get()
+        rid_tag = f"[req={rid}]" if rid and rid != "-" else ""
+        # Final tag order: [tool_name][req=id] — tool first, request-id second,
+        # so log scrapers can grep either independently.
+        tool_tag = f"[{tool}]" if tool else ""
+        tag = f"  {tool_tag}{rid_tag}" if (tool_tag or rid_tag) else ""
         line = f"[{timestamp}] {level:5s}{tag} {message}"
 
         if exc_info:

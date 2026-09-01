@@ -16,11 +16,12 @@ Call ``register_dispatcher(target_mcp)`` from any registration module to expose 
 """
 
 import json
+import uuid
 from typing import Annotated, Any
 
 from pydantic import Field
 
-from ..helpers.logger import logger
+from ..helpers.logger import logger, set_request_id
 from ..registry import (
     REGISTRY,
     _maybe_await,
@@ -91,6 +92,27 @@ async def _action_call(
     params: Annotated[dict[str, Any] | None, Field(description="JSON object of the action's params")] = None,
 ) -> str:
     """Dispatch an MCP action. The server runs preconditions/pipeline automatically."""
+    # Stamp a per-call request_id into the logger context (async-safe via
+    # contextvars: each asyncio task gets its own copy, so concurrent calls
+    # cannot bleed tags into each other's log lines). 8 hex chars — short
+    # enough to grep, unique enough within a session.
+    request_id = uuid.uuid4().hex[:8]
+    set_request_id(request_id)
+    try:
+        return await _action_call_impl(action, params, request_id)
+    finally:
+        # Reset the context so the request_id does not leak into background
+        # ticks, the bake scheduler, or whatever runs after this call returns.
+        set_request_id("-")
+
+
+async def _action_call_impl(
+    action: str,
+    params: dict[str, Any] | None,
+    request_id: str,
+) -> str:
+    """Implementation of action_call — split out so the request_id context
+    can be set/cleared in `_action_call` without polluting every return path."""
     spec, canonical, suggestions = resolve_action(action)
     if spec is None:
         logger.tool("action_call").info(f"unknown action '{action}'")

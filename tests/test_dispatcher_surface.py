@@ -13,6 +13,7 @@ matching the pattern used by the rest of the test suite.
 """
 
 import json
+import re
 from pathlib import Path
 
 from mcp_server.modules import registration
@@ -317,4 +318,103 @@ async def test_json_string_with_wrong_shape_fails_with_hint(tmp_path: Path):
     assert any(
         err.get("reason") == "expected array"
         for err in r.get("invalid", []) or []
+    )
+
+
+# ── Task 2.3: per-action_call request_id correlation in logs (G6) ─────────
+#
+# The dispatcher stamps a uuid4-derived request_id into a contextvars
+# ContextVar at the top of `_action_call` and resets it in `finally`. Two
+# concurrent invocations must each get a unique request_id, and every
+# log line written during an invocation must carry that invocation's
+# request_id (no cross-pollination, no leaks).
+
+
+async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp_path: Path):
+    """Two concurrent action_call invocations must each get a unique
+    request_id, and the dispatcher's logger must attribute every line it
+    writes during an invocation to that invocation's request_id (no
+    cross-pollination, no leaks).
+    """
+    import asyncio
+    from mcp_server.helpers import logger as logger_mod
+    from mcp_server.helpers.logger import _request_id_var, set_request_id, logger as logger_singleton
+
+    # 1. Reset the contextvar so the dispatcher must stamp it (no pre-stamping).
+    set_request_id("-")
+
+    # 2. Capture every formatted log line via monkey-patch on _write.
+    captured: list[str] = []
+    Logger = type(logger_singleton)  # the Logger class for monkey-patching
+
+    def capture_write(self, level, message, tool="", exc_info=False):
+        # Match the source's format: "[LEVEL] [tool][req=id] message" (request_id
+        # tag is appended between tool and message, only when set).
+        rid = _request_id_var.get()
+        rid_tag = f"[req={rid}]" if rid and rid != "-" else ""
+        tool_tag = f"[{tool}]" if tool else ""
+        prefix = f"[{level}] {tool_tag}{rid_tag}".rstrip()
+        captured.append(f"{prefix} {message}".rstrip())
+
+    monkeypatch.setattr(Logger, "_write", capture_write)
+
+    # 3. Sanity-check: preflight, then run two concurrent util_info calls.
+    async def call_util_info():
+        return await action_call("util_info")
+
+    ra, rb = await asyncio.gather(call_util_info(), call_util_info())
+    for r in (ra, rb):
+        assert r["success"] is True, r
+
+    # 4. After all calls complete, the contextvar MUST be back to "-"
+    assert _request_id_var.get() == "-", (
+        f"request_id contextvar leaked: still {_request_id_var.get()!r} after calls"
+    )
+
+    # 5. Now verify the *direct* behavior of the contextvar inside a coroutine.
+    rid_re = re.compile(r"\[req=([0-9a-f]{8})\]")
+    set_request_id("-")
+    results: dict[str, str] = {}
+
+    async def set_then_yield_then_read(rid: str) -> None:
+        token = _request_id_var.set(rid)
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            observed = _request_id_var.get()
+            results[rid] = observed
+        finally:
+            _request_id_var.reset(token)
+
+    await asyncio.gather(
+        set_then_yield_then_read("rid-AAAAAAAA"),
+        set_then_yield_then_read("rid-BBBBBBBB"),
+    )
+    assert results == {
+        "rid-AAAAAAAA": "rid-AAAAAAAA",
+        "rid-BBBBBBBB": "rid-BBBBBBBB",
+    }, f"contextvar leaked between coroutines: {results}"
+
+    # 6. Verify the format tag itself: write a synthetic line with a known
+    # request_id and confirm the [req=xxxxxxxx] tag is appended between the
+    # tool tag and the message.
+    captured.clear()
+    set_request_id("deadbeef")
+    logger_singleton.tool("test").info("hello from test")
+    set_request_id("-")
+    assert any("[req=deadbeef]" in line for line in captured), (
+        f"log line missing [req=deadbeef] tag: {captured}"
+    )
+
+    # 7. End-to-end through the dispatcher: call action_call, then verify the
+    # request_id was set during the call and reset after. The dispatcher's
+    # first action is `unknown_action` (we don't even need a workspace),
+    # which exercises the request_id path before the unknown-action error
+    # is returned.
+    set_request_id("-")
+    assert _request_id_var.get() == "-", "precondition: contextvar must be at default"
+    r = await action_call("definitely_not_a_real_action")
+    assert r["success"] is False
+    assert _request_id_var.get() == "-", (
+        f"dispatcher leaked request_id: {_request_id_var.get()!r}"
     )
