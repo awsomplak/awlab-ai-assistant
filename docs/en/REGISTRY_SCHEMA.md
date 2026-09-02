@@ -56,6 +56,30 @@ src/mcp_server/
 └── helpers/                 # existing helpers — REUSED
 ```
 
+### 2.1. Path resolution & symlinks (G5)
+
+Every file-touching action receives a `workspace_path` (absolute project root)
+and resolves it via `pathlib.Path.resolve()` in `Settings._resolve_workspace`
+([`src/mcp_server/config.py`](../../src/mcp_server/config.py )).
+
+**What this means in practice:**
+
+- The agent may pass a symlink (e.g. `/Users/me/proj` → `/Users/me/real-proj`);
+  the MCP stores `.ai/`, `.ai/memory-bank/`, `.ai/codegraph/` under the
+  **resolved** path, not the symlink.
+- Two callers passing different paths that resolve to the same directory
+  share the same `.ai/` state — there is no per-symlink isolation.
+- When `workspace_path` is empty, the server falls back to `Path.cwd().resolve()`.
+- `project_id` is read from `<resolved>/.ai/project-id`; if missing, it is
+  auto-derived from the resolved directory name (slugified, see rule 08).
+
+**Cross-host note:** some hosts serialise the `workspace_path` (or any
+`Path` value) as a string before the dispatcher sees it — `validate_params`
+accepts both via the G13 cross-host string fallback (see §3 below). The
+canonical absolute path the agent originally passed is preserved through
+`Path.resolve()`; only the **display path** the agent sees may differ from
+the on-disk location if symlinks were involved.
+
 ## 3. ActionSpec Schema
 
 Each key in `REGISTRY` is an action name. The value is an `ActionSpec`:

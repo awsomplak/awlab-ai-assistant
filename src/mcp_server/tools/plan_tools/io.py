@@ -182,7 +182,15 @@ def sync_to_agent_recall(
     plan_uuid: str = "",
     updates: list[dict[str, str]] | None = None,
 ) -> bool:
-    """Sync task updates to agent-recall DB. Returns True if successful."""
+    """Sync task updates to agent-recall DB. Returns True if successful.
+
+    Each entry is prefixed with ``[batch_update @ <ts>]`` (G11) so a
+    downstream agent (or a future batched retrospective) can distinguish
+    a single batch update from a ``store_memory_checkpoint`` line, which
+    uses ``[checkpoint @ <ts>]``. Both forms land on the same
+    ``plan_<uuid>`` entity — sorting the entity's contents by ts is enough
+    to reconstruct the plan timeline.
+    """
     # Validate inputs
     valid, err = validate_workspace_path(workspace_path)
     if not valid:
@@ -193,7 +201,10 @@ def sync_to_agent_recall(
         if not updates:
             logger.error("sync_to_agent_recall: updates is empty")
             return False
-        obs_contents = [f"Batch update: {u['task_path']} \u2192 {u['new_status']}" for u in updates]
+        ts = datetime.now(timezone.utc).isoformat()
+        obs_contents = [
+            f"[batch_update @ {ts}] {u['task_path']} \u2192 {u['new_status']}" for u in updates
+        ]
         obs = [
             {
                 "entityName": f"plan_{plan_uuid}",
@@ -222,9 +233,12 @@ def store_memory_checkpoint(
 
     try:
         timestamp = datetime.now(timezone.utc).isoformat()
+        # G11: explicit type tag at the front so the agent-recall timeline
+        # can distinguish checkpoints from batch updates (the other writer
+        # in sync_to_agent_recall uses the [batch_update @ <ts>] prefix).
         obs_contents = [
-            f"Checkpoint: Phase {phase_num} completed at {timestamp}",
-            f"Message: {message}",
+            f"[checkpoint @ {timestamp}] Phase {phase_num} completed",
+            f"[checkpoint @ {timestamp}] Message: {message}",
         ]
         obs = [
             {

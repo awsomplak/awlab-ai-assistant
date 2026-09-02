@@ -16,11 +16,12 @@ Call ``register_dispatcher(target_mcp)`` from any registration module to expose 
 """
 
 import json
+import uuid
 from typing import Annotated, Any
 
 from pydantic import Field
 
-from ..helpers.logger import logger
+from ..helpers.logger import logger, set_request_id
 from ..registry import (
     REGISTRY,
     _maybe_await,
@@ -40,15 +41,49 @@ def _dispatch_error(
     invalid: list[dict[str, str]] | None = None,
     suggestions: list[str] | None = None,
 ) -> str:
-    """Loud, actionable error payload (valid-actions list + did-you-mean + help pointer)."""
-    payload: dict[str, Any] = {"success": False, "action": action, "error": error}
+    """Loud, actionable error payload (valid-actions list + did-you-mean + help pointer).
+
+    The error payload embeds the strict call contract so the agent is re-educated
+    on the very next turn without needing to re-read SKILL.md. This is the
+    fastest possible feedback loop: same session, same tool call, corrected
+    immediately.
+    """
+    payload: dict[str, Any] = {
+        "success": False,
+        "action": action,
+        "error": error,
+        "contract": {
+            "shape": 'action_call(action="<name>", params={"workspace_path": "<abs root>", ...})',
+            "rules": [
+                "params is a SINGLE nested JSON object — never flatten at the top level",
+                "workspace_path (absolute) is required for plan/task/memory/graph/ctx_info",
+                "types are strict: int (not '10'), bool (not 0/1), list, exact enum",
+                "action_help is a SEPARATE tool — do NOT call it via action_call",
+            ],
+        },
+    }
     if invalid:
         payload["invalid"] = invalid
+        # Cross-host hint: when a list/object param fails the type check, the
+        # most common cause is a host that serializes arrays/objects as JSON
+        # strings. The server now auto-parses those (see validate_params), but
+        # if it still fails, the caller's value isn't valid JSON. Tell them
+        # how to recover.
+        for err in invalid:
+            if isinstance(err, dict) and err.get("reason") in ("expected array", "expected object"):
+                payload["hint"] = (
+                    f"If your host serializes list/object params as JSON strings, "
+                    f"pass a valid JSON string for `{err.get('param')}` (e.g. "
+                    f"'[{{\"signature\":\"x\",\"value\":\"y\"}}]' instead of an array). "
+                    f"The server will parse it back. If you already do, the value "
+                    f"isn't valid JSON — check quoting."
+                )
+                break
     if suggestions:
         payload["did_you_mean"] = suggestions
     if action not in REGISTRY:
         payload["valid_actions"] = sorted(REGISTRY)
-        payload["help"] = 'Use action_help(action="<name>") for usage.'
+        payload["help"] = 'Call the action_help tool (NOT action_call) with action="<name>".'
     return json.dumps(payload)
 
 
@@ -57,6 +92,27 @@ async def _action_call(
     params: Annotated[dict[str, Any] | None, Field(description="JSON object of the action's params")] = None,
 ) -> str:
     """Dispatch an MCP action. The server runs preconditions/pipeline automatically."""
+    # Stamp a per-call request_id into the logger context (async-safe via
+    # contextvars: each asyncio task gets its own copy, so concurrent calls
+    # cannot bleed tags into each other's log lines). 8 hex chars — short
+    # enough to grep, unique enough within a session.
+    request_id = uuid.uuid4().hex[:8]
+    set_request_id(request_id)
+    try:
+        return await _action_call_impl(action, params, request_id)
+    finally:
+        # Reset the context so the request_id does not leak into background
+        # ticks, the bake scheduler, or whatever runs after this call returns.
+        set_request_id("-")
+
+
+async def _action_call_impl(
+    action: str,
+    params: dict[str, Any] | None,
+    request_id: str,
+) -> str:
+    """Implementation of action_call — split out so the request_id context
+    can be set/cleared in `_action_call` without polluting every return path."""
     spec, canonical, suggestions = resolve_action(action)
     if spec is None:
         logger.tool("action_call").info(f"unknown action '{action}'")

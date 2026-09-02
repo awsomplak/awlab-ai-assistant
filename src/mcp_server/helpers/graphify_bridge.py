@@ -240,7 +240,11 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     if current is not t or not t.is_alive():
                         return  # worker finished or replaced
                     last = _BACKGROUND_PROGRESS.get(key)
-                    stalled = last is None or (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
+                    # Only flag stalled once the worker has reported at least
+                    # one chunk (last is not None). Cold-start: the worker may be
+                    # mid-extract and hasn't stamped progress yet — that's not
+                    # a stall, it's a slow first chunk.
+                    stalled = last is not None and (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
                 if stalled and key not in _BACKGROUND_ERRORS:
                     _bg_error(
                         key,

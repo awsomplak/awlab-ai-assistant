@@ -330,7 +330,3 @@ class _Settings:
 
 # Global singleton — bootstrap will be called from lifecycle.main()
 settings = _Settings()
-
-
-# Singleton instance
-settings = _Settings()

@@ -5,9 +5,15 @@ Covers:
 - read_utf8 (read existing file, missing file)
 - parse_tasks_md (checklist parsing, headings, status markers)
 - update_task_status_in_md (modify a task status in-place)
+- write_file_safe (atomic write + cross-process file lock)
 """
 
+from __future__ import annotations
+
+import multiprocessing as _mp
 from pathlib import Path
+
+import pytest
 
 from mcp_server.helpers import (
     parse_tasks_md,
@@ -159,3 +165,84 @@ class TestUpdateTaskStatusInMd:
         # Check that Phase 2 content is still preserved
         assert "Phase 2: Frontend Auth" in updated
         assert "Task 3: Login page" in updated
+
+
+# ── Task 3.2: cross-process file-lock race (G4) ─────────────────────────────
+#
+# Two child processes target the same path via write_file_safe simultaneously.
+# The flock (POSIX) or sentinel-file (Windows) must serialize them so the final
+# file content is exactly one of the two payloads — never a mix, never empty,
+# never a half-write. Without the lock, the atomic-replace pattern alone is
+# not enough if two processes both think they own the write.
+
+
+def _race_worker(path_str: str, payload: str, ready_evt, go_evt, done_evt) -> None:
+    """Subprocess worker: block on ``go_evt``, then write ``payload`` to ``path``.
+
+    Run via ``multiprocessing.get_context("spawn")`` so each child is a fresh
+    process that imports this module — the lock can therefore be observed
+    across processes (in-process locks like ``threading.Lock`` would NOT be
+    sufficient). We sync the two children on a barrier so they hit the lock
+    as close to simultaneously as possible.
+    """
+    from mcp_server.helpers.file_utils import write_file_safe
+
+    ready_evt.set()       # tell parent we're initialized
+    go_evt.wait()         # wait for the green light
+    # Tiny sleep inside the critical section would expose the race most
+    # clearly, but the lock must hold regardless — write_file_safe blocks
+    # the second child until the first releases.
+    assert write_file_safe(Path(path_str), payload), f"child failed to write {path_str}"
+    done_evt.set()
+
+
+def test_two_processes_writing_same_path_do_not_corrupt(tmp_path: Path) -> None:
+    """Two child processes call write_file_safe on the same path back-to-back.
+
+    The flock (POSIX) / sentinel-file (Windows) must serialize them so the
+    final content is exactly one of the two payloads — proving no torn write
+    and no mixed bytes.
+    """
+    target = tmp_path / "tasks.md"
+    payload_a = "A" * 200 + "_marker_A"     # long enough to span multiple write() syscalls
+    payload_b = "B" * 200 + "_marker_B"
+
+    ctx = _mp.get_context("spawn")
+    # 2 events per process: ready, go, done — used as a barrier so both
+    # children hit write_file_safe as close to simultaneously as possible.
+    ready_a, ready_b = ctx.Event(), ctx.Event()
+    go = ctx.Event()
+    done_a, done_b = ctx.Event(), ctx.Event()
+
+    proc_a = ctx.Process(
+        target=_race_worker, args=(str(target), payload_a, ready_a, go, done_a)
+    )
+    proc_b = ctx.Process(
+        target=_race_worker, args=(str(target), payload_b, ready_b, go, done_b)
+    )
+    proc_a.start()
+    proc_b.start()
+    # Wait for both children to be initialized
+    assert ready_a.wait(timeout=10), "child A never became ready"
+    assert ready_b.wait(timeout=10), "child B never became ready"
+    # Release them simultaneously
+    go.set()
+    # Wait for both to complete
+    assert done_a.wait(timeout=10), f"child A timed out (exit={proc_a.exitcode})"
+    assert done_b.wait(timeout=10), f"child B timed out (exit={proc_b.exitcode})"
+    proc_a.join(timeout=5)
+    proc_b.join(timeout=5)
+
+    # Final file must exist (both children reported success) and contain
+    # EXACTLY one of the two payloads — no mixing, no truncation.
+    assert target.exists(), "target file was never written"
+    final = target.read_text(encoding="utf-8")
+    assert final in (payload_a, payload_b), (
+        f"final content is neither payload A nor payload B (corruption): "
+        f"len={len(final)}, head={final[:60]!r}, tail={final[-60:]!r}"
+    )
+    # Lock sentinel must have been cleaned up (write_file_safe releases
+    # the fd / unlinks the sentinel on every exit path).
+    assert not target.with_suffix(target.suffix + ".lock").exists(), (
+        "lock sentinel was not cleaned up after the race"
+    )

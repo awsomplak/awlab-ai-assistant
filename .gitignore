@@ -19,3 +19,6 @@
 *.log
 *.spec
 .env
+
+# macOS Finder artifacts
+.DS_Store

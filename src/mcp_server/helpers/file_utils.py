@@ -10,6 +10,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+# POSIX-only: fcntl.flock is atomic at the kernel level (no PID race, no stale
+# detection needed). On non-POSIX platforms (Windows) we fall back to the
+# `O_CREAT|O_EXCL` sentinel-file mechanism with stale-PID detection.
+try:
+    import fcntl as _fcntl  # POSIX
+    _HAS_FCNTL = True
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
+
 from ..config import settings
 from .logger import logger
 from .response import fail_obj, ok_obj, resp_obj
@@ -22,17 +32,58 @@ def read_file_safe(path: Path | str) -> str | None:
         if p.exists() and p.is_file():
             return p.read_text(encoding="utf-8")
     except (PermissionError, OSError) as e:
-        print(f"Error reading {path}: {e}", file=sys.stderr)
         logger.error(f"Error reading {path}: {e}")
     return None
 
 
-def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> bool:
-    """Acquire an exclusive lock file using O_CREAT|O_EXCL.
+def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
+    """Acquire an exclusive lock on ``lock_path``.
 
-    Returns True if the lock was acquired, False on timeout.
-    Retries with exponential backoff up to ``timeout`` seconds.
+    Returns the open file descriptor on success, or ``None`` on timeout.
+    The caller MUST keep the fd open for as long as the lock is held — closing
+    the fd (or calling ``_release_lock``) drops the lock.
+
+    POSIX path: uses ``fcntl.flock(LOCK_EX|LOCK_NB)`` which is atomic at the
+    kernel level — no PID race, no stale-PID detection needed. On contention,
+    retries with exponential backoff up to ``timeout`` seconds.
+
+    Non-POSIX path (Windows): falls back to the ``O_CREAT|O_EXCL`` sentinel
+    file mechanism with stale-PID detection. Returns 0 (a truthy fd-equivalent)
+    on success and closes the file before returning so the lock is held by the
+    sentinel-file's existence, not by an open fd.
     """
+    if _HAS_FCNTL:
+        # POSIX: open (creating if needed) and flock. Keep the fd open for
+        # the duration of the critical section — closing it releases the lock.
+        deadline = time.monotonic() + timeout
+        delay = 0.01
+        # Ensure the lock file exists (flock works on any open fd, but the
+        # caller expects a path that exists on disk too).
+        try:
+            lock_path.touch(exist_ok=True)
+        except OSError:
+            pass
+        while time.monotonic() < deadline:
+            try:
+                fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o644)
+            except OSError:
+                time.sleep(delay)
+                delay = min(delay * 2, 0.2)
+                continue
+            try:
+                _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                return fd  # acquired — caller owns the fd
+            except (BlockingIOError, OSError):
+                # EWOULDBLOCK / EAGAIN: another process holds the lock. Close
+                # our fd and retry with backoff.
+                os.close(fd)
+                time.sleep(delay)
+                delay = min(delay * 2, 0.2)
+        return None
+
+    # Windows (or any platform without fcntl): sentinel-file mechanism.
+    # Returns 0 on success (a truthy int that mimics the POSIX fd return; the
+    # sentinel file's existence is what holds the lock).
     deadline = time.monotonic() + timeout
     delay = 0.05
     while time.monotonic() < deadline:
@@ -40,7 +91,7 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> bool:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
-            return True
+            return 0
         except FileExistsError:
             # Check if the lock is stale (process no longer exists)
             try:
@@ -56,11 +107,22 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> bool:
                 pass
             time.sleep(delay)
             delay = min(delay * 2, 0.5)
-    return False
+    return None
 
 
-def _release_lock(lock_path: Path) -> None:
-    """Release a previously acquired lock file."""
+def _release_lock(lock_path: Path, fd: int | None = None) -> None:
+    """Release a previously acquired lock.
+
+    POSIX: pass the fd returned by ``_acquire_lock`` — closing it (and the
+    caller's reference) releases the flock. We also ``unlink`` the sentinel
+    file for parity with the previous Windows path (harmless on POSIX).
+    Non-POSIX: only the sentinel file's existence matters; ``unlink`` it.
+    """
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
     try:
         lock_path.unlink(missing_ok=True)
     except OSError:
@@ -79,7 +141,8 @@ def write_file_safe(path: Path | str, content: str) -> bool:
         p.parent.mkdir(parents=True, exist_ok=True)
         lock_path = p.with_suffix(p.suffix + ".lock")
 
-        if not _acquire_lock(lock_path):
+        lock_fd = _acquire_lock(lock_path)
+        if lock_fd is None:
             logger.error(f"Could not acquire lock for {path} (timeout)")
             return False
 
@@ -100,11 +163,13 @@ def write_file_safe(path: Path | str, content: str) -> bool:
                     pass
                 raise
         finally:
-            _release_lock(lock_path)
+            # _release_lock accepts the fd so the POSIX flock can be released by
+            # closing it. On Windows the sentinel file's existence is what
+            # actually holds the lock — _release_lock unlinks it there.
+            _release_lock(lock_path, fd=lock_fd)
 
         return True
     except (PermissionError, OSError) as e:
-        print(f"Error writing {path}: {e}", file=sys.stderr)
         logger.error(f"Error writing {path}: {e}")
     return False
 
