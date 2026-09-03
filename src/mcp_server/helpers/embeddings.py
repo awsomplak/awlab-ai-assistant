@@ -71,10 +71,12 @@ _MODEL_NAME = "BAAI/bge-small-en-v1.5"
 def ensure_model_downloaded() -> bool:
     """Download the embedding model at startup if fastembed is installed.
 
-    Checks whether the model directory already exists in
-    ``~/.awlab-id/agent-memory/models/BAAI/bge-small-en-v1.5/``.
-    If missing, triggers a download via the TextEmbedding constructor
-    with ``cache_dir`` pointing to the models directory.
+    Checks whether the model directory already exists in the cache.
+    Fastembed internally maps ``BAAI/bge-small-en-v1.5`` to the
+    ``qdrant/bge-small-en-v1.5-onnx-q`` ONNX repo, so the HuggingFace
+    cache stores it under ``models--qdrant--bge-small-en-v1.5-onnx-q/``.
+    We probe for **both** the user-facing name and the actual repo name
+    to avoid a re-download that would silently double the model storage.
 
     Returns:
         True if the model is available (downloaded or already present),
@@ -85,13 +87,21 @@ def ensure_model_downloaded() -> bool:
         return False
 
     cache_dir = _models_dir()
-    # HuggingFace cache uses "models--org--name" format
+
+    # Probe the actual cached directories.  The canonical check is the
+    # qdrant ONNX repo (what fastembed actually downloads); we also
+    # check the BAAI name for backwards-compat with older fastembed
+    # versions or manual installs.
     hf_name = _MODEL_NAME.replace("/", "--")
-    model_dir = cache_dir / f"models--{hf_name}"
-    snapshots_dir = model_dir / "snapshots"
-    if model_dir.exists() and snapshots_dir.exists() and any(snapshots_dir.iterdir()):
-        log.info(f"Model {_MODEL_NAME} already cached")
-        return True
+    probe_names = [
+        "models--qdrant--bge-small-en-v1.5-onnx-q",   # fastembed 0.6+
+        f"models--{hf_name}",                           # direct BAAI cache
+    ]
+    for probe in probe_names:
+        snapshots_dir = cache_dir / probe / "snapshots"
+        if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+            log.info(f"Model {_MODEL_NAME} already cached ({probe})")
+            return True
 
     log.info(f"Downloading model {_MODEL_NAME}…")
     try:
