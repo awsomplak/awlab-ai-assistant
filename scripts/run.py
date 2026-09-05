@@ -27,6 +27,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Windows consoles default to cp1252, which cannot encode the box-drawing /
 # checkmark glyphs used in this CLI. Reconfigure stdout/stderr to UTF-8 so the
@@ -196,25 +197,27 @@ Publish /dist contents to AI assistant locations.
 Use --uninstall to remove previously installed files.
 
 Options:
-  --target=<name>   One of: cline, copilot, claude, hermes, opencode, all
+  --target=<name>   One of: cline, copilot, claude, hermes, opencode, antigravity, all
   --skip-build      Fail if /dist doesn't exist instead of building
   --force           Skip confirmation prompts
   --uninstall       Remove installed files instead of installing
 
 Target Paths:
   Skills:
-    cline     ~/.agents/skills/
-    copilot   ~/.agents/skills/ (shared with Cline)
-    claude    ~/.claude/skills/
-    hermes    ~/.hermes/skills/
-    opencode  ~/.config/opencode/skills/
+    cline        ~/.agents/skills/
+    copilot      ~/.agents/skills/ (shared with Cline)
+    claude       ~/.claude/skills/
+    hermes       ~/.hermes/skills/
+    opencode     ~/.config/opencode/skills/
+    antigravity  ~/.gemini/config/skills/
 
   Rules:
-    cline     ~/Documents/Cline/Rules/
-    copilot   ~/.copilot/instructions/
-    claude    ~/.claude/CLAUDE.md
-    hermes    ~/.hermes/skills/
-    opencode  ~/.config/opencode/AGENTS.md
+    cline        ~/Documents/Cline/Rules/
+    copilot      ~/.copilot/instructions/
+    claude       ~/.claude/CLAUDE.md
+    hermes       ~/.hermes/skills/
+    opencode     ~/.config/opencode/AGENTS.md
+    antigravity  ~/.gemini/config/rules/
 """,
         "test": """\
 Usage: run.py test [<pytest-args>...]
@@ -239,6 +242,7 @@ Output:
   ├── copilot/             (global skills and rules for copilot)
   ├── hermes/              (global skills and rules for hermes)
   ├── opencode/            (global AGENTS.md rules + skills)
+  ├── antigravity/         (modular rules, skills, mcp, hooks)
   └── .clinerules          (Cline per project rules ready to copy)
 """,
     }
@@ -368,7 +372,8 @@ def _copy_agents(dest_dir: Path, label: str) -> None:
     _ok(f"{label}  ({len(list(AGENTS_SRC.glob('*.md')))} agent file(s))")
 
 
-HOOK_CMD = "awlab-ai-assistant.exe hook"
+_BIN_EXT = ".exe" if sys.platform.startswith("win") else ""
+HOOK_CMD = f"awlab-ai-assistant{_BIN_EXT} hook"
 
 
 def _hook_config_for(agent: str, events: list[str]) -> str:
@@ -397,6 +402,19 @@ def _hook_config_for(agent: str, events: list[str]) -> str:
             )
             + "\n"
         )
+    if agent == "antigravity":
+        hook_entries: dict[str, list[dict[str, Any]]] = {}
+        for ev in events:
+            if ev in ("PreToolUse", "PostToolUse"):
+                hook_entries[ev] = [
+                    {
+                        "matcher": "*",
+                        "hooks": [{"type": "command", "command": f"{HOOK_CMD} --agent antigravity --event {ev}"}],
+                    }
+                ]
+            else:
+                hook_entries[ev] = [{"type": "command", "command": f"{HOOK_CMD} --agent antigravity --event {ev}"}]
+        return json.dumps({"awlab-ai-assistant": hook_entries}, indent=2) + "\n"
     # copilot / cline → registration lives in the host UI/settings; emit a note.
     return (
         f"# {agent} hook registration (via host UI/settings):\n"
@@ -420,6 +438,13 @@ def _baking_capability_note(agent: str) -> str:
             "spawn the shared `awlab-baker` subagent (see `docs/en/PATTERN_BAKING_PROTOCOL.md`) to "
             "observe → mine → report a distilled pattern list; register hooks "
             f"(`{HOOK_CMD} --agent {agent} --event ...`) for zero-LLM captures."
+        )
+    elif agent == "antigravity":
+        tier = (
+            "- **Tier: hooks + inline (Antigravity IDE)** — lifecycle hooks "
+            f"(`{HOOK_CMD} --agent antigravity --event ...`) capture observations with zero LLM cost; "
+            "the server background bake-scheduler processes candidates automatically; act on "
+            "`pattern_candidates` yourself or via skills."
         )
     else:  # cline / opencode — built-in subagents cannot call MCP
         tier = (
@@ -466,7 +491,11 @@ def _compile_agents(profiles_dir: Path) -> None:
         "utf-8",
     )
     (hooks_dir / "cline.hooks.txt").write_text(_hook_config_for("cline", ["NewTask", "PostToolUse", "Stop"]), "utf-8")
-    _ok("hooks/  (4 per-host hook-registration configs, all → same exe)")
+    (hooks_dir / "antigravity.hooks.json").write_text(
+        _hook_config_for("antigravity", ["PreToolUse", "PostToolUse", "PreInvocation", "Stop"]),
+        "utf-8",
+    )
+    _ok("hooks/  (5 per-host hook-registration configs, all → same exe)")
 
 
 def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
@@ -644,7 +673,7 @@ def _compile_opencode(rules: list[dict], skills: list[dict], profiles_dir: Path)
                 "mcp": {
                     "awlab-ai-assistant": {
                         "type": "local",
-                        "command": ["dist/bin/awlab-ai-assistant.exe"],
+                        "command": [f"dist/bin/awlab-ai-assistant{_BIN_EXT}"],
                         "enabled": True,
                     }
                 },
@@ -655,6 +684,91 @@ def _compile_opencode(rules: list[dict], skills: list[dict], profiles_dir: Path)
         "utf-8",
     )
     _ok("opencode/opencode.mcp.json  (merge the `mcp` key into your opencode.json)")
+
+
+def _compile_antigravity(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
+    """Antigravity & Antigravity IDE: modular rules + skills + mcp snippet + instructions + hooks."""
+    ag_dir = profiles_dir / "antigravity"
+    ag_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Modular Rules (rules/*.md) with Antigravity-specific planning protocol ──
+    rules_dir = ag_dir / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    antigravity_planning_section = (
+        "\n\n## Antigravity IDE Planning & Walkthrough Protocol\n\n"
+        "When running in Antigravity or Antigravity IDE:\n"
+        "1. **Threshold-Gated Planning**: Simple tasks, Q&A, and quick fixes execute directly "
+        "without generating `.ai/artifacts/{uuid}/` (avoids repo clutter). Only when Antigravity "
+        "enters Planning Mode or the user asks for a plan is a durable plan referenced or created.\n"
+        "2. **Session UI vs. Durable Persistence**:\n"
+        "   - During Planning Mode, write `implementation_plan.md` for the user's interactive "
+        "review modal and 'Proceed' approval.\n"
+        "   - Mirror/link tasks into `.ai/artifacts/{uuid}/tasks.md` and keep them updated with `task_update`.\n"
+        "3. **Walkthrough Persistence**: When execution completes, write `walkthrough.md` for the IDE UI "
+        'AND persist it to `.ai/artifacts/{uuid}/walkthrough.md` via `action_call(action="plan_doc", '
+        'params={"plan_uuid": "<uuid>", "doc": "walkthrough", "mode": "write", "content": ...})`.\n'
+    )
+
+    for r in rules:
+        content = _strip_html_comments(r["content"])
+        content = _rewrite_refs(content)
+        # Inject Antigravity-specific planning rules strictly for Antigravity only
+        if r["filename"] == "02-plan-artifacts.md":
+            content += antigravity_planning_section
+        (rules_dir / r["filename"]).write_text(content, "utf-8")
+
+    (rules_dir / "99-baking-capabilities.md").write_text(_baking_capability_note("antigravity"), "utf-8")
+    _ok(f"antigravity/rules/  ({len(rules)} modular rules with Antigravity-scoped planning protocol)")
+
+    # ── Skills → skills/<name>/SKILL.md ──
+    skills_dir = ag_dir / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for s in skills:
+        d = skills_dir / s["name"]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(s["content"], "utf-8")
+    _ok(f"antigravity/skills/  ({len(skills)} skills)")
+
+    # ── MCP wiring snippet (merge into ~/.gemini/config/mcp_config.json) ──
+    (ag_dir / "mcp_config.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "awlab-ai-assistant": {
+                        "command": f"dist/bin/awlab-ai-assistant{_BIN_EXT}",
+                        "args": [],
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        "utf-8",
+    )
+    _ok("antigravity/mcp_config.json  (merge into ~/.gemini/config/mcp_config.json)")
+
+    # ── Tool instructions (for ~/.gemini/antigravity-ide/mcp/awlab-ai-assistant/instructions.md) ──
+    (ag_dir / "instructions.md").write_text(
+        "# awlab-ai-assistant Best Practices for Antigravity IDE\n\n"
+        "This MCP server provides 23 actions routed through 2 tools: `action_call` and `action_help`.\n\n"
+        "## Key Rules:\n"
+        "1. **Always pass `workspace_path` (absolute path)** for plan, task, memory, graph, and context actions.\n"
+        '2. **Call `action_help(action="<name>")`** to inspect required parameters before calling '
+        "an unfamiliar action.\n"
+        "3. **Update tasks immediately**: After completing any task step, call `task_update` with `updates`.\n"
+        "4. **Persist walkthrough**: When finishing a plan, call "
+        '`plan_doc(doc="walkthrough", mode="write", content=...)`.\n',
+        "utf-8",
+    )
+    _ok("antigravity/instructions.md  (tool guidance for Antigravity IDE)")
+
+    # ── Lifecycle Hooks snippet ──
+    (ag_dir / "hooks.json").write_text(
+        _hook_config_for("antigravity", ["PreToolUse", "PostToolUse", "PreInvocation", "Stop"]),
+        "utf-8",
+    )
+    _ok("antigravity/hooks.json  (merge into ~/.gemini/config/hooks.json or .agents/hooks.json)")
 
 
 def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
@@ -676,6 +790,7 @@ def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
     _compile_claude(rules, skills, PROFILES_DIR)
     _compile_hermes(rules, skills, PROFILES_DIR)
     _compile_opencode(rules, skills, PROFILES_DIR)
+    _compile_antigravity(rules, skills, PROFILES_DIR)
     _compile_agents(PROFILES_DIR)
 
     _detail(f"{len(rules)} rules, {len(skills)} skills")
@@ -988,6 +1103,20 @@ PUBLISH_MAP = {
             ("profiles/opencode/AGENTS.md", "{home}/.config/opencode/AGENTS.md"),
             ("profiles/opencode/skills", "{home}/.config/opencode/skills"),
             ("profiles/opencode/opencode.mcp.json", "{home}/.config/opencode/awlab-mcp.json"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "antigravity": (
+        "Google Antigravity & Antigravity IDE",
+        [
+            ("profiles/antigravity/rules", "{home}/.gemini/config/rules"),
+            ("profiles/antigravity/skills", "{home}/.gemini/config/skills"),
+            ("profiles/antigravity/mcp_config.json", "{home}/.gemini/config/awlab-mcp_config.json"),
+            (
+                "profiles/antigravity/instructions.md",
+                "{home}/.gemini/antigravity-ide/mcp/awlab-ai-assistant/instructions.md",
+            ),
+            ("profiles/hooks/antigravity.hooks.json", "{home}/.gemini/config/awlab-hooks.json"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
         ],
     ),
