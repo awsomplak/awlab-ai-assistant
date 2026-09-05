@@ -48,7 +48,7 @@ Tata letak repositori:
 - **agent-recall** (sebagai backend memori / knowledge-graph)
 - **graphify** (melakukan indeks code / code-graph)
 - **Model AI** yang mendukung penggunaan tool
-- Salah satu dari: **Cline**, **VSCode Copilot**, **Claude Code**, **Hermes Agent**, atau **OpenCode**
+- Salah satu dari: **Cline**, **VSCode Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, atau **Google Antigravity / Antigravity IDE**
 
 **Saran kebutuhan LLM model:** 🟢 Sederhana → lokal 1.5B–3B · 🟡 Menengah → lokal 14B–32B · 🔴 Kompleks → frontier (Claude, GPT)
 
@@ -139,12 +139,13 @@ AWLab-ID — **AI-Assisted Development System** menyediakan **14 rules** dan **5
 
 ```bash
 # Publikasikan ke asisten tertentu
-python scripts/run.py publish --target=cline     # Cline
-python scripts/run.py publish --target=copilot   # VSCode Copilot
-python scripts/run.py publish --target=claude    # Claude Code
-python scripts/run.py publish --target=hermes    # Hermes Agent
-python scripts/run.py publish --target=opencode  # OpenCode
-python scripts/run.py publish --target=all       # Semua asisten
+python scripts/run.py publish --target=cline        # Cline
+python scripts/run.py publish --target=copilot      # VSCode Copilot
+python scripts/run.py publish --target=claude       # Claude Code
+python scripts/run.py publish --target=hermes       # Hermes Agent
+python scripts/run.py publish --target=opencode     # OpenCode
+python scripts/run.py publish --target=antigravity  # Google Antigravity & Antigravity IDE
+python scripts/run.py publish --target=all          # Semua asisten
 
 # Copot pemasangan
 python scripts/run.py publish --uninstall
@@ -160,6 +161,7 @@ python scripts/run.py publish --uninstall --target=copilot
 | `claude` | `~/.claude/CLAUDE.md` | `~/.claude/skills/` |
 | `hermes` | — (dikemas sebagai skill) | `~/.hermes/skills/` |
 | `opencode` | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills/` |
+| `antigravity` | `~/.gemini/config/rules/` | `~/.gemini/config/skills/` |
 
 > 💡 Jika Anda melewati panduan §3 - [build binary executable](#3-build-binary-executable), fungsi `publish` akan otomatis melakukan kompilasi profil agent saat folder `dist/` tidak tersedia sebelumnya.
 > Selesai — publikasi hanya perlu dilakukan sekali saja. Berikutnya, sambungkan server MCP untuk agent Anda (panduan §5 - [sambungkan server mcp](#5-sambungkan-server-mcp)).
@@ -235,6 +237,21 @@ Tambahkan entri di key `mcp` ke `~/.config/opencode/opencode.json` (OpenCode mem
       "type": "local",
       "command": ["dist/bin/awlab-ai-assistant.exe"],
       "enabled": true
+    }
+  }
+}
+```
+
+### Google Antigravity & Antigravity IDE
+
+Tambahkan entri `awlab-ai-assistant` ke `~/.gemini/config/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "awlab-ai-assistant": {
+      "command": "dist/bin/awlab-ai-assistant.exe",
+      "args": []
     }
   }
 }

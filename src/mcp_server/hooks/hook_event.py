@@ -8,12 +8,12 @@ host adapter (prompt / tool / pre_tool / stop / session / subagent).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass
-class HookEvent:
+
+class HookEvent(BaseModel):
     """Normalized hook event shared by all hosts."""
 
     agent: str = ""
@@ -25,18 +25,23 @@ class HookEvent:
     turn_id: str = ""
     user_message: str = ""
     tool_name: str = ""
-    tool_input: dict[str, Any] = field(default_factory=dict)
+    tool_input: dict[str, Any] = Field(default_factory=dict)
     tool_result: str = ""
     assistant_response: str = ""
-    subagent: dict[str, Any] = field(default_factory=dict)
-    extra: dict[str, Any] = field(default_factory=dict)
+    subagent: dict[str, Any] = Field(default_factory=dict)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def command(self) -> str:
         """Extract the shell command from tool_input, if any."""
         if not self.tool_input:
             return ""
-        return str(self.tool_input.get("command") or self.tool_input.get("tool_input") or "")
+        return str(
+            self.tool_input.get("command")
+            or self.tool_input.get("CommandLine")
+            or self.tool_input.get("tool_input")
+            or ""
+        )
 
 
 # Event kinds (anti-loop map: which kind may inject vs observer-only).

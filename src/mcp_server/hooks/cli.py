@@ -20,14 +20,16 @@ import argparse
 import json
 import sys
 
+from ..daemon import send_to_daemon
 from ..helpers.logger import logger
 from .adapters import normalize_payload, serialize_output
-from .handler import handle_hook
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="awlab-ai-assistant hook", description="Unified host hook handler")
-    p.add_argument("--agent", required=True, choices=["copilot", "claude", "cline", "hermes"])
+    p.add_argument(
+        "--agent", required=True, choices=["copilot", "claude", "cline", "hermes", "antigravity", "opencode"]
+    )
     p.add_argument("--event", required=True, help="Host lifecycle event name")
     p.add_argument("--project", default="", help="Project path fallback (hosts without payload context)")
     return p.parse_args(argv)
@@ -40,7 +42,7 @@ def run_hook(argv: list[str]) -> int:
     try:
         raw_text = sys.stdin.read() if not sys.stdin.isatty() else ""
         raw: dict = json.loads(raw_text) if raw_text.strip() else {}
-    except Exception as e:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         logger.tool("hook").warning(f"hook({args.agent}/{args.event}) bad stdin JSON: {e}")
         raw = {}
 
@@ -54,12 +56,13 @@ def run_hook(argv: list[str]) -> int:
         print("{}")
         return 1
 
-    result = handle_hook(hook)
+    result = send_to_daemon(hook)
+
     out = serialize_output(args.agent, args.event, result)
     print(out)
 
     # BLOCK verdict → exit 2 for hosts that use exit-2-for-block.
-    if result.get("block") and args.agent in ("claude", "hermes"):
+    if result.get("block") and args.agent in ("claude", "hermes", "antigravity"):
         return 2
     return 0
 

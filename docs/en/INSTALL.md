@@ -41,11 +41,9 @@ project-root/
 
 ## Requirements
 
-- **Python 3.10+** (for the MCP server)
-- **agent-recall** (knowledge-graph memory backend)
-- **graphifyy** (code knowledge-graph indexing)
-- **AI model** with tool-calling support
-- One of: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, or **OpenCode**
+- **Python 3.10+**
+- `git`
+- One of: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, or **Google Antigravity / Antigravity IDE**
 
 **Model pairing:** 🟢 Simple → local 1.5B–3B · 🟡 Medium → local 14B–32B · 🔴 Complex → frontier (Claude, GPT)
 
@@ -127,12 +125,13 @@ AWLab-ID ships **14 rules** and **5 skills** as sources under `assets/`. Assumin
 
 ```bash
 # Publish to specific assistant(s)
-python scripts/run.py publish --target=cline     # Cline
-python scripts/run.py publish --target=copilot   # VS Code Copilot
-python scripts/run.py publish --target=claude    # Claude Code
-python scripts/run.py publish --target=hermes    # Hermes Agent
-python scripts/run.py publish --target=opencode  # OpenCode
-python scripts/run.py publish --target=all       # All assistants
+python scripts/run.py publish --target=cline        # Cline
+python scripts/run.py publish --target=copilot      # VS Code Copilot
+python scripts/run.py publish --target=claude       # Claude Code
+python scripts/run.py publish --target=hermes       # Hermes Agent
+python scripts/run.py publish --target=opencode     # OpenCode
+python scripts/run.py publish --target=antigravity  # Google Antigravity & Antigravity IDE
+python scripts/run.py publish --target=all          # All assistants
 
 # Uninstall
 python scripts/run.py publish --uninstall
@@ -148,6 +147,7 @@ python scripts/run.py publish --uninstall --target=copilot
 | `claude` | `~/.claude/CLAUDE.md` | `~/.claude/skills/` |
 | `hermes` | — (packaged as skill) | `~/.hermes/skills/` |
 | `opencode` | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills/` |
+| `antigravity` | `~/.gemini/config/rules/` | `~/.gemini/config/skills/` |
 
 > 💡 If you skipped §2, `publish` auto-builds when `dist/` is missing.
 > Done — publishing is a one-time step. Next, wire the MCP server for your agent (§4).
@@ -222,6 +222,21 @@ Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `
       "type": "local",
       "command": ["dist/bin/awlab-ai-assistant.exe"],
       "enabled": true
+    }
+  }
+}
+```
+
+### Google Antigravity & Antigravity IDE
+
+Merge the `awlab-ai-assistant` entry into `~/.gemini/config/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "awlab-ai-assistant": {
+      "command": "dist/bin/awlab-ai-assistant.exe",
+      "args": []
     }
   }
 }
