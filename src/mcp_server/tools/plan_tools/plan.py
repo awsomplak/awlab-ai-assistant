@@ -18,6 +18,7 @@ from ...helpers import (
     parse_tasks_md,
     read_utf8,
     resolve_dep_status,
+    resp_obj,
     validate_uuid,
     validate_workspace_path,
 )
@@ -45,6 +46,52 @@ from .io import (
 )
 
 # ── Registry Tools ─────────────────────────────────────────────────────────
+
+
+async def create_plan_action(
+    workspace_path: str | Path,
+    summary: str,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Create a new plan via MCP: generate UUID, scaffold files, update registry."""
+    valid, err = validate_workspace_path(workspace_path)
+    if not valid:
+        return fail_obj(error=err)
+
+    # 1. Generate UUID and registry row (returns created_uuid)
+    reg_result = _create_registry_entry(workspace_path, summary)
+    if not reg_result.get("success"):
+        return reg_result
+
+    uuid_str = reg_result.get("created_uuid")
+    if not uuid_str:
+        return fail_obj(error="Failed to extract UUID from registry creation")
+
+    # 2. Create the directory .ai/artifacts/{uuid}/
+    artifacts_dir = Path(workspace_path) / ".ai" / "artifacts" / uuid_str
+    try:
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return fail_obj(error=f"Failed to create artifact directory: {e}")
+
+    # 3. Scaffold plan.md and tasks.md
+    plan_content = f"# Plan: {summary}\n\n## Overview\n\n## Approach\n\n## Expected Outcomes\n"
+    tasks_content = f"# Tasks: {summary}\n\n## Phase 1: Setup\n- [ ] 1.1 Initial task\n"
+
+    plan_path = artifacts_dir / "plan.md"
+    tasks_path = artifacts_dir / "tasks.md"
+
+    from ...helpers.file_utils import write_file_safe
+
+    write_file_safe(plan_path, plan_content)
+    write_file_safe(tasks_path, tasks_content)
+
+    return resp_obj(
+        success=True,
+        plan_uuid=uuid_str,
+        message=f"Plan created successfully in .ai/artifacts/{uuid_str}/",
+        registry_updated=True,
+    )
 
 
 async def list_registry(workspace_path: str, project_id: str | None = None) -> dict[str, Any]:

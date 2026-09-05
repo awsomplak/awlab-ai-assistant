@@ -74,7 +74,7 @@ def _dispatch_error(
                 payload["hint"] = (
                     f"If your host serializes list/object params as JSON strings, "
                     f"pass a valid JSON string for `{err.get('param')}` (e.g. "
-                    f"'[{{\"signature\":\"x\",\"value\":\"y\"}}]' instead of an array). "
+                    f'\'[{{"signature":"x","value":"y"}}]\' instead of an array). '
                     f"The server will parse it back. If you already do, the value "
                     f"isn't valid JSON — check quoting."
                 )
@@ -89,7 +89,13 @@ def _dispatch_error(
 
 async def _action_call(
     action: Annotated[str, Field(description="Action name (see action_help for the full list)")],
-    params: Annotated[dict[str, Any] | None, Field(description="JSON object of the action's params")] = None,
+    params: Annotated[
+        dict[str, Any] | str | None,
+        Field(
+            description="JSON object of the action's params. If your client requires it, you may also pass this "
+            "as a JSON string."
+        ),
+    ] = None,
 ) -> str:
     """Dispatch an MCP action. The server runs preconditions/pipeline automatically."""
     # Stamp a per-call request_id into the logger context (async-safe via
@@ -108,11 +114,17 @@ async def _action_call(
 
 async def _action_call_impl(
     action: str,
-    params: dict[str, Any] | None,
+    params: dict[str, Any] | str | None,
     request_id: str,
 ) -> str:
     """Implementation of action_call — split out so the request_id context
     can be set/cleared in `_action_call` without polluting every return path."""
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except json.JSONDecodeError:
+            return _dispatch_error(action, "params must be a valid JSON object or stringified JSON")
+
     spec, canonical, suggestions = resolve_action(action)
     if spec is None:
         logger.tool("action_call").info(f"unknown action '{action}'")
@@ -130,13 +142,13 @@ async def _action_call_impl(
         executed.extend(pre_executed)
         skipped.extend(pre_skipped)
         executed.extend(await run_pipeline(spec, workspace_path, validated, state))
-    except Exception as e:  # noqa: BLE001 — loud, names the failing step
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         logger.tool("action_call").error(f"orchestration failed for '{canonical}': {e}")
         return _dispatch_error(canonical, str(e))
 
     try:
         result = await _maybe_await(spec["handler"], **validated)
-    except Exception as e:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         logger.tool("action_call").error(f"handler '{canonical}' failed: {e}")
         return _dispatch_error(canonical, f"Handler failed: {e}")
 
@@ -150,7 +162,7 @@ async def _action_call_impl(
 
             bake_tick(workspace_path)
             note_workspace(workspace_path)  # async tier knows to re-bake this workspace
-        except Exception:  # noqa: BLE001 — baking must never break the action
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             logger.tool("action_call").warning(f"baking tick skipped for {workspace_path}")
 
     return json.dumps(

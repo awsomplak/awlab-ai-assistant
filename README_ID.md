@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/actions-23-blueviolet" alt="23 aksi MCP" />
-  <img src="https://img.shields.io/badge/agents-Cline%20%7C%20Copilot%20%7C%20Claude%20Code%20%7C%20Hermes%20%7C%20OpenCode-blueviolet" alt="5 agent AI" />
+  <img src="https://img.shields.io/badge/agents-Cline%20%7C%20Copilot%20%7C%20Claude%20Code%20%7C%20Hermes%20%7C%20OpenCode%20%7C%20Antigravity-blueviolet" alt="6 agent AI" />
 </p>
 
 <p align="center">
@@ -42,7 +42,7 @@
 
 AWLab-ID **AI-Assisted Development System** mengubah project biasa menjadi lingkungan pengembangan yang sadar-project untuk AI. Tool ini menyediakan:
 
-- **14 rules + 5 skills** (sumbernya ada di `assets/`) yang dikompilasi menjadi **profil per-agent** — Cline, VS Code Copilot, Claude Code, Hermes Agent, dan OpenCode masing-masing profil otomatis disesuaikan formatnya agar dapat digunakan di tiap-tiap agent.
+- **14 rules + 5 skills** (sumbernya ada di `assets/`) yang dikompilasi menjadi **profil per-agent** — Cline, VS Code Copilot, Claude Code, Hermes Agent, OpenCode, dan Google Antigravity / Antigravity IDE masing-masing profil otomatis disesuaikan formatnya agar dapat digunakan di tiap-tiap agent.
 - **Satu server MCP** — `awlab-ai-assistant` (satu file executable) dengan **2 tool**: `action_call` dan `action_help`, yang mengarahkan **23 action** untuk plan, task, memory, graph, context, util, dan workflow. `REGISTRY` menjadi satu-satunya sumber acuan yang mengatur keseluruhan alur kerja (single source of truth), sehingga tidak ada yang melenceng (no drift).
 - **Manajemen plan yang terstruktur** dengan perubahan status tervalidasi oleh server, **memori lintas sesi** dengan dukungan fitur knowledge graph, serta **code knowledge graph** dengan build ulang inkremental (~40× lebih cepat).
 
@@ -124,6 +124,7 @@ Rules + skill yang terkompilasi dan server MCP sudah terverifikasi (tested) pada
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ tested | Satu monolit `CLAUDE.md` dengan anchor heading |
 | [Hermes Agent](https://github.com/nousresearch/hermes-agent) | ✅ tested | Rules dikemas sebagai `awlab-rules/SKILL.md` |
 | [OpenCode](https://opencode.ai) | 🆕 support | `AGENTS.md` global + skill di `~/.config/opencode/` |
+| [Google Antigravity](https://antigravity.google) / Antigravity IDE | 🆕 support | Modular rules di `~/.gemini/config/rules/` + skill + MCP + hooks |
 
 ### Sistem operasi yang didukung
 
@@ -201,7 +202,7 @@ Tidak ada file sampah, tidak ada state yang tersebar — semua yang dibuat asist
 - **Python 3.10+** (untuk server MCP)
 - **agent-recall** (backend memori knowledge-graph)
 - **graphifyy** (pengindeks code knowledge-graph)
-- Salah satu dari: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, atau **OpenCode**
+- Salah satu dari: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, atau **Google Antigravity / Antigravity IDE**
 
 ---
 

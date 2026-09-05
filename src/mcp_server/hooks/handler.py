@@ -15,6 +15,7 @@ degrades gracefully (no-op) until then.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,22 @@ from .hook_event import HookEvent
 
 def _sanitize_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_") or "project"
+
+
+def _make_project_id(root: Path) -> str:
+    """Derive a unique project-id slug for ``root``.
+
+    Appends a 4-character path hash so projects with the same directory name
+    (e.g. two ``awlab-ai-assistant`` clones at different paths) never share a
+    slug, preventing silent memory isolation failures.
+
+    Format: ``<sanitized_dir_name>_<4hex>`` (e.g. ``awlab_ai_assistant_a3f1``).
+    """
+    base = _sanitize_slug(root.name)
+    # Use the full resolved path for the hash so it's stable across renames of
+    # parent directories but unique per absolute location.
+    path_hash = hashlib.sha256(str(root).encode()).hexdigest()[:4]
+    return f"{base}_{path_hash}"
 
 
 def resolve_project(hook: HookEvent) -> HookEvent:
@@ -44,7 +61,7 @@ def resolve_project(hook: HookEvent) -> HookEvent:
         pid = settings.get_project_id(root)
         if not pid:
             # Server-side project-id bootstrap (hook-only): derive + write.
-            pid = _sanitize_slug(root.name)
+            pid = _make_project_id(root)
             pid_file = settings.get_project_id_path(root)
             try:
                 pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -53,7 +70,7 @@ def resolve_project(hook: HookEvent) -> HookEvent:
                 pass  # best-effort; fallback scope still works
         hook.project_path = str(root)
         hook.project_id = pid or ""
-    except Exception:  # noqa: BLE001 — never break the host loop
+    except (OSError, ValueError, TypeError, KeyError):
         hook.project_path = str(root)
     return hook
 
@@ -87,7 +104,7 @@ def capture_observation(hook: HookEvent) -> None:
                 }
             ],
         )
-    except Exception:  # noqa: BLE001 — never break the host loop
+    except (OSError, ValueError, TypeError, KeyError):
         pass
 
 
@@ -104,7 +121,7 @@ def bake_project(hook: HookEvent) -> dict[str, Any]:
 
         baked = bake_tick(hook.project_path)
         return {"context": "", "candidates": baked.get("candidates") or []}
-    except Exception:  # noqa: BLE001 — never break the host loop
+    except (OSError, ValueError, TypeError, KeyError):
         return {"context": "", "candidates": []}
 
 

@@ -43,7 +43,9 @@ def _kind_claude(event: str) -> str:
 
 def _kind_generic(event: str) -> str:
     e = event.lower()
-    if "prompt" in e or "llm_call" in e and "pre" in e:
+    # Note: parentheses are explicit to prevent operator-precedence bugs
+    # (`and` binds tighter than `or` in Python).
+    if "prompt" in e or ("llm_call" in e and "pre" in e):
         return "prompt"
     if "pre" in e and "tool" in e:
         return "pre_tool"
@@ -56,12 +58,27 @@ def _kind_generic(event: str) -> str:
     return "stop"
 
 
+def _kind_antigravity(event: str) -> str:
+    e = event.lower()
+    if e in ("preinvocation", "prompt", "userpromptsubmit"):
+        return "prompt"
+    if e in ("pretooluse", "pre_tool_call"):
+        return "pre_tool"
+    if e in ("posttooluse", "post_tool_call"):
+        return "tool"
+    if e in ("postinvocation", "stop"):
+        return "stop"
+    return _kind_generic(event)
+
+
 def kind_for_event(agent: str, event: str) -> str:
     """Map a host event name to a HookEvent kind (anti-loop dispatch)."""
     if agent == "claude":
         return _kind_claude(event)
     if agent == "copilot":
         return _kind_prompt(event) if event.lower() == "userpromptsubmit" else _kind_generic(event)
+    if agent == "antigravity":
+        return _kind_antigravity(event)
     return _kind_generic(event)
 
 
@@ -204,6 +221,99 @@ def _serialize_cline(event: str, result: dict[str, Any]) -> str:
     return "{}"
 
 
+# ── Adapter: Antigravity ────────────────────────────────────────────────────
+
+
+def _normalize_antigravity(raw: dict[str, Any], event: str) -> HookEvent:
+    ws_paths = raw.get("workspacePaths") or []
+    project_path = str(ws_paths[0]) if ws_paths and isinstance(ws_paths, list) else str(raw.get("cwd") or "")
+    tool_call = raw.get("toolCall") or {}
+    tool_name = str(tool_call.get("name") or raw.get("tool_name") or "")
+    tool_input = tool_call.get("args") or raw.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
+        tool_input = {"command": str(tool_input)}
+    return HookEvent(
+        agent="antigravity",
+        event=event,
+        kind=kind_for_event("antigravity", event),
+        project_path=project_path,
+        session_id=str(raw.get("conversationId") or raw.get("session_id") or ""),
+        turn_id=str(raw.get("stepIdx") or ""),
+        user_message=str(raw.get("prompt") or raw.get("userMessage") or ""),
+        tool_name=tool_name,
+        tool_input=tool_input,
+        tool_result=str(raw.get("error") or raw.get("tool_response") or ""),
+        extra=raw,
+    )
+
+
+def _serialize_antigravity(event: str, result: dict[str, Any]) -> str:
+    kind = kind_for_event("antigravity", event)
+    if kind == "pre_tool":
+        block = result.get("block")
+        if block:
+            return json.dumps({"decision": "deny", "reason": block})
+        return json.dumps({"decision": "allow"})
+    if kind == "stop":
+        block = result.get("block")
+        if block:
+            return json.dumps({"decision": "continue", "reason": block})
+        return "{}"
+    if kind == "prompt":
+        context = result.get("context")
+        if context:
+            return json.dumps({"injectSteps": [{"ephemeralMessage": context}]})
+        return "{}"
+    return "{}"  # observer-only
+
+
+# ── Adapter: OpenCode ────────────────────────────────────────────────────────
+
+
+def _normalize_opencode(raw: dict[str, Any], event: str) -> HookEvent:
+    """Normalize an OpenCode hook payload.
+
+    OpenCode mirrors the AGENTS.md / opencode.json hook format; payloads
+    typically carry ``cwd``, ``session_id``, ``tool_name``, ``tool_input``,
+    and ``result``. Falls back to generic field names when missing.
+    """
+    ws = raw.get("workspace_path") or raw.get("cwd") or ""
+    return HookEvent(
+        agent="opencode",
+        event=event,
+        kind=kind_for_event("opencode", event),
+        project_path=str(ws),
+        session_id=str(raw.get("session_id") or ""),
+        user_message=str(raw.get("prompt") or raw.get("message") or ""),
+        tool_name=str(raw.get("tool_name") or ""),
+        tool_input=raw.get("tool_input") or {},
+        tool_result=str(raw.get("result") or raw.get("tool_result") or ""),
+        subagent=raw.get("subagent") or {},
+        extra=raw.get("extra") or {},
+    )
+
+
+def _serialize_opencode(event: str, result: dict[str, Any]) -> str:
+    """Serialize an internal result to OpenCode's response shape.
+
+    OpenCode currently uses the same JSON stdout shape as Copilot for
+    prompt-injection; pre_tool deny uses a ``{"block": true, "reason": ...}``
+    convention. Observer-only for tool/stop/session/subagent events.
+    """
+    kind = kind_for_event("opencode", event)
+    if kind == "prompt":
+        context = result.get("context")
+        if context:
+            return json.dumps({"context": context})
+        return "{}"
+    if kind == "pre_tool":
+        block = result.get("block")
+        if block:
+            return json.dumps({"block": True, "reason": block})
+        return "{}"
+    return "{}"  # observer-only
+
+
 # ── Registry ────────────────────────────────────────────────────────────────
 
 Adapter = tuple[Callable[[dict[str, Any], str], HookEvent], Callable[[str, dict[str, Any]], str]]
@@ -213,6 +323,8 @@ HOOK_ADAPTERS: dict[str, Adapter] = {
     "claude": (_normalize_claude, _serialize_claude),
     "copilot": (_normalize_copilot, _serialize_copilot),
     "cline": (_normalize_cline, _serialize_cline),
+    "antigravity": (_normalize_antigravity, _serialize_antigravity),
+    "opencode": (_normalize_opencode, _serialize_opencode),
 }
 
 

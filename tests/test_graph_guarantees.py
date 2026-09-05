@@ -285,12 +285,16 @@ async def test_heavy_stale_rebuild_runs_in_background(tmp_path: Path):
     # The background rebuild eventually completes → graph becomes fresh.
     deadline = time.perf_counter() + 60
     fresh = False
+    print("entering loop")
     while time.perf_counter() < deadline:
+        print(f"calling graph_status, time left: {deadline - time.perf_counter()}")
         st = await action_call("graph_status", {"workspace_path": ws})
+        print(f"graph_status returned: {st['result'].get('fresh')}")
         if st["result"].get("fresh"):
             fresh = True
             break
         await asyncio.sleep(0.5)
+    print(f"loop finished, fresh={fresh}")
     assert fresh, "background rebuild never completed"
 
     # A read now reports fresh data.

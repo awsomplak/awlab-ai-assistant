@@ -26,18 +26,35 @@ BAKE_INTERVAL_SECONDS = 30  # how often the background loop re-bakes known works
 BAKE_GRACE_SECONDS = 5  # settle delay before the first sweep
 
 _known: set[str] = set()
+_known_order: list[str] = []  # insertion-order tracker for LRU eviction
 _known_guard = threading.Lock()
 _scheduler: threading.Thread | None = None
 _scheduler_guard = threading.Lock()
 _stop = threading.Event()
 
+# Maximum number of workspaces tracked at once.  Oldest entries are evicted when
+# the cap is exceeded so the background sweep never silently grows unbounded.
+_KNOWN_MAX = 50
+
 
 def note_workspace(workspace_path: str | Path) -> None:
-    """Remember a workspace so the async tick re-bakes it (idempotent, cheap)."""
+    """Remember a workspace so the async tick re-bakes it (idempotent, cheap).
+
+    Evicts the least-recently-added workspace when the cap is reached so memory
+    and sweep time stay bounded across long server sessions.
+    """
     if not workspace_path:
         return
+    key = str(workspace_path)
     with _known_guard:
-        _known.add(str(workspace_path))
+        if key in _known:
+            return  # already tracked — nothing to do
+        _known.add(key)
+        _known_order.append(key)
+        # Evict oldest when over cap
+        while len(_known) > _KNOWN_MAX:
+            oldest = _known_order.pop(0)
+            _known.discard(oldest)
 
 
 def known_workspaces() -> list[str]:
@@ -53,7 +70,7 @@ def _sweep() -> None:
             from ..helpers.baking import bake_tick
 
             bake_tick(ws)
-        except Exception:  # noqa: BLE001 — background, never crash the server
+        except (OSError, ValueError, TypeError, KeyError):
             logger.warning(f"async bake tick failed for {ws}")
 
 
@@ -70,7 +87,7 @@ def start_scheduler(interval: float = BAKE_INTERVAL_SECONDS) -> threading.Thread
             while not _stop.is_set():
                 try:
                     _sweep()
-                except Exception:  # noqa: BLE001
+                except (OSError, ValueError, TypeError, KeyError):
                     pass
                 _stop.wait(interval)
 

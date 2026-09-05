@@ -202,9 +202,7 @@ def sync_to_agent_recall(
             logger.error("sync_to_agent_recall: updates is empty")
             return False
         ts = datetime.now(timezone.utc).isoformat()
-        obs_contents = [
-            f"[batch_update @ {ts}] {u['task_path']} \u2192 {u['new_status']}" for u in updates
-        ]
+        obs_contents = [f"[batch_update @ {ts}] {u['task_path']} \u2192 {u['new_status']}" for u in updates]
         obs = [
             {
                 "entityName": f"plan_{plan_uuid}",
@@ -277,7 +275,7 @@ def _detect_stack(workspace_path: str | Path) -> str:
         langs = (info.get("all_detected") or {}).get("languages", [])
         if langs:
             return langs[0]
-    except Exception:  # noqa: BLE001 — best-effort
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
     return "any"
 
@@ -288,7 +286,7 @@ def _project_slug(workspace_path: str | Path) -> str:
         pid = settings.get_project_id(workspace_path)
         if pid:
             return pid
-    except Exception:  # noqa: BLE001 — best-effort
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
     return Path(workspace_path).name
 

@@ -52,6 +52,51 @@ def test_copilot_userpromptsubmit_is_prompt():
     assert hook.project_path == "/proj"
 
 
+def test_antigravity_pretooluse_normalizes_tool_and_command():
+    raw = {
+        "conversationId": "conv-123",
+        "workspacePaths": ["/proj/ag"],
+        "stepIdx": 4,
+        "toolCall": {"name": "run_command", "args": {"CommandLine": "npm test"}},
+    }
+    hook = normalize_payload("antigravity", "PreToolUse", raw)
+    assert hook is not None
+    assert hook.kind == "pre_tool"
+    assert hook.tool_name == "run_command"
+    assert hook.command == "npm test"
+    assert hook.project_path == "/proj/ag"
+    assert hook.session_id == "conv-123"
+
+
+def test_antigravity_posttooluse_normalizes_tool_and_error():
+    raw = {
+        "conversationId": "conv-123",
+        "workspacePaths": ["/proj/ag"],
+        "stepIdx": 5,
+        "tool_name": "run_command",
+        "error": "exit status 1",
+    }
+    hook = normalize_payload("antigravity", "PostToolUse", raw)
+    assert hook is not None
+    assert hook.kind == "tool"
+    assert hook.tool_result == "exit status 1"
+
+
+def test_antigravity_preinvocation_is_prompt():
+    raw = {"conversationId": "conv-123", "workspacePaths": ["/proj/ag"], "prompt": "build feature"}
+    hook = normalize_payload("antigravity", "PreInvocation", raw)
+    assert hook is not None
+    assert hook.kind == "prompt"
+    assert hook.user_message == "build feature"
+
+
+def test_antigravity_stop_is_stop_kind():
+    raw = {"conversationId": "conv-123", "terminationReason": "model_stop"}
+    hook = normalize_payload("antigravity", "Stop", raw)
+    assert hook is not None
+    assert hook.kind == "stop"
+
+
 # ── Anti-loop: only prompt injects ───────────────────────────────────────────
 
 
@@ -75,6 +120,35 @@ def test_pre_tool_block_serializes_terminal_verdict():
     assert json.loads(out)["decision"] == "block"
 
 
+def test_antigravity_pre_tool_block_and_allow_serialization():
+    blocked = {"block": "disallowed command"}
+    out_blocked = serialize_output("antigravity", "PreToolUse", blocked)
+    parsed_blocked = json.loads(out_blocked)
+    assert parsed_blocked["decision"] == "deny"
+    assert parsed_blocked["reason"] == "disallowed command"
+
+    allowed = {}
+    out_allowed = serialize_output("antigravity", "PreToolUse", allowed)
+    parsed_allowed = json.loads(out_allowed)
+    assert parsed_allowed["decision"] == "allow"
+
+
+def test_antigravity_stop_continue_serialization():
+    blocked = {"block": "tasks pending"}
+    out = serialize_output("antigravity", "Stop", blocked)
+    parsed = json.loads(out)
+    assert parsed["decision"] == "continue"
+    assert parsed["reason"] == "tasks pending"
+
+
+def test_antigravity_prompt_injects_ephemeral_message():
+    result = {"context": "baked pattern note"}
+    out = serialize_output("antigravity", "PreInvocation", result)
+    parsed = json.loads(out)
+    assert "injectSteps" in parsed
+    assert parsed["injectSteps"][0]["ephemeralMessage"] == "baked pattern note"
+
+
 # ── Project-id bootstrap (hook-only) ─────────────────────────────────────────
 
 
@@ -82,7 +156,11 @@ def test_resolve_project_bootstraps_project_id(tmp_path: Path):
     resolve_project(HookEvent(project_path=str(tmp_path)))
     pid_file = tmp_path / ".ai" / "project-id"
     assert pid_file.exists()
-    assert pid_file.read_text(encoding="utf-8").strip() == re.sub(r"[^a-z0-9_]+", "_", tmp_path.name.lower())
+    base = re.sub(r"[^a-z0-9_]+", "_", tmp_path.name.lower())
+    import hashlib
+
+    h = hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest()[:4]
+    assert pid_file.read_text(encoding="utf-8").strip() == f"{base}_{h}"
 
 
 # ── Compiled hook configs ────────────────────────────────────────────────────

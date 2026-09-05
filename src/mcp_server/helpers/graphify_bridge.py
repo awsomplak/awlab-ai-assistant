@@ -75,6 +75,8 @@ _BACKGROUND_ERRORS: dict[str, str] = {}
 # Last per-chunk progress timestamp (time.monotonic) per workspace — the stall
 # watchdog uses it to detect a worker that is alive but never finishes a chunk.
 _BACKGROUND_PROGRESS: dict[str, float] = {}
+# Watchdog threads indexed by workspace key (one per active rebuild).
+_WATCHDOG_THREADS: dict[str, threading.Thread] = {}
 
 # A background worker that has not finished a chunk within this window is treated
 # as stalled: its failure is surfaced via background_error and it no longer counts
@@ -210,7 +212,10 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     _mark_progress(key)
                     if not res.get("success"):
                         _bg_error(key, str(res.get("error", "background build failed")))
-            except Exception as exc:  # noqa: BLE001 — background, never crash the server
+            except Exception as exc:
+                import traceback
+
+                traceback.print_exc()
                 _bg_error(key, f"background worker exception: {exc}")
             finally:
                 with _BUILD_LOCKS_GUARD:
@@ -233,27 +238,33 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
         # the in-flight marker lets callers attempt recovery — they will wait on
         # the bounded build lock and get a clear error if the zombie holds it.
         def _watchdog() -> None:
-            while True:
-                time.sleep(5)
+            try:
+                while True:
+                    time.sleep(5)
+                    with _BUILD_LOCKS_GUARD:
+                        current = _BACKGROUND_THREADS.get(key)
+                        if current is not t or not t.is_alive():
+                            return  # worker finished or replaced
+                        last = _BACKGROUND_PROGRESS.get(key)
+                        # Only flag stalled once the worker has reported at least
+                        # one chunk (last is not None). Cold-start: the worker may be
+                        # mid-extract and hasn't stamped progress yet — that's not
+                        # a stall, it's a slow first chunk.
+                        stalled = last is not None and (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
+                    if stalled and key not in _BACKGROUND_ERRORS:
+                        _bg_error(
+                            key,
+                            "background worker stalled: no chunk completed within "
+                            f"{_BACKGROUND_STALL_SECONDS:.0f}s — the build lock may be stuck; "
+                            "restart the server if it never drains",
+                        )
+            finally:
                 with _BUILD_LOCKS_GUARD:
-                    current = _BACKGROUND_THREADS.get(key)
-                    if current is not t or not t.is_alive():
-                        return  # worker finished or replaced
-                    last = _BACKGROUND_PROGRESS.get(key)
-                    # Only flag stalled once the worker has reported at least
-                    # one chunk (last is not None). Cold-start: the worker may be
-                    # mid-extract and hasn't stamped progress yet — that's not
-                    # a stall, it's a slow first chunk.
-                    stalled = last is not None and (time.monotonic() - last) > _BACKGROUND_STALL_SECONDS
-                if stalled and key not in _BACKGROUND_ERRORS:
-                    _bg_error(
-                        key,
-                        "background worker stalled: no chunk completed within "
-                        f"{_BACKGROUND_STALL_SECONDS:.0f}s — the build lock may be stuck; "
-                        "restart the server if it never drains",
-                    )
+                    _WATCHDOG_THREADS.pop(key, None)
 
-        threading.Thread(target=_watchdog, name=f"graph-watchdog-{key[-16:]}", daemon=True).start()
+        wt = threading.Thread(target=_watchdog, name=f"graph-watchdog-{key[-16:]}", daemon=True)
+        _WATCHDOG_THREADS[key] = wt
+        wt.start()
         return True
 
 
@@ -1752,7 +1763,7 @@ def _write_feedback(
             project_id=project_id,
             observations=[{"entityName": "graphify_feedback", "contents": [note]}],
         )
-    except Exception:  # noqa: BLE001 — best-effort, never break the build
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
 
 
@@ -1774,7 +1785,7 @@ def _git_head_safe(root: Path) -> str:
             ref_path = root / ".git" / ref[5:].strip()
             return ref_path.read_text(encoding="utf-8").strip()[:40] if ref_path.is_file() else ""
         return ref[:40]
-    except Exception:  # noqa: BLE001 — best-effort metadata, never break the build
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return ""
 
 
@@ -2333,7 +2344,7 @@ def _build_graph_impl(
             partial=bool(chunked and prev_graph is None),
             pending_files=remaining_files,
         )
-    except Exception as e:  # noqa: BLE001 — loud, actionable
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         return fail_obj(error=f"graph build failed: {e}")
 
 
@@ -2641,7 +2652,7 @@ def _related_memory(
                 if len(results) >= limit:
                     return results
         return results
-    except Exception:  # noqa: BLE001 — best-effort, never break the graph read
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return []
 
 

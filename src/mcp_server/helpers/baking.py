@@ -177,7 +177,7 @@ def read_baked(workspace_path: str | Path) -> dict[str, Any]:
             data = json.loads(path.read_text("utf-8"))
             if isinstance(data, dict):
                 return data
-        except Exception:  # noqa: BLE001 — torn/corrupt baked file → fresh state
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             pass
     return {"candidates": [], "delivery": {}}
 
@@ -287,7 +287,7 @@ def detect_stack(workspace_path: str | Path) -> str:
         langs = (info.get("all_detected") or {}).get("languages", [])
         if langs:
             return langs[0]
-    except Exception:  # noqa: BLE001 — best-effort
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
     return "any"
 

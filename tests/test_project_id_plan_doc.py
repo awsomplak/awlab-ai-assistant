@@ -90,6 +90,28 @@ async def test_plan_doc_write_and_read_notes(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_plan_doc_write_and_read_walkthrough(tmp_path: Path):
+    content = "# Walkthrough\n\n## Verification\n\n- All 10 tests passed\n"
+    w = await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="walkthrough", mode="write", content=content)
+    assert w["success"]
+    assert (tmp_path / ".ai" / "artifacts" / "ab12cd34" / "walkthrough.md").exists()
+
+    rd = await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="walkthrough", mode="read")
+    assert rd["success"] and rd["content"] == content
+
+
+@pytest.mark.asyncio
+async def test_plan_doc_delete_walkthrough(tmp_path: Path):
+    content = "# Walkthrough\n"
+    await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="walkthrough", mode="write", content=content)
+    wt_file = tmp_path / ".ai" / "artifacts" / "ab12cd34" / "walkthrough.md"
+    assert wt_file.exists()
+    d = await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="walkthrough", mode="delete")
+    assert d["success"] and d["mode"] == "delete"
+    assert not wt_file.exists()
+
+
+@pytest.mark.asyncio
 async def test_plan_doc_delete(tmp_path: Path):
     await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="plan", mode="write", content="# P\n")
     d = await _plan_doc(str(tmp_path), plan_uuid="ab12cd34", doc="plan", mode="delete")

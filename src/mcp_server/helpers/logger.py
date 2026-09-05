@@ -120,7 +120,7 @@ class _AsyncSink:
             return
         try:
             self._queue.put_nowait((level, message, tool, exc_info))
-        except Exception:  # noqa: BLE001 — full queue: best-effort drop
+        except (OSError, ValueError, TypeError, KeyError):
             # Never block the caller; fall back to a direct (blocking) write
             # so the line is at least not lost. A real disk stall would still
             # block here, but only on a fully-saturated 10k queue.
@@ -134,6 +134,7 @@ class _AsyncSink:
         if not self._enabled or self._queue is None or self._thread is None:
             return
         import time as _t
+
         deadline = _t.monotonic() + timeout
         while not self._queue.empty() and _t.monotonic() < deadline:
             _t.sleep(0.01)
@@ -143,13 +144,13 @@ class _AsyncSink:
         while True:
             try:
                 level, message, tool, exc_info = self._queue.get()
-            except Exception:  # noqa: BLE001
+            except (OSError, ValueError, TypeError, KeyError):
                 continue
             try:
                 # Resolve through self._logger at call time so tests that
                 # monkey-patch Logger._write see the patched version.
                 self._logger._write(level, message, tool, exc_info)
-            except Exception:  # noqa: BLE001 — drain must never die
+            except (OSError, ValueError, TypeError, KeyError):
                 pass
 
 
