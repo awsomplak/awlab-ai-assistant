@@ -1,4 +1,20 @@
 # Changelog
+
+## [3.0.6]
+
+### Added
+- **Google Antigravity & Antigravity IDE support** — added first-class compilation profile, publish mapping, and lifecycle hooks adapter for Google Antigravity and Antigravity IDE:
+  - **Modular rules compilation** — `scripts/run.py compile-rules` generates 15 modular rule files in `dist/profiles/antigravity/rules/` (published to `~/.gemini/config/rules/`), complete with Antigravity-specific planning synchronization protocols while leaving base rules completely clean for Cline, Copilot, Claude, Hermes, and OpenCode (strict host isolation).
+  - **Skills packaging** — exports all 5 AWLab-ID skills to `dist/profiles/antigravity/skills/` with native progressive-disclosure YAML frontmatter.
+  - **Antigravity lifecycle hooks adapter** — `awlab-ai-assistant hook --agent antigravity --event <event>` handles protojson camelCase payloads (`conversationId`, `workspacePaths`, `toolCall`, `stepIdx`, `error`, `terminationReason`) for `PreToolUse` (deny/allow), `PostToolUse` (observer), `PreInvocation` (ephemeralMessage context injection), and `Stop` (continue/allow).
+  - **`plan_doc` walkthrough artifact support** — extended `_plan_doc` in `src/mcp_server/registry.py` to support `doc="walkthrough"`, allowing `walkthrough.md` to be stored, read, and deleted directly within `.ai/artifacts/{uuid}/walkthrough.md`.
+  - **Publish target** — `python scripts/run.py publish --target=antigravity` installs modular rules, skills, MCP snippet, and hooks config into `~/.gemini/config/`.
+
+### Fixed
+- **`graph_status` Background Rebuild Deadlock** — fixed a critical deadlock in `src/mcp_server/helpers/graphify_bridge.py` where spawning the `_background_rebuild` thread recursively attempted to acquire `_BUILD_LOCKS_GUARD` while already holding it, hanging the event loop. The inner lock acquisition was removed, restoring concurrent `graph_status` polling during heavy background graph rebuilds.
+- **Mac binary extension bug** — patched `scripts/run.py publish` which was hardcoding the `"dist/bin/awlab-ai-assistant.exe"` path in `mcp_config.json`, causing MCP initialization failures on macOS/Linux. The binary extension is now dynamically stripped outside of Windows.
+- **Stale published `SKILL.md`** — regenerated the static `assets/skills/awlab-ai-assistant/SKILL.md` via `registry.build_skill_md()` before publishing, ensuring `plan_create` and the new `plan_doc` walkthrough parameters are correctly documented in the live configuration.
+
 ## [3.0.5]
 
 ### Added
