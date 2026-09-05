@@ -156,7 +156,7 @@ def append_observations(workspace_path: str | Path, records: list[dict[str, Any]
                 f.write(json.dumps(rec, default=str) + "\n")
                 existing.add(fp)
                 appended += 1
-    except Exception as e:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         return {"success": False, "error": str(e)}
 
     return {"success": True, "appended": appended, "skipped_duplicates": dup, "skipped_invalid": invalid}

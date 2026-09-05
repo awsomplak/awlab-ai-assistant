@@ -104,6 +104,16 @@ async def format_tasks_as_markdown(
         pad = " " * indent
         status = task.get("status", "[ ]")
         desc = task.get("description", "")
+        path = task.get("path", "")
+
+        # Auto-renumbering logic: strip any leading numeric paths from description
+        # e.g., '1.2.3 Fix bug' -> 'Fix bug'
+        import re
+
+        desc = re.sub(r"^\d+(?:\.\d+)*\s+", "", desc)
+        if path:
+            desc = f"{path} {desc}"
+
         out.append(f"{pad}- {status} {desc}")
         depends = task.get("depends", []) or []
         if depends:

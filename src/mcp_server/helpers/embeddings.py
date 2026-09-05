@@ -94,8 +94,8 @@ def ensure_model_downloaded() -> bool:
     # versions or manual installs.
     hf_name = _MODEL_NAME.replace("/", "--")
     probe_names = [
-        "models--qdrant--bge-small-en-v1.5-onnx-q",   # fastembed 0.6+
-        f"models--{hf_name}",                           # direct BAAI cache
+        "models--qdrant--bge-small-en-v1.5-onnx-q",  # fastembed 0.6+
+        f"models--{hf_name}",  # direct BAAI cache
     ]
     for probe in probe_names:
         snapshots_dir = cache_dir / probe / "snapshots"

@@ -41,7 +41,7 @@ def _project_stack(workspace_path: str | Path) -> str:
         langs = (info.get("all_detected") or {}).get("languages", [])
         if langs:
             return langs[0]
-    except Exception:  # noqa: BLE001 — best-effort
+    except (OSError, ValueError, TypeError, KeyError):
         pass
     return "any"
 
@@ -52,7 +52,7 @@ def _project_slug(workspace_path: str | Path) -> str:
         pid = settings.get_project_id(workspace_path)
         if pid:
             return pid
-    except Exception:  # noqa: BLE001 — best-effort
+    except (OSError, ValueError, TypeError, KeyError):
         pass
     return Path(workspace_path).name
 
@@ -141,7 +141,7 @@ async def search_memory(
             read_baked(workspace_path).get("candidates") or [],
             _project_stack(workspace_path),
         )
-    except Exception:  # noqa: BLE001 — injection is best-effort
+    except (OSError, ValueError, TypeError, KeyError):
         baked = []
     try:
         # Deterministic type listing: no query → read the graph and filter by type.

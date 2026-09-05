@@ -14,14 +14,17 @@ Supports two project isolation strategies:
    the scope chain ``["global", scope]``.
 """
 
+import json
 import re
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_recall import MCPBridge, MemoryConfig
 
 from ..config import settings
+from .logger import logger
 from .workspace import resolve_db_path
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -48,20 +51,27 @@ def _get_scope(workspace_path: str | Path, project_id: str | None = None) -> str
 
 
 # ── SQLite optimisations ────────────────────────────────────────────────────
+_wal_enabled: set[str] = set()
+_wal_lock = threading.Lock()
 
 
 def _enable_wal_mode(db_path: str) -> None:
     """Enable WAL journal mode and busytimeout for concurrent access."""
-    try:
-        conn = sqlite3.connect(db_path, timeout=3)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA busy_timeout=3000;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.close()
-    except sqlite3.Error as e:
-        from ..helpers.logger import logger
-
-        logger.warning(f"Could not set WAL mode on {db_path}: {e}")
+    if db_path in _wal_enabled:
+        return
+    with _wal_lock:
+        if db_path in _wal_enabled:
+            return
+        try:
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(db_path, timeout=3)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=3000;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.close()
+            _wal_enabled.add(db_path)
+        except sqlite3.Error as e:
+            logger.warning(f"Could not set WAL mode on {db_path}: {e}")
 
 
 # ── Bridge lifecycle ─────────────────────────────────────────────────────────
@@ -98,7 +108,6 @@ def _load_families() -> dict[str, dict]:
     Returns {} on missing/corrupt (never breaks the server). ``project_id`` must be
     unique within a family (duplicates dropped).
     """
-    import json
 
     try:
         path = project_families_path()
@@ -135,7 +144,7 @@ def _load_families() -> dict[str, dict]:
             if members:
                 out[slug] = {"name": name, "members": members}
         return out
-    except Exception:  # noqa: BLE001 — corrupt file must never break the server
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
         return {}
 
 
@@ -163,7 +172,7 @@ def family_member_project_ids(slug: str) -> dict[str, str]:
             continue
         try:
             key = str(Path(m["path"]).resolve())
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
             key = str(m["path"])
         out[key] = pid
     return out
@@ -183,7 +192,7 @@ def family_member_id(slug: str, workspace_path: str | Path) -> str:
     """
     try:
         wp = str(Path(workspace_path).resolve())
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
         wp = str(workspace_path)
     try:
         pid_file = Path(workspace_path) / ".ai" / "project-id"
@@ -227,12 +236,10 @@ def sync_family_project_ids(slug: str) -> dict:
 
     Returns ``{updated, changes, conflicts}`` (never raises; writes atomically).
     """
-    import json as _json
-
     path = project_families_path()
     try:
-        raw = _json.loads(path.read_text("utf-8"))
-    except Exception:  # noqa: BLE001
+        raw = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
         return {"updated": False, "changes": [], "conflicts": []}
     fam = raw.get(slug)
     members = fam.get("members") if isinstance(fam, dict) else None
@@ -270,7 +277,7 @@ def sync_family_project_ids(slug: str) -> dict:
     if not changes and not conflicts:
         return {"updated": False, "changes": [], "conflicts": []}
     try:
-        path.write_text(_json.dumps(raw, indent=2), encoding="utf-8")
+        path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
         return {"updated": True, "changes": changes, "conflicts": conflicts}
     except OSError:
         return {"updated": False, "changes": changes, "conflicts": conflicts}
@@ -282,14 +289,14 @@ def family_for_workspace(workspace_path: str | Path | None) -> str | None:
         return None
     try:
         wp = str(Path(workspace_path).resolve())
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
         return None
     for slug, fam in _load_families().items():
         for m in fam.get("members", []):
             try:
                 if str(Path(m["path"]).resolve()) == wp:
                     return slug
-            except Exception:  # noqa: BLE001
+            except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
                 continue
     return None
 

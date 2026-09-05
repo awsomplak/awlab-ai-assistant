@@ -13,8 +13,6 @@ from __future__ import annotations
 import multiprocessing as _mp
 from pathlib import Path
 
-import pytest
-
 from mcp_server.helpers import (
     parse_tasks_md,
     read_utf8,
@@ -187,8 +185,8 @@ def _race_worker(path_str: str, payload: str, ready_evt, go_evt, done_evt) -> No
     """
     from mcp_server.helpers.file_utils import write_file_safe
 
-    ready_evt.set()       # tell parent we're initialized
-    go_evt.wait()         # wait for the green light
+    ready_evt.set()  # tell parent we're initialized
+    go_evt.wait()  # wait for the green light
     # Tiny sleep inside the critical section would expose the race most
     # clearly, but the lock must hold regardless — write_file_safe blocks
     # the second child until the first releases.
@@ -204,7 +202,7 @@ def test_two_processes_writing_same_path_do_not_corrupt(tmp_path: Path) -> None:
     and no mixed bytes.
     """
     target = tmp_path / "tasks.md"
-    payload_a = "A" * 200 + "_marker_A"     # long enough to span multiple write() syscalls
+    payload_a = "A" * 200 + "_marker_A"  # long enough to span multiple write() syscalls
     payload_b = "B" * 200 + "_marker_B"
 
     ctx = _mp.get_context("spawn")
@@ -214,12 +212,8 @@ def test_two_processes_writing_same_path_do_not_corrupt(tmp_path: Path) -> None:
     go = ctx.Event()
     done_a, done_b = ctx.Event(), ctx.Event()
 
-    proc_a = ctx.Process(
-        target=_race_worker, args=(str(target), payload_a, ready_a, go, done_a)
-    )
-    proc_b = ctx.Process(
-        target=_race_worker, args=(str(target), payload_b, ready_b, go, done_b)
-    )
+    proc_a = ctx.Process(target=_race_worker, args=(str(target), payload_a, ready_a, go, done_a))
+    proc_b = ctx.Process(target=_race_worker, args=(str(target), payload_b, ready_b, go, done_b))
     proc_a.start()
     proc_b.start()
     # Wait for both children to be initialized
@@ -243,6 +237,4 @@ def test_two_processes_writing_same_path_do_not_corrupt(tmp_path: Path) -> None:
     )
     # Lock sentinel must have been cleaned up (write_file_safe releases
     # the fd / unlinks the sentinel on every exit path).
-    assert not target.with_suffix(target.suffix + ".lock").exists(), (
-        "lock sentinel was not cleaned up after the race"
-    )
+    assert not target.with_suffix(target.suffix + ".lock").exists(), "lock sentinel was not cleaned up after the race"

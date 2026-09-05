@@ -130,6 +130,20 @@ def _fmt_notes_doc(notes_doc: dict | None) -> list[str]:
     return lines or ["_notes.md parsed (no sections)._ "]
 
 
+def _fmt_walkthrough_doc(walkthrough_doc: dict | None) -> list[str]:
+    """Render the walkthrough.md section (post-completion summary)."""
+    if not walkthrough_doc or not isinstance(walkthrough_doc, dict):
+        return ["_No walkthrough.md._"]
+    if not walkthrough_doc.get("success"):
+        return ["_No walkthrough.md._"]
+    content = (walkthrough_doc.get("content") or "").strip()
+    if not content:
+        return ["_walkthrough.md is empty._"]
+    # Show the first 300 chars as a snippet
+    snippet = content.replace("\n", " ")[:300]
+    return [f"- **Walkthrough:** {snippet}{'…' if len(content) > 300 else ''}"]
+
+
 def _fmt_patterns(patterns: list | None, candidates: list | None) -> list[str]:
     """Render the baked-patterns section of context.md (candidates first)."""
     lines: list[str] = []
@@ -162,6 +176,7 @@ def build_context_md(
     query: str = "",
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
+    walkthrough_doc: dict | None = None,
     patterns: list | None = None,
     pattern_candidates: list | None = None,
 ) -> str:
@@ -186,6 +201,10 @@ def build_context_md(
         "",
         *_fmt_notes_doc(notes_doc),
         "",
+        "## Walkthrough",
+        "",
+        *_fmt_walkthrough_doc(walkthrough_doc),
+        "",
         "## Code",
         "",
         *_fmt_code(code, query),
@@ -199,7 +218,11 @@ def build_context_md(
         *_fmt_patterns(patterns, pattern_candidates),
         "",
     ]
-    return "\n".join(lines)
+    content = "\n".join(lines)
+    # Truncate to protect LLM context window (approx 7.5k tokens)
+    if len(content) > 30000:
+        content = content[:30000] + "\n\n...[TRUNCATED FOR CONTEXT WINDOW]..."
+    return content
 
 
 def write_context_md_atomic(workspace_path: str | Path, content: str) -> bool:
@@ -219,7 +242,7 @@ def write_context_md_atomic(workspace_path: str | Path, content: str) -> bool:
                 pass
             raise
         return True
-    except Exception as e:  # noqa: BLE001 — best-effort, never break the caller
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
         logger.warning(f"context.md write failed: {e}")
         return False
 
@@ -232,6 +255,7 @@ def materialize_context(
     query: str = "",
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
+    walkthrough_doc: dict | None = None,
     patterns: list | None = None,
     pattern_candidates: list | None = None,
 ) -> dict:
@@ -240,6 +264,8 @@ def materialize_context(
     Used by ``ctx_info mode="context"`` so the file is ALWAYS written (never
     optional) and always reflects what the agent just received.
     """
+    _ensure_protocol_and_agents_md(workspace_path)
+
     content = build_context_md(
         workspace_path,
         plan=plan,
@@ -248,6 +274,7 @@ def materialize_context(
         query=query,
         plan_doc=plan_doc,
         notes_doc=notes_doc,
+        walkthrough_doc=walkthrough_doc,
         patterns=patterns,
         pattern_candidates=pattern_candidates,
     )
@@ -258,6 +285,51 @@ def materialize_context(
         "changed": ok,
         "bytes": len(content),
     }
+
+
+AWLAB_PROTOCOL_MD = """\
+# AWLab-ID Protocol — read this first (session start)
+
+This project uses **AWLab-ID** — an AI-Assisted Development System.
+
+## ⚠️ Session-start protocol (mandatory — prevents hallucination)
+
+At the start of **every** session, before touching any code:
+
+1. Read `.ai/memory-bank/context.md` → the `## Current Work & Handoff` section is the single source of truth for what
+   is being worked on **right now** (it is regenerated atomically by `action_call(action="ctx_info",
+   params={"mode": "context"})`).
+   `.ai/memory-bank/environment.md` is static env config only (shell detection, commands).
+2. Read the plan registry via `action_call(action="plan_status")` → the **active plan** is the current focus.
+3. If an active plan exists, read its `tasks.md` via `action_call(action="task_read", params={"plan_uuid": "...",
+   "format": "structured"})` → next eligible task via `action_call(action="plan_status", params={"plan_uuid": "..."})`.
+4. **Load User Patterns:** Always retrieve user preferences at the start of a session by running
+   `action_call(action="mem_search", params={"entity_type": "pattern"})` and apply them to your workflow.
+5. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what
+   to work on — do not guess, do not fabricate a task, do not "continue" something you cannot see.
+"""
+
+
+def _ensure_protocol_and_agents_md(workspace_path: str | Path) -> None:
+    try:
+        wspath = Path(workspace_path).resolve()
+        ai_dir = wspath / ".ai"
+        ai_dir.mkdir(parents=True, exist_ok=True)
+
+        proto_path = ai_dir / "awlab-protocol.md"
+        if not proto_path.exists():
+            proto_path.write_text(AWLAB_PROTOCOL_MD, encoding="utf-8")
+
+        agents_md_path = wspath / "AGENTS.md"
+        magic_line = "> **CRITICAL**: Read .ai/awlab-protocol.md first.\n"
+        if agents_md_path.exists():
+            content = agents_md_path.read_text(encoding="utf-8")
+            if "awlab-protocol.md" not in content:
+                agents_md_path.write_text(magic_line + "\n" + content, encoding="utf-8")
+        else:
+            agents_md_path.write_text(magic_line + "\n", encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to bootstrap awlab protocol: {e}")
 
 
 def read_context_md(workspace_path: str | Path) -> str | None:

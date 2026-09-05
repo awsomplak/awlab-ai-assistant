@@ -13,7 +13,6 @@ matching the pattern used by the rest of the test suite.
 """
 
 import json
-import re
 from pathlib import Path
 
 from mcp_server.modules import registration
@@ -65,7 +64,7 @@ def test_registry_has_expected_action_count():
     21 + ``project_id`` (check-and-create, isolation bootstrap) + ``plan_doc``
     (direct plan.md/notes.md read/write/delete).
     """
-    assert len(REGISTRY) == 23
+    assert len(REGISTRY) == 24
     groups = {spec["group"] for spec in REGISTRY.values()}
     assert {"task", "plan", "memory", "graph", "context", "util", "workflow"} <= groups
 
@@ -229,10 +228,7 @@ async def test_real_list_for_array_param_still_works(tmp_path: Path):
     # reasons in tmp_path, but not with `expected array`).
     assert r["success"] is True or "expected array" not in str(r.get("error", ""))
     # The invalid param list must NOT contain the array error.
-    assert not any(
-        err.get("reason") == "expected array"
-        for err in r.get("invalid", []) or []
-    )
+    assert not any(err.get("reason") == "expected array" for err in r.get("invalid", []) or [])
 
 
 async def test_json_string_for_array_param_is_accepted(tmp_path: Path):
@@ -248,10 +244,7 @@ async def test_json_string_for_array_param_is_accepted(tmp_path: Path):
         },
     )
     # The fallback parsed it; the array error must NOT appear in invalid.
-    assert not any(
-        err.get("reason") == "expected array"
-        for err in r.get("invalid", []) or []
-    )
+    assert not any(err.get("reason") == "expected array" for err in r.get("invalid", []) or [])
     # And the call actually succeeded (handler ran with parsed list).
     assert r["success"] is True
     assert r["action"] == "mem_observe"
@@ -315,10 +308,7 @@ async def test_json_string_with_wrong_shape_fails_with_hint(tmp_path: Path):
         },
     )
     assert r["success"] is False
-    assert any(
-        err.get("reason") == "expected array"
-        for err in r.get("invalid", []) or []
-    )
+    assert any(err.get("reason") == "expected array" for err in r.get("invalid", []) or [])
 
 
 # ── Task 2.3: per-action_call request_id correlation in logs (G6) ─────────
@@ -337,8 +327,9 @@ async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp
     cross-pollination, no leaks).
     """
     import asyncio
-    from mcp_server.helpers import logger as logger_mod
-    from mcp_server.helpers.logger import _request_id_var, set_request_id, logger as logger_singleton
+
+    from mcp_server.helpers.logger import _request_id_var, set_request_id
+    from mcp_server.helpers.logger import logger as logger_singleton
 
     # 1. Reset the contextvar so the dispatcher must stamp it (no pre-stamping).
     set_request_id("-")
@@ -367,12 +358,9 @@ async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp
         assert r["success"] is True, r
 
     # 4. After all calls complete, the contextvar MUST be back to "-"
-    assert _request_id_var.get() == "-", (
-        f"request_id contextvar leaked: still {_request_id_var.get()!r} after calls"
-    )
+    assert _request_id_var.get() == "-", f"request_id contextvar leaked: still {_request_id_var.get()!r} after calls"
 
     # 5. Now verify the *direct* behavior of the contextvar inside a coroutine.
-    rid_re = re.compile(r"\[req=([0-9a-f]{8})\]")
     set_request_id("-")
     results: dict[str, str] = {}
 
@@ -402,9 +390,7 @@ async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp
     set_request_id("deadbeef")
     logger_singleton.tool("test").info("hello from test")
     set_request_id("-")
-    assert any("[req=deadbeef]" in line for line in captured), (
-        f"log line missing [req=deadbeef] tag: {captured}"
-    )
+    assert any("[req=deadbeef]" in line for line in captured), f"log line missing [req=deadbeef] tag: {captured}"
 
     # 7. End-to-end through the dispatcher: call action_call, then verify the
     # request_id was set during the call and reset after. The dispatcher's
@@ -415,9 +401,7 @@ async def test_concurrent_action_calls_get_distinct_request_ids(monkeypatch, tmp
     assert _request_id_var.get() == "-", "precondition: contextvar must be at default"
     r = await action_call("definitely_not_a_real_action")
     assert r["success"] is False
-    assert _request_id_var.get() == "-", (
-        f"dispatcher leaked request_id: {_request_id_var.get()!r}"
-    )
+    assert _request_id_var.get() == "-", f"dispatcher leaked request_id: {_request_id_var.get()!r}"
 
 
 # ── Task 3.4: slow disk must not block the dispatcher (G10) ────────────────
@@ -437,14 +421,12 @@ async def test_slow_disk_does_not_block_logger_when_async_enabled(monkeypatch, t
     filesystem stalls. Without it, every `logger.error(...)` path in the
     dispatcher would block on disk I/O.
     """
-    import os
     import time
 
     # Force async mode for this test. The env var is read in Logger.__init__,
     # so we set it before constructing a new Logger.
     monkeypatch.setenv("LOG_ASYNC", "1")
 
-    from mcp_server.helpers import logger as logger_mod
     from mcp_server.helpers.logger import Logger
 
     # Construct a fresh Logger in async mode; do NOT use the module-level
