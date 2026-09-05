@@ -203,7 +203,7 @@ async def _plan_update(
                     "patterns_extracted": retro.get("patterns_extracted", 0),
                     "stored_patterns": (retro.get("observations") or {}).get("stored_patterns", []),
                 }
-            except Exception:  # noqa: BLE001 — best-effort auto-learning
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — best-effort auto-learning
                 pass
         return result
     return await plan_tools.resolve_deferred_tasks(
@@ -314,18 +314,20 @@ async def _plan_doc(
     reviews the complete result — not a diff. Modes: read (default) | write |
     delete. doc: plan (default) | notes.
     """
-    if doc not in ("plan", "notes"):
-        return helpers.fail_obj(error="plan_doc: doc must be 'plan' or 'notes'")
+    if doc not in ("plan", "notes", "walkthrough"):
+        return helpers.fail_obj(error="plan_doc: doc must be 'plan', 'notes', or 'walkthrough'")
     if mode not in ("read", "write", "delete"):
         return helpers.fail_obj(error="plan_doc: mode must be read, write, or delete")
     if not plan_uuid:
         return helpers.fail_obj(error="plan_doc: plan_uuid required")
 
-    path = (
-        settings.get_plan_path(workspace_path=workspace_path, plan_uuid=plan_uuid)
-        if doc == "plan"
-        else settings.get_plan_dir(workspace_path=workspace_path, plan_uuid=plan_uuid) / "notes.md"
-    )
+    plan_dir = settings.get_plan_dir(workspace_path=workspace_path, plan_uuid=plan_uuid)
+    if doc == "plan":
+        path = settings.get_plan_path(workspace_path=workspace_path, plan_uuid=plan_uuid)
+    elif doc == "notes":
+        path = plan_dir / "notes.md"
+    else:
+        path = plan_dir / "walkthrough.md"
 
     if mode == "read":
         content = read_file_safe(path)
@@ -481,7 +483,7 @@ async def _context_composite(
     """
     try:
         plan = await _plan_status(workspace_path=workspace_path, project_id=project_id, format="minimal")
-    except Exception:  # noqa: BLE001 — degrade gracefully
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — degrade gracefully
         plan = {"success": False, "error": "plan status unavailable"}
 
     # Active plan UUID (from plan_status registry) for plan.md/notes.md.
@@ -491,24 +493,31 @@ async def _context_composite(
         active = (registry or {}).get("active") if isinstance(registry, dict) else None
         if isinstance(active, list) and active:
             active_uuid = (active[0] or {}).get("uuid", "")
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
         active_uuid = ""
 
     plan_doc: dict[str, Any] = {"success": False, "error": "no plan.md"}
     notes_doc: dict[str, Any] = {"success": False, "error": "no notes.md"}
+    walkthrough_doc: dict[str, Any] = {"success": False, "error": "no walkthrough.md"}
     if active_uuid:
         try:
             raw_plan = helpers.read_plan_md(workspace_path=workspace_path, uuid=active_uuid)
             if raw_plan.get("content"):
                 plan_doc = helpers.parse_plan_md(raw_plan["content"])
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
             plan_doc = {"success": False, "error": "plan.md unreadable"}
         try:
             raw_notes = helpers.read_notes_md(workspace_path=workspace_path, uuid=active_uuid)
             if raw_notes.get("content"):
                 notes_doc = helpers.parse_notes_md(raw_notes["content"])
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
             notes_doc = {"success": False, "error": "notes.md unreadable"}
+        try:
+            raw_walkthrough = helpers.read_walkthrough_md(workspace_path=workspace_path, uuid=active_uuid)
+            if raw_walkthrough.get("content"):
+                walkthrough_doc = helpers.parse_walkthrough_md(raw_walkthrough["content"])
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+            walkthrough_doc = {"success": False, "error": "walkthrough.md unreadable"}
 
     code: dict[str, Any] = {"success": True, "results": [], "related_memory": []}
     mem: dict[str, Any] = {"success": True, "results": []}
@@ -518,13 +527,13 @@ async def _context_composite(
             code = await _maybe_await(
                 _graph_query, workspace_path=workspace_path, query=query, limit=5, project_id=project_id
             )
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
             code = {"success": False, "error": "graph query unavailable"}
         try:
             mem = await memory_tools.search_memory(
                 workspace_path=workspace_path, project_id=project_id, query=query, limit=5
             )
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
             mem = {"success": False, "error": "memory search unavailable"}
     else:
         # No query → the agent can't know what's stored yet. Return an INVENTORY
@@ -534,7 +543,7 @@ async def _context_composite(
             status = _graph_status(workspace_path=workspace_path)
             if isinstance(status, dict) and status.get("exists"):
                 code = {"success": True, "mode": "graph_status", **status}
-        except Exception:  # noqa: BLE001
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
             pass
 
     # Pattern delivery (Phase 5): inject stack-scoped baked patterns + tell-once
@@ -548,7 +557,7 @@ async def _context_composite(
             read_baked(workspace_path).get("candidates") or [], detect_stack(workspace_path)
         )
         pattern_candidates = deliver_candidates(workspace_path).get("pattern_candidates") or []
-    except Exception:  # noqa: BLE001 — delivery must never break the composite
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — delivery must never break the composite
         pass
 
     return {
@@ -556,6 +565,7 @@ async def _context_composite(
         "plan": plan if isinstance(plan, dict) else plan,
         "plan_doc": plan_doc,
         "notes_doc": notes_doc,
+        "walkthrough_doc": walkthrough_doc,
         "code": code if isinstance(code, dict) else code,
         "memory": mem if isinstance(mem, dict) else mem,
         "patterns": baked_patterns,
@@ -569,6 +579,7 @@ async def _context_composite(
             query=query,
             plan_doc=plan_doc,
             notes_doc=notes_doc,
+            walkthrough_doc=walkthrough_doc,
             patterns=baked_patterns,
             pattern_candidates=pattern_candidates,
         ),
@@ -602,7 +613,7 @@ def _offline_cached(action: str):
         async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
             try:
                 return await fn(*args, **kwargs)
-            except Exception as e:  # noqa: BLE001 — queue-and-surface, never drop
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError) as e:
                 entry: dict[str, Any] = {"type": action}
                 for k, v in kwargs.items():
                     if v is not None:
@@ -848,7 +859,7 @@ async def _mem_replay(
             else:
                 raise ValueError(f"unknown pending entry type '{etype}'")
             succeeded.append({"index": idx, "type": etype})
-        except Exception as e:  # noqa: BLE001 — keep the entry for a later retry
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError) as e:
             failed.append({"index": idx, "type": etype, "error": str(e)})
             remaining.append(entry)
     _pending_replace(workspace_path, remaining)
@@ -961,6 +972,22 @@ REGISTRY: dict[str, dict[str, Any]] = {
         ],
     },
     # ── Plan ──────────────────────────────────────────────────────────────
+    "plan_create": {
+        "group": "plan",
+        "summary": "Create a new plan: auto-generates UUID, scaffolds files, updates registry.",
+        "doc": "Creates a new plan deterministically on the server side. It generates an 8-character UUID, creates `.ai/artifacts/{uuid}/`, scaffolds `plan.md` and `tasks.md`, and safely inserts the new plan into the active table of `registry.md`. Use this instead of manually creating plan files.",
+        "handler": plan_tools.create_plan_action,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "project_id": {"type": "string", "desc": "Optional project ID"},
+            "summary": {"type": "string", "required": True, "desc": "Concise 1-line summary of the plan"},
+        },
+        "returns": "{success, plan_uuid, message, registry_updated}",
+        "example": 'action_call(action="plan_create", params={"summary": "Migrate database to PostgreSQL"})',
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
+        "aliases": ["create_plan", "plan_init"],
+    },
     "plan_status": {
         "group": "plan",
         "summary": "Read plan/registry status: active plan, next task, completeness, phase gate.",
@@ -1080,9 +1107,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
     # ── Plan documents ────────────────────────────────────────────────────
     "plan_doc": {
         "group": "plan",
-        "summary": "Read / create / update / delete a plan's plan.md or notes.md directly.",
+        "summary": "Read / create / update / delete a plan's plan.md, notes.md, or walkthrough.md directly.",
         "doc": "Pass the FULL content (no template, no IDE compare-changes); review the "
-        "complete result, not a diff. doc=plan (default) | notes. mode=read (default) | "
+        "complete result, not a diff. doc=plan (default) | notes | walkthrough. mode=read (default) | "
         "write | delete. write upserts the whole file atomically; delete removes it.",
         "handler": _plan_doc,
         "params": {
@@ -1094,7 +1121,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "desc": "8-char lowercase UUID",
             },
             "project_id": {"type": "string", "desc": "Optional project ID for agent-recall isolation"},
-            "doc": {"type": "string", "enum": ["plan", "notes"], "default": "plan"},
+            "doc": {"type": "string", "enum": ["plan", "notes", "walkthrough"], "default": "plan"},
             "mode": {"type": "string", "enum": ["read", "write", "delete"], "default": "read"},
             "content": {"type": "string", "desc": "Full markdown content (required for write)"},
         },
@@ -1858,7 +1885,7 @@ def build_tool_description() -> str:
     for group in sorted({s["group"] for s in REGISTRY.values()}):
         names = sorted(a for a, s in REGISTRY.items() if s["group"] == group)
         lines.append(f"- {group}: {', '.join(names)}")
-    lines.append('For per-action params/examples, call the action_help tool (NOT action_call).')
+    lines.append("For per-action params/examples, call the action_help tool (NOT action_call).")
     return "\n".join(lines)
 
 

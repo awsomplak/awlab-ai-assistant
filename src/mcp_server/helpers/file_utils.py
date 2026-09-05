@@ -4,7 +4,6 @@ File utilities for reading/writing markdown task files and parsing checklists.
 
 import os
 import re
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 # `O_CREAT|O_EXCL` sentinel-file mechanism with stale-PID detection.
 try:
     import fcntl as _fcntl  # POSIX
+
     _HAS_FCNTL = True
 except ImportError:
     _fcntl = None  # type: ignore[assignment]
@@ -99,10 +99,13 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
                 if stale_pid > 0:
                     try:
                         os.kill(stale_pid, 0)  # signal 0 = existence check
-                    except ProcessLookupError:
-                        # Stale lock — remove and retry
-                        lock_path.unlink(missing_ok=True)
-                        continue
+                    except OSError as e:
+                        # On Windows, a dead process raises OSError (often winerror 87)
+                        # instead of ProcessLookupError. If it's PermissionError, the
+                        # process is alive but we can't signal it. Otherwise, assume dead.
+                        if not isinstance(e, PermissionError):
+                            lock_path.unlink(missing_ok=True)
+                            continue
             except (ValueError, OSError):
                 pass
             time.sleep(delay)
@@ -219,6 +222,14 @@ def read_notes_md(workspace_path: str | Path = "", uuid: str = "") -> dict[str, 
         return fail_obj(error=f"notes.md not found for {uuid}")
     return resp_obj(content=content, path=str(notes_path))
 
+def read_walkthrough_md(workspace_path: str | Path = "", uuid: str = "") -> dict[str, Any]:
+    """Read a plan's walkthrough.md file (may not exist — optional artifact)."""
+    walkthrough_path = settings.get_plan_dir(workspace_path=workspace_path, plan_uuid=uuid) / "walkthrough.md"
+    content = read_file_safe(walkthrough_path)
+    if content is None:
+        return fail_obj(error=f"walkthrough.md not found for {uuid}")
+    return resp_obj(content=content, path=str(walkthrough_path))
+
 
 # ── plan.md / notes.md parsers ──────────────────────────────────────────────
 
@@ -331,8 +342,39 @@ def parse_notes_md(content: str) -> dict[str, Any]:
     )
 
 
+def parse_walkthrough_md(content: str) -> dict[str, Any]:
+    """Parse a walkthrough.md into structured fields.
+
+    Section headings are normalized the same way as ``parse_plan_md``.
+    """
+    title = ""
+    for line in content.splitlines():
+        if line.startswith("# ") and not line.startswith("## "):
+            title = line[2:].strip()
+            break
+
+    sections: dict[str, Any] = {}
+    for sec in _split_md_sections(content):
+        key = re.sub(r"[^a-z0-9]+", "_", sec["heading"].lower()).strip("_") or "title"
+        body = "\n".join(sec["body"]).strip()
+        bullets = _section_bullets("\n".join(sec["body"]))
+        sections[key] = {
+            "heading": sec["heading"],
+            "body": body,
+            "bullets": bullets,
+        }
+
+    return resp_obj(
+        name=title,
+        sections=sections,
+    )
+
+
 # ── tasks.md parser ──────────────────────────────────────────────────────────
 
+# Unified patterns for Auto-Healing parsing
+_PHASE_RE = re.compile(r"^##\s+Phase\s+(\d+)[.:\-]?\s*(.+)$", re.IGNORECASE)
+_TASK_RE = re.compile(r"^(\s*)([-*]\s+)(\[\s*[ x✓!—⏳a-zA-Z]*\s*\])(.*)$")
 
 # Metadata continuation lines attached to the previous task (block style).
 #   - `    → depends: Task 1, Task 2`   (dependencies — refs resolved by path or name)
@@ -383,11 +425,8 @@ def parse_tasks_md(content: str) -> dict[str, Any]:
     current_phase: dict[str, Any] | None = None
     task_stack: list[dict[str, Any]] = []
 
-    phase_pattern = re.compile(r"^##\s+Phase\s+(\d+)\s*:\s*(.+)$", re.IGNORECASE)
-    task_pattern = re.compile(r"^(\s*)(- )(\[[ x✓!—⏳]+\])\s*(.+)$")
-
     for line in content.splitlines():
-        phase_match = phase_pattern.match(line)
+        phase_match = _PHASE_RE.match(line)
         if phase_match:
             current_phase = {
                 "name": line.strip().lstrip("#").strip(),
@@ -401,7 +440,7 @@ def parse_tasks_md(content: str) -> dict[str, Any]:
         if current_phase is None:
             continue
 
-        task_match = task_pattern.match(line)
+        task_match = _TASK_RE.match(line)
         if task_match:
             indent_str = task_match.group(1)
             indent = len(indent_str)
@@ -466,10 +505,6 @@ def parse_tasks_md(content: str) -> dict[str, Any]:
                 continue
 
     return resp_obj(phases=phases)
-
-
-_PHASE_RE = re.compile(r"^##\s+Phase\s+(\d+)\s*:", re.IGNORECASE)
-_TASK_RE = re.compile(r"^(\s*)(- )(\[[ x✓!—⏳]+\])(.*)$")
 
 
 def _build_task_path_map(content: str) -> dict[str, int]:

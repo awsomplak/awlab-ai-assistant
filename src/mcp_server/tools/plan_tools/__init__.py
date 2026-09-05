@@ -22,6 +22,7 @@ from .phase import (
 # ── Plan (registry, workflows, retrospective) ───────────────────────────────
 from .plan import (
     check_plan_completable,
+    create_plan_action,
     create_registry_entry,
     delete_registry_entry,
     execute_workflow,
@@ -71,4 +72,5 @@ __all__ = [
     "create_registry_entry",
     "update_registry_status",
     "delete_registry_entry",
+    "create_plan_action",
 ]
