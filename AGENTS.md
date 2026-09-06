@@ -1,32 +1,124 @@
 > **CRITICAL**: Read .ai/awlab-protocol.md first.
 
-# AGENTS.md — read this first (session start)
+# AGENTS.md — AI Agent Guidelines & Operating Rules
 
 This project is **AWLab-ID** — an AI-Assisted Development System (rules, workflows, skills, MCP server).
-It compiles rules+skills for Cline, VS Code Copilot, Claude Code, Hermes, **Google Antigravity**, **Antigravity IDE**, and **OpenCode**, and provides a **single MCP server executable** (`dist/bin/awlab-ai-assistant.exe`) exposing **2 tools** — `action_call` + `action_help` — that route **23 actions** (plan, task, memory, graph, context, util, workflow).
+It provides a **single consolidated MCP server** (`awlab-ai-assistant.exe` or via `.venv/Scripts/python.exe`) exposing **2 tools** — `action_call` and `action_help` — routing **23 deterministic actions** across plan, task, memory, graph, context, util, and workflow domains.
 
-## ⚠️ Session-start protocol (mandatory — prevents hallucination)
+---
 
-At the start of **every** session, before touching any code:
+## 1. ⚠️ Session-Start Protocol (Mandatory)
 
-1. Read `.ai/memory-bank/context.md` → the `## Current Work & Handoff` section is the single source of truth for what is being worked on **right now** (it is regenerated atomically by `action_call(action="ctx_info", params={"mode": "context"})`). `.ai/memory-bank/environment.md` is static env config only (shell detection, commands).
-2. Read the plan registry via `action_call(action="plan_status")` → the **active plan** is the current focus.
-3. If an active plan exists, read its `tasks.md` via `action_call(action="task_read", params={"plan_uuid": "...", "format": "structured"})` → next eligible task via `action_call(action="plan_status", params={"plan_uuid": "..."})`.
-4. **Load User Patterns:** Always retrieve user preferences at the start of a session by running `action_call(action="mem_search", params={"entity_type": "pattern"})` and apply them to your workflow.
-5. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what to work on — do not guess, do not fabricate a task, do not "continue" something you cannot see.
+At the start of **every** session, before modifying or creating code:
 
-## Current work (2026-09-05) — full detail in `context.md`
+1. **Read Project Context:**
+   - Read `.ai/memory-bank/context.md`. The `## Current Work & Handoff` section is the single source of truth for ongoing work.
+   - If stale or needed, regenerate atomically via:
+     `action_call(action="ctx_info", params={"workspace_path": "<workspace_root>", "mode": "context"})`.
+   - `.ai/memory-bank/environment.md` contains static environment configuration only.
+2. **Check Plan Registry:**
+   - Run `action_call(action="plan_status", params={"workspace_path": "<workspace_root>"})` to identify the **active plan**.
+3. **Inspect Active Tasks:**
+   - If an active plan exists, inspect its tasks:
+     `action_call(action="task_read", params={"workspace_path": "<workspace_root>", "plan_uuid": "<plan_uuid>", "format": "structured"})`.
+   - Check next eligible task using `plan_status`.
+4. **Load User Preferences & Patterns:**
+   - Always retrieve active user patterns and conventions at session start:
+     `action_call(action="mem_search", params={"workspace_path": "<workspace_root>", "entity_type": "pattern"})`.
+   - Immediately apply recovered user conventions to your active workflows.
+5. **Never Invent Task State:**
+   - If there is no handoff and no active plan, state that clearly to the user and ask for instructions. Never fabricate active tasks or unrecorded state.
 
-- **MCP tool consolidation — DONE (plan `mcptool1`, all phases complete)**: the 36 tools across 3 servers were consolidated into a minimal surface for VS Code Copilot efficiency:
-  - `action_call(action, params)` dispatcher + `action_help(action)` help tool (CLI `--help` pattern).
-  - Single `REGISTRY` dict (action → handler / params / example / doc) generates the tool description, `action_help` output, and SKILL.md — no drift.
-  - Single executable `dist/bin/awlab-ai-assistant.exe`; legacy 3-server files deleted.
-  - Agentic orchestration: `ctx_info mode="context"` composite atomically regenerates `context.md` (code ↔ memory correlation).
-  - Single `task_update` (multi-level paths, transition validation with `valid_targets`, auto-create, atomic rollback, executed/skipped/created trace).
-- **Code knowledge graph — incremental rebuild implemented**: `graph_build` now re-extracts only changed files (with the unchanged corpus as resolution context) and merges into the prior graph, so auto-refresh via the `graph_fresh` precondition is ~40x faster than a full rebuild. Verified: incremental output is identical to a full rebuild at the same source state.
-- **Google Antigravity & Antigravity IDE native support — DONE**: lifecycle hooks adapter (`PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`), modular rule compilation (`dist/profiles/antigravity/rules/`), MCP server guidance (`instructions.md`), and `plan_doc walkthrough.md` artifact support. Rules are host-isolated — Antigravity-specific planning protocol is compiled separately, never polluting base rules.
-- **OpenCode hook adapter — DONE**: `HOOK_ADAPTERS` now includes `opencode` (prompt injection + pre_tool deny), CLI `--agent` choices updated.
-- **Codebase hardening — DONE**: fixed operator-precedence bug in `_kind_generic`, added `[/]` in-progress status marker, walkthrough.md in ctx_info context snapshot, bake scheduler `_known` LRU cap, WAL PRAGMA deduplication, project-id path-hash suffix to prevent slug collision, watchdog thread tracking.
-- **430 tests pass, lint clean.**
-- **Next**: no active plan — user-directed work.
-- Reference: `docs/en/AVAILABLE_TOOLS.md`, `docs/en/REGISTRY_SCHEMA.md`, `src/mcp_server/registry.py`, `src/mcp_server/modules/dispatcher.py`, `src/mcp_server/helpers/graphify_bridge.py`.
+---
+
+## 2. Core MCP Operating Rules
+
+- **Workspace Path:** Always pass `workspace_path` (absolute path to project root) for all filesystem/disk actions (`plan_*`, `task_*`, `mem_*`, `graph_*`, `ctx_*`). The server does not perform implicit directory detection.
+- **Python Virtual Environment:** In this project, always use the virtual environment binary (`.venv\Scripts\python.exe` on Windows or `.venv/bin/python` on POSIX) for running Python commands and scripts.
+- **Self-Documenting Help:** Use `action_help(action="<name>")` to inspect required parameters, types, and defaults before calling unfamiliar actions.
+- **Execution Tracing:** Every `action_call` response returns `{success, action, result, executed, skipped}`. Always inspect errors or skipped preconditions if an action fails.
+
+---
+
+## 3. Plan & Task Management
+
+Follow strict plan-first execution for multi-step or non-trivial modifications:
+
+### Plan Lifecycle
+- **Create Plan:** Use `action_call(action="plan_create", params={"workspace_path": "...", "summary": "..."})` or `reg_update(type="create", ...)` to register a new plan.
+- **Inspect Status:** Call `action_call(action="plan_status", params={"workspace_path": "..."})` to monitor phase progress and gates.
+- **Phase Transition:** Mark phases complete via `action_call(action="plan_update", params={"workspace_path": "...", "mode": "mark_phase", "phase": <int>})`.
+- **Plan Documents:** Read/write `plan.md`, `notes.md`, and `walkthrough.md` via:
+  `action_call(action="plan_doc", params={"workspace_path": "...", "plan_uuid": "...", "doc": "plan"|"notes"|"walkthrough", "mode": "read"|"write", "content": "..."})`.
+- **Completion Walkthrough:** Always persist a summary walkthrough upon plan or major milestone completion using `plan_doc` (`doc="walkthrough"`).
+
+### Task Tracking
+- **Read Tasks:** `action_call(action="task_read", params={"workspace_path": "...", "plan_uuid": "...", "format": "structured"})` (or `"tree"` / `"flat"`).
+- **Update Task State Immediately:** Never execute tasks silently. Update status as soon as progress happens:
+  - Transition: `[ ]` (pending) → `[/]` (in progress) → `[x]` (completed) or `[-]` (skipped).
+  - Update call:
+    `action_call(action="task_update", params={"workspace_path": "...", "updates": [{"task_path": "1.1", "new_status": "[/]"}]})`.
+
+---
+
+## 4. Memory Management & User Patterns
+
+AWLab-ID maintains an isolated, type-safe entity-observation memory store (SQLite backed, keyed by `project_id`).
+
+### Context & Discovery
+- **Search Memory:**
+  `action_call(action="mem_search", params={"workspace_path": "...", "query": "..."})` — hybrid BM25 + dense search.
+  Use `entity_type="pattern"` for conventions, or filter by `decision`, `concept`, `bug`, etc.
+- **Inspect Entities:**
+  - Read specific node: `action_call(action="mem_read", params={"workspace_path": "...", "node": "..."})`.
+  - Audit entity inventory: `action_call(action="mem_list_entities", params={"workspace_path": "...", "limit": 100})`.
+  - Deduplicate entities: `action_call(action="mem_dedupe", params={"workspace_path": "...", "name": "..."})`.
+
+### Pattern Capture & Observation
+- **Observation-First (`mem_observe`):** When encountering user preferences, corrections ("Don't do X, do Y"), or repeated command behavior, record them into `.ai/memory-bank/observations.jsonl`:
+  ```json
+  action_call(action="mem_observe", params={
+    "workspace_path": "...",
+    "observations": [{
+      "signature": "<unique_key>",
+      "value": "<observed convention or preference>",
+      "source": "explicit" | "corrected" | "behavioral"
+    }]
+  })
+  ```
+  The deterministic baking pipeline converts observations into candidates without LLM hallucination.
+- **Direct Write (`mem_write`):** Use for confirmed, explicit conventions or relating entities:
+  `action_call(action="mem_write", params={"workspace_path": "...", "entities": [...], "observations": [...]})`.
+- **Offline Cache (`mem_replay`):** If MCP mutations occurred while offline, replay `.ai/memory-bank/pending.jsonl` using `action_call(action="mem_replay", params={"workspace_path": "..."})`.
+
+---
+
+## 5. Code Knowledge Graph (Codebase Comprehension)
+
+AWLab-ID maintains an AST-based structural code knowledge graph in `.ai/codegraph/` (`graph.json` + interactive `graph.html`).
+
+### Grounding Before Modifying
+Never guess dependencies, call chains, or symbol hierarchies. Use the code graph:
+- **Freshness Check:** Verify graph state with `action_call(action="graph_status", params={"workspace_path": "..."})`.
+- **Build / Freshen:**
+  `action_call(action="graph_build", params={"workspace_path": "...", "background": false})`
+  Incremental rebuilds extract only changed files against the existing AST context (~40x faster than full builds).
+- **Search Symbols:**
+  `action_call(action="graph_query", params={"workspace_path": "...", "query": "<symbol_name>"})`
+  Indexes file, function, class, and component labels. Automatically falls back to whole-word source search if no AST node matches.
+- **Explain Nodes:**
+  `action_call(action="graph_explain", params={"workspace_path": "...", "node": "<symbol_or_id>"})`
+  Provides node declaration details, direct inbound/outbound relationships, and correlated memory entities.
+- **Trace Relationships:**
+  `action_call(action="graph_path", params={"workspace_path": "...", "source": "<symbol_a>", "target": "<symbol_b>"})`
+  Finds shortest symbol-level or module-level dependency paths between components.
+
+---
+
+## 6. Full Orchestration (`ctx_info`)
+
+Use `ctx_info` for consolidated context management:
+- **Composite Context (`mode="context"`):** Atomically gathers active plan, next tasks, code graph state, and relevant memory, while regenerating `.ai/memory-bank/context.md`. Optional `query` parameter scopes relevance.
+- **Snapshot (`mode="snapshot"`):** Fast read of active plan + baked patterns + project ID.
+- **Scan (`mode="scan"`):** Inspect detected frameworks, build systems, and runtime environments.
+- **Suggest (`mode="suggest"`):** Suggest candidate source files for a given task description using graph and memory correlation.

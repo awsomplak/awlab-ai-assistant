@@ -9,8 +9,17 @@
   - **Antigravity lifecycle hooks adapter** — `awlab-ai-assistant hook --agent antigravity --event <event>` handles protojson camelCase payloads (`conversationId`, `workspacePaths`, `toolCall`, `stepIdx`, `error`, `terminationReason`) for `PreToolUse` (deny/allow), `PostToolUse` (observer), `PreInvocation` (ephemeralMessage context injection), and `Stop` (continue/allow).
   - **`plan_doc` walkthrough artifact support** — extended `_plan_doc` in `src/mcp_server/registry.py` to support `doc="walkthrough"`, allowing `walkthrough.md` to be stored, read, and deleted directly within `.ai/artifacts/{uuid}/walkthrough.md`.
   - **Publish target** — `python scripts/run.py publish --target=antigravity` installs modular rules, skills, MCP snippet, and hooks config into `~/.gemini/config/`.
+- **`run.py ruff` Subcommand** — introduced a `ruff` subcommand to `scripts/run.py` to run raw `ruff` checks with arbitrary arguments. Execution is cleanly delegated to `scripts/lint.py --ruff`, keeping tool-discovery logic centralized.
+- **Publish JSON Merge** — enhanced the `publish` command in `scripts/run.py` to deep-merge `.json` configuration files (e.g. `mcp_config.json`, `hooks.json`) instead of overwriting them, preventing user data loss.
+- **Centralized Binary Publish Target** — added a `binary` target to `PUBLISH_MAP` for deploying the compiled executable directly to the shared `~/.awlab-id/agent-memory/bin/` folder.
+- **Publish `--no-bin` Flag** — added `--no-bin` to `scripts/run.py publish` to skip binary distribution and only deploy rules and configurations.
+
+### Changed
+- **Publish Path Normalization** — refactored path resolution in `scripts/run.py` to always generate absolute paths instead of relying on `~/` expansion, ensuring maximum compatibility on Windows. Constants like `PUBLISH_MAP` have also been moved to the top of the file for better organization.
+- **Code Hygiene** — fixed trailing whitespace on blank lines in `scripts/run.py` and ran `ruff format` to ensure compliance with 120-character line limits. Configured VS Code workspace to trim trailing whitespace automatically.
 
 ### Fixed
+- **Windows MCP Stdin Hang** — fixed a critical bug in `src/mcp_server/helpers/file_utils.py` where Windows file lock generation incorrectly closed the `stdin` file descriptor (`os.close(0)`), causing AI agents to hang indefinitely during `action_call`. Replaced with a sentinel object and guard checks.
 - **`graph_status` Background Rebuild Deadlock** — fixed a critical deadlock in `src/mcp_server/helpers/graphify_bridge.py` where spawning the `_background_rebuild` thread recursively attempted to acquire `_BUILD_LOCKS_GUARD` while already holding it, hanging the event loop. The inner lock acquisition was removed, restoring concurrent `graph_status` polling during heavy background graph rebuilds.
 - **Mac binary extension bug** — patched `scripts/run.py publish` which was hardcoding the `"dist/bin/awlab-ai-assistant.exe"` path in `mcp_config.json`, causing MCP initialization failures on macOS/Linux. The binary extension is now dynamically stripped outside of Windows.
 - **Stale published `SKILL.md`** — regenerated the static `assets/skills/awlab-ai-assistant/SKILL.md` via `registry.build_skill_md()` before publishing, ensuring `plan_create` and the new `plan_doc` walkthrough parameters are correctly documented in the live configuration.
