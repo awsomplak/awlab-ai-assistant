@@ -20,6 +20,12 @@ except ImportError:
     _fcntl = None  # type: ignore[assignment]
     _HAS_FCNTL = False
 
+# Sentinel returned by _acquire_lock on Windows. Using a distinct object (not 0)
+# prevents _release_lock from calling os.close(0), which would close stdin and
+# hang the MCP stdio server. The sentinel's truth-value is True so callers can
+# still do ``if lock_fd is None: <failed>``.
+_WINDOWS_LOCK_SENTINEL = object()
+
 from ..config import settings
 from .logger import logger
 from .response import fail_obj, ok_obj, resp_obj
@@ -48,8 +54,8 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
     retries with exponential backoff up to ``timeout`` seconds.
 
     Non-POSIX path (Windows): falls back to the ``O_CREAT|O_EXCL`` sentinel
-    file mechanism with stale-PID detection. Returns 0 (a truthy fd-equivalent)
-    on success and closes the file before returning so the lock is held by the
+    file mechanism with stale-PID detection. Returns ``_WINDOWS_LOCK_SENTINEL``
+    (a distinct object, NOT the integer 0) on success; the lock is held by the
     sentinel-file's existence, not by an open fd.
     """
     if _HAS_FCNTL:
@@ -82,8 +88,10 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
         return None
 
     # Windows (or any platform without fcntl): sentinel-file mechanism.
-    # Returns 0 on success (a truthy int that mimics the POSIX fd return; the
-    # sentinel file's existence is what holds the lock).
+    # Returns _WINDOWS_LOCK_SENTINEL on success (a distinct object — NOT the
+    # integer 0, which is stdin's fd and must never be passed to os.close).
+    # The sentinel file's existence is what holds the lock; _release_lock only
+    # needs to unlink it, not close any fd.
     deadline = time.monotonic() + timeout
     delay = 0.05
     while time.monotonic() < deadline:
@@ -91,7 +99,7 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
-            return 0
+            return _WINDOWS_LOCK_SENTINEL  # type: ignore[return-value]
         except FileExistsError:
             # Check if the lock is stale (process no longer exists)
             try:
@@ -113,15 +121,18 @@ def _acquire_lock(lock_path: Path, timeout: float = 5.0) -> int | None:
     return None
 
 
-def _release_lock(lock_path: Path, fd: int | None = None) -> None:
+def _release_lock(lock_path: Path, fd: object | None = None) -> None:
     """Release a previously acquired lock.
 
     POSIX: pass the fd returned by ``_acquire_lock`` — closing it (and the
     caller's reference) releases the flock. We also ``unlink`` the sentinel
     file for parity with the previous Windows path (harmless on POSIX).
-    Non-POSIX: only the sentinel file's existence matters; ``unlink`` it.
+    Non-POSIX (Windows): fd is ``_WINDOWS_LOCK_SENTINEL`` (not an int fd) —
+    only the sentinel file's existence matters; ``unlink`` it. We MUST NOT
+    call ``os.close`` here because fd=0 would close stdin and hang the MCP
+    stdio server.
     """
-    if fd is not None:
+    if isinstance(fd, int):  # real POSIX file descriptor only
         try:
             os.close(fd)
         except OSError:
@@ -221,6 +232,7 @@ def read_notes_md(workspace_path: str | Path = "", uuid: str = "") -> dict[str, 
     if content is None:
         return fail_obj(error=f"notes.md not found for {uuid}")
     return resp_obj(content=content, path=str(notes_path))
+
 
 def read_walkthrough_md(workspace_path: str | Path = "", uuid: str = "") -> dict[str, Any]:
     """Read a plan's walkthrough.md file (may not exist — optional artifact)."""

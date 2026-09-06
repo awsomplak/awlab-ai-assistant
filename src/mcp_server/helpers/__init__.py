@@ -48,9 +48,9 @@ from .file_utils import (
     read_memory_bank_file,
     read_notes_md,
     read_plan_md,
-    read_walkthrough_md,
     read_registry_md,
     read_tasks_md,
+    read_walkthrough_md,
     resolve_dep_status,
     update_task_status_in_md,
 )
