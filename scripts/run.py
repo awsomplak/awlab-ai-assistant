@@ -15,6 +15,7 @@ Commands:
     publish         Publish /dist to AI assistant locations
     test            Run the test suite
     lint            Run lint & code hygiene (ruff)
+    ruff            Run ruff directly with arbitrary arguments
     compile-rules   Compile rules to assistant-specific profiles
     help            Show this message or help for a specific command
 """
@@ -72,15 +73,90 @@ RULE_ORDER = [
     "14-mcp-offline-cache.md",
 ]
 
+BIN_EXT = ".exe" if sys.platform.startswith("win") else ""
+PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"awlab-ai-assistant{BIN_EXT}").replace(
+    "\\", "/"
+)
+HOOK_CMD = f'"{PUBLISH_BIN_PATH}" hook'
+
+PUBLISH_MAP = {
+    "binary": (
+        "Core Binary",
+        [
+            (f"bin/awlab-ai-assistant{BIN_EXT}", "{home}/.awlab-id/agent-memory/bin/awlab-ai-assistant{BIN_EXT}"),
+        ],
+    ),
+    "cline": (
+        "Cline",
+        [
+            ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
+            ("profiles/cline/skills", "{home}/.agents/skills"),
+            # Cline keeps its native destination AND mirrors to the shared MCP data dir
+            ("workflows", "{home}/Documents/Cline/Workflows/"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "copilot": (
+        "Copilot",
+        [
+            ("profiles/copilot", "{home}/.copilot/instructions"),
+            ("profiles/copilot/agents", "{home}/.copilot/agents"),
+            ("profiles/cline/skills", "{home}/.agents/skills"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "claude": (
+        "Claude",
+        [
+            ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
+            ("profiles/claude/skills", "{home}/.claude/skills"),
+            ("profiles/claude/agents", "{home}/.claude/agents"),
+            ("profiles/hooks/claude.hooks.json", "{home}/.claude/awlab-hooks.json"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "hermes": (
+        "Hermes",
+        [
+            ("profiles/hermes/skills", "{home}/.hermes/skills"),
+            ("profiles/hooks/hermes.hooks.yaml", "{home}/.hermes/awlab-hooks.yaml"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "opencode": (
+        "OpenCode",
+        [
+            ("profiles/opencode/AGENTS.md", "{home}/.config/opencode/AGENTS.md"),
+            ("profiles/opencode/skills", "{home}/.config/opencode/skills"),
+            ("profiles/opencode/opencode.mcp.json", "{home}/.config/opencode/awlab-mcp.json"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+    "antigravity": (
+        "Google Antigravity & Antigravity IDE",
+        [
+            ("profiles/antigravity/rules", "{home}/.gemini/config/rules"),
+            ("profiles/antigravity/skills", "{home}/.gemini/config/skills"),
+            ("profiles/antigravity/mcp_config.json", "{home}/.gemini/config/mcp_config.json"),
+            (
+                "profiles/antigravity/instructions.md",
+                "{home}/.gemini/antigravity-ide/mcp/awlab-ai-assistant/instructions.md",
+            ),
+            ("profiles/hooks/antigravity.hooks.json", "{home}/.gemini/config/hooks.json"),
+            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
+        ],
+    ),
+}
+
 # Static fallback used only when mcp_server is not importable (never drifts in
 # practice — the REGISTRY is the source of truth, see _mcp_tools_text()).
 _MCP_TOOLS_FALLBACK = """
-  ── awlab-ai-assistant (single executable — Windows/Linux/macOS) ──
+    ── awlab-ai-assistant (single executable — Windows/Linux/macOS) ──
     Exposes exactly 2 tools on the MCP surface:
 
-      action_call(action, params)   route any REGISTRY action (task_*, plan_*,
-                                    mem_*, graph_*, ctx_*, util_*, wf)
-      action_help(action)           per-action usage / general help
+        action_call(action, params)   route any REGISTRY action (task_*, plan_*,
+                                        mem_*, graph_*, ctx_*, util_*, wf)
+        action_help(action)           per-action usage / general help
 
     The full action surface (20 actions) is driven by src/mcp_server/registry.py
     — a single source of truth, no separate servers / binaries.
@@ -173,22 +249,22 @@ Build the project to /dist. A full build cleans /dist first; partial builds
 other artifacts intact.
 
 Options:
-  --no-bin            Skip Python package build (rules/skills only → dist/profiles)
-  --no-rules          Skip rules/skills compilation (binary only → dist/bin)
-  --target-os=OS     Target OS: auto (default), windows, linux, macos, all
+    --no-bin            Skip Python package build (rules/skills only → dist/profiles)
+    --no-rules          Skip rules/skills compilation (binary only → dist/bin)
+    --target-os=OS     Target OS: auto (default), windows, linux, macos, all
 
 Output:
-  dist/
-  ├── build-manifest.json
-  ├── bin/               # Executable(s) + source fallback (binary build)
-  └── profiles/          # Per-agent compiled rules/skills (rules build)
+    dist/
+    ├── build-manifest.json
+    ├── bin/               # Executable(s) + source fallback (binary build)
+    └── profiles/          # Per-agent compiled rules/skills (rules build)
 
 Examples:
-  run.py build                        # Full build (cleans dist, rebuilds all)
-  run.py build --no-bin               # Profiles only (keeps dist/bin)
-  run.py build --no-rules             # Binary only (keeps dist/profiles)
-  run.py build --target-os=all        # Build for all OSes (specs for non-host)
-  run.py build --target-os=linux      # Build spec for Linux
+    run.py build                        # Full build (cleans dist, rebuilds all)
+    run.py build --no-bin               # Profiles only (keeps dist/bin)
+    run.py build --no-rules             # Binary only (keeps dist/profiles)
+    run.py build --target-os=all        # Build for all OSes (specs for non-host)
+    run.py build --target-os=linux      # Build spec for Linux
 """,
         "publish": """\
 Usage: run.py publish [options]
@@ -197,27 +273,27 @@ Publish /dist contents to AI assistant locations.
 Use --uninstall to remove previously installed files.
 
 Options:
-  --target=<name>   One of: cline, copilot, claude, hermes, opencode, antigravity, all
-  --skip-build      Fail if /dist doesn't exist instead of building
-  --force           Skip confirmation prompts
-  --uninstall       Remove installed files instead of installing
+    --target=<name>   One of: cline, copilot, claude, hermes, opencode, antigravity, all
+    --skip-build      Fail if /dist doesn't exist instead of building
+    --force           Skip confirmation prompts
+    --uninstall       Remove installed files instead of installing
 
 Target Paths:
-  Skills:
-    cline        ~/.agents/skills/
-    copilot      ~/.agents/skills/ (shared with Cline)
-    claude       ~/.claude/skills/
-    hermes       ~/.hermes/skills/
-    opencode     ~/.config/opencode/skills/
-    antigravity  ~/.gemini/config/skills/
+    Skills:
+        cline        ~/.agents/skills/
+        copilot      ~/.agents/skills/ (shared with Cline)
+        claude       ~/.claude/skills/
+        hermes       ~/.hermes/skills/
+        opencode     ~/.config/opencode/skills/
+        antigravity  ~/.gemini/config/skills/
 
-  Rules:
-    cline        ~/Documents/Cline/Rules/
-    copilot      ~/.copilot/instructions/
-    claude       ~/.claude/CLAUDE.md
-    hermes       ~/.hermes/skills/
-    opencode     ~/.config/opencode/AGENTS.md
-    antigravity  ~/.gemini/config/rules/
+    Rules:
+        cline        ~/Documents/Cline/Rules/
+        copilot      ~/.copilot/instructions/
+        claude       ~/.claude/CLAUDE.md
+        hermes       ~/.hermes/skills/
+        opencode     ~/.config/opencode/AGENTS.md
+        antigravity  ~/.gemini/config/rules/
 """,
         "test": """\
 Usage: run.py test [<pytest-args>...]
@@ -225,9 +301,19 @@ Usage: run.py test [<pytest-args>...]
 Run the test suite. Passes all additional arguments to pytest.
 
 Examples:
-  run.py test                    # Run all tests
-  run.py test -k "test_plan"     # Run tests matching pattern
-  run.py test --tb=long          # Verbose traceback
+    run.py test                    # Run all tests
+    run.py test -k "test_plan"     # Run tests matching pattern
+    run.py test --tb=long          # Verbose traceback
+""",
+        "ruff": """\
+Usage: run.py ruff [<ruff-args>...]
+
+Run ruff directly. Passes all additional arguments to ruff.
+
+Examples:
+    run.py ruff check              # Run ruff check
+    run.py ruff format             # Run ruff format
+    run.py ruff check --fix        # Run ruff check and fix
 """,
         "compile-rules": """\
 Usage: run.py compile-rules
@@ -236,14 +322,14 @@ Compile rules from assets/rules/ into assistant-specific profiles
 under dist/profiles/.
 
 Output:
-  dist/profiles/
-  ├── claude/              (global skills and CLAUDE.md monolith)
-  ├── cline/               (global skills and rules for cline)
-  ├── copilot/             (global skills and rules for copilot)
-  ├── hermes/              (global skills and rules for hermes)
-  ├── opencode/            (global AGENTS.md rules + skills)
-  ├── antigravity/         (modular rules, skills, mcp, hooks)
-  └── .clinerules          (Cline per project rules ready to copy)
+    dist/profiles/
+    ├── claude/              (global skills and CLAUDE.md monolith)
+    ├── cline/               (global skills and rules for cline)
+    ├── copilot/             (global skills and rules for copilot)
+    ├── hermes/              (global skills and rules for hermes)
+    ├── opencode/            (global AGENTS.md rules + skills)
+    ├── antigravity/         (modular rules, skills, mcp, hooks)
+    └── .clinerules          (Cline per project rules ready to copy)
 """,
     }
 
@@ -253,8 +339,6 @@ Output:
         return
 
     print(__doc__)
-    print(f"\n  {Style.BOLD}Available MCP Tools:{Style.RESET}{MCP_TOOLS}")
-    print(f"\n  Project: {ROOT}")
     print(f"  Version: {_get_version()} ({_get_build_tag()})")
 
 
@@ -372,10 +456,6 @@ def _copy_agents(dest_dir: Path, label: str) -> None:
     _ok(f"{label}  ({len(list(AGENTS_SRC.glob('*.md')))} agent file(s))")
 
 
-_BIN_EXT = ".exe" if sys.platform.startswith("win") else ""
-HOOK_CMD = f"awlab-ai-assistant{_BIN_EXT} hook"
-
-
 def _hook_config_for(agent: str, events: list[str]) -> str:
     """Return a per-host hook-registration snippet pointing at the SAME exe.
 
@@ -428,9 +508,9 @@ def _baking_capability_note(agent: str) -> str:
 
     Three tiers, ONE shared store (``.ai/memory-bank/observations.jsonl`` +
     ``baked.json``): every tier bakes identical candidates.
-      - subagent  : spawn the shared ``awlab-baker`` subagent to observe → bake → report.
-      - hooks     : ``{HOOK_CMD} --agent <host> --event <event>`` captures with zero LLM cost.
-      - async/inline : server background bake-scheduler + per-action tick (no LLM).
+        - subagent  : spawn the shared ``awlab-baker`` subagent to observe → bake → report.
+        - hooks     : ``{HOOK_CMD} --agent <host> --event <event>`` captures with zero LLM cost.
+        - async/inline : server background bake-scheduler + per-action tick (no LLM).
     """
     if agent in ("copilot", "claude", "hermes"):
         tier = (
@@ -673,7 +753,7 @@ def _compile_opencode(rules: list[dict], skills: list[dict], profiles_dir: Path)
                 "mcp": {
                     "awlab-ai-assistant": {
                         "type": "local",
-                        "command": [f"dist/bin/awlab-ai-assistant{_BIN_EXT}"],
+                        "command": [f"dist/bin/awlab-ai-assistant{BIN_EXT}"],
                         "enabled": True,
                     }
                 },
@@ -731,12 +811,15 @@ def _compile_antigravity(rules: list[dict], skills: list[dict], profiles_dir: Pa
     _ok(f"antigravity/skills/  ({len(skills)} skills)")
 
     # ── MCP wiring snippet (merge into ~/.gemini/config/mcp_config.json) ──
+    PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"awlab-ai-assistant{BIN_EXT}").replace(
+        "\\", "/"
+    )
     (ag_dir / "mcp_config.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
                     "awlab-ai-assistant": {
-                        "command": f"dist/bin/awlab-ai-assistant{_BIN_EXT}",
+                        "command": PUBLISH_BIN_PATH,
                         "args": [],
                     }
                 }
@@ -1059,75 +1142,14 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
 #  Publish
 # ══════════════════════════════════════════════════════════════════════════
 
-PUBLISH_MAP = {
-    "cline": (
-        "Cline",
-        [
-            ("profiles/cline/rules", "{home}/Documents/Cline/Rules/"),
-            ("profiles/cline/skills", "{home}/.agents/skills"),
-            # Cline keeps its native destination AND mirrors to the shared MCP data dir
-            ("workflows", "{home}/Documents/Cline/Workflows/"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-    "copilot": (
-        "Copilot",
-        [
-            ("profiles/copilot", "{home}/.copilot/instructions"),
-            ("profiles/copilot/agents", "{home}/.copilot/agents"),
-            ("profiles/cline/skills", "{home}/.agents/skills"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-    "claude": (
-        "Claude",
-        [
-            ("profiles/claude/CLAUDE.md", "{home}/.claude/CLAUDE.md"),
-            ("profiles/claude/skills", "{home}/.claude/skills"),
-            ("profiles/claude/agents", "{home}/.claude/agents"),
-            ("profiles/hooks/claude.hooks.json", "{home}/.claude/awlab-hooks.json"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-    "hermes": (
-        "Hermes",
-        [
-            ("profiles/hermes/skills", "{home}/.hermes/skills"),
-            ("profiles/hooks/hermes.hooks.yaml", "{home}/.hermes/awlab-hooks.yaml"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-    "opencode": (
-        "OpenCode",
-        [
-            ("profiles/opencode/AGENTS.md", "{home}/.config/opencode/AGENTS.md"),
-            ("profiles/opencode/skills", "{home}/.config/opencode/skills"),
-            ("profiles/opencode/opencode.mcp.json", "{home}/.config/opencode/awlab-mcp.json"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-    "antigravity": (
-        "Google Antigravity & Antigravity IDE",
-        [
-            ("profiles/antigravity/rules", "{home}/.gemini/config/rules"),
-            ("profiles/antigravity/skills", "{home}/.gemini/config/skills"),
-            ("profiles/antigravity/mcp_config.json", "{home}/.gemini/config/awlab-mcp_config.json"),
-            (
-                "profiles/antigravity/instructions.md",
-                "{home}/.gemini/antigravity-ide/mcp/awlab-ai-assistant/instructions.md",
-            ),
-            ("profiles/hooks/antigravity.hooks.json", "{home}/.gemini/config/awlab-hooks.json"),
-            ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
-        ],
-    ),
-}
-
 
 def _resolve_dest(dest_tpl: str, home: Path, name: str = "") -> Path:
     return Path(dest_tpl.replace("{home}", str(home)).replace("{name}", name))
 
 
-def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = False, uninstall: bool = False) -> None:
+def cmd_publish(
+    target: str = "all", skip_build: bool = False, force: bool = False, uninstall: bool = False, no_bin: bool = False
+) -> None:
     if uninstall:
         _header("Uninstalling")
         home = Path.home()
@@ -1182,6 +1204,8 @@ def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = Fal
 
     home = Path.home()
     targets = [target] if target != "all" else list(PUBLISH_MAP)
+    if no_bin and "binary" in targets:
+        targets.remove("binary")
     total = 0
 
     for t in targets:
@@ -1222,6 +1246,31 @@ def cmd_publish(target: str = "all", skip_build: bool = False, force: bool = Fal
                         total += 1
             elif src.exists():
                 dest.parent.mkdir(parents=True, exist_ok=True)
+
+                if dest.exists() and dest.suffix == ".json" and not force:
+                    try:
+                        with open(src, "r", encoding="utf-8") as fs, open(dest, "r", encoding="utf-8") as fd:
+                            src_json = json.load(fs)
+                            dest_json = json.load(fd)
+
+                        def deep_merge(d1: dict, d2: dict) -> None:
+                            for k, v in d2.items():
+                                if k in d1 and isinstance(d1[k], dict) and isinstance(v, dict):
+                                    deep_merge(d1[k], v)
+                                else:
+                                    d1[k] = v
+
+                        deep_merge(dest_json, src_json)
+                        with open(dest, "w", encoding="utf-8") as fd:
+                            json.dump(dest_json, fd, indent=2)
+
+                        _detail(f"Merged into {dest}")
+                        total += 1
+                        continue
+                    except Exception as e:
+                        _warn(f"Failed to merge JSON {dest}: {e}")
+                        # Fallback to copy below
+
                 shutil.copy2(src, dest)
                 _detail(f"{dest}")
                 total += 1
@@ -1255,6 +1304,15 @@ def cmd_lint(fix: bool = False, apply_format: bool = False, paths: list[str] | N
         cmd.append("--format")
     if paths:
         cmd.extend(paths)
+    r = subprocess.run(cmd, cwd=str(ROOT))
+    sys.exit(r.returncode)
+
+
+def cmd_ruff(ruff_args: list[str] | None = None) -> None:
+    """Run ruff directly with arguments (delegates to lint.py)."""
+    cmd = [sys.executable, str(ROOT / "scripts" / "lint.py"), "--ruff"]
+    if ruff_args:
+        cmd.extend(ruff_args)
     r = subprocess.run(cmd, cwd=str(ROOT))
     sys.exit(r.returncode)
 
@@ -1299,9 +1357,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, opts, desc in [
         ("build", ["--no-bin", "--no-rules", "--target-os"], "Build everything to /dist"),
-        ("publish", ["--target", "--skip-build", "--force", "--uninstall"], "Publish /dist to AI assistants"),
+        (
+            "publish",
+            ["--target", "--skip-build", "--force", "--uninstall", "--no-bin"],
+            "Publish /dist to AI assistants",
+        ),
         ("test", ["pytest_args"], "Run test suite"),
         ("lint", ["--fix", "--format", "paths"], "Run lint & code hygiene (ruff)"),
+        ("ruff", ["ruff_args"], "Run ruff directly with arguments"),
         ("compile-rules", [], "Compile rules to assistant profiles"),
         ("help", ["help_command"], "Show help for a command"),
     ]:
@@ -1332,6 +1395,8 @@ def build_parser() -> argparse.ArgumentParser:
                 )
             elif o == "pytest_args":
                 sp.add_argument("pytest_args", nargs=argparse.REMAINDER)
+            elif o == "ruff_args":
+                sp.add_argument("ruff_args", nargs=argparse.REMAINDER)
             elif o == "paths":
                 sp.add_argument("paths", nargs=argparse.REMAINDER)
             elif o == "help_command":
@@ -1341,6 +1406,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # Intercept help flags before argparse to route to custom cmd_help
+    if "-h" in sys.argv or "--help" in sys.argv:
+        # Check if a specific command was requested (e.g. `run.py build -h`)
+        command = None
+        for arg in sys.argv[1:]:
+            if arg not in ("-h", "--help", "--version") and not arg.startswith("-"):
+                command = arg
+                break
+        cmd_help(command)
+        sys.exit(0)
+
     parser = build_parser()
     args = parser.parse_args()
 
@@ -1350,7 +1426,7 @@ def main() -> None:
 
     match args.command:
         case None:
-            parser.print_help()
+            cmd_help()
         case "build":
             cmd_build(no_bin=args.no_bin, no_rules=args.no_rules, target_os=args.target_os)
         case "publish":
@@ -1359,6 +1435,8 @@ def main() -> None:
             cmd_test(args.pytest_args)
         case "lint":
             cmd_lint(fix=args.fix, apply_format=args.format, paths=args.paths)
+        case "ruff":
+            cmd_ruff(args.ruff_args)
         case "compile-rules":
             cmd_compile_rules()
         case "help":
