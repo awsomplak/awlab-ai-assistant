@@ -203,7 +203,14 @@ async def _plan_update(
                     "patterns_extracted": retro.get("patterns_extracted", 0),
                     "stored_patterns": (retro.get("observations") or {}).get("stored_patterns", []),
                 }
-            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — best-effort auto-learning
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                json.JSONDecodeError,
+                RuntimeError,
+            ):  # — best-effort auto-learning
                 pass
         return result
     return await plan_tools.resolve_deferred_tasks(
@@ -557,7 +564,14 @@ async def _context_composite(
             read_baked(workspace_path).get("candidates") or [], detect_stack(workspace_path)
         )
         pattern_candidates = deliver_candidates(workspace_path).get("pattern_candidates") or []
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — delivery must never break the composite
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        json.JSONDecodeError,
+        RuntimeError,
+    ):  # — delivery must never break the composite
         pass
 
     return {
