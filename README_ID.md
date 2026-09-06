@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-3.0.5-blue" alt="Versi 3.0.5" />
+  <img src="https://img.shields.io/github/v/release/awsomplak/awlab-ai-assistant?color=blue&label=version" alt="Latest Version" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/tests-405%20passing-brightgreen" alt="405 tes lulus" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="Lisensi MIT" />
