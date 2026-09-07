@@ -1,4 +1,4 @@
-# Tool MCP yang Tersedia
+# 🧰 Tool MCP yang Tersedia
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumentasi](../../README_ID.md#dokumentasi) · **Tool MCP yang Tersedia**
 
@@ -15,15 +15,15 @@
 
 ---
 
-## Arsitektur Server
+## 🏛️ Arsitektur Server
 
 | Executable               | Nama Server          | Tool yang Tersedia           |
 | ------------------------ | -------------------- | ---------------------------- |
-| `awlab-ai-assistant.exe` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
+| `awlab-ai-assistant` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
 
 ---
 
-## Tool yang Tersedia
+## 🛠️ Tool yang Tersedia
 
 ### `action_call(action, params=None)`
 
@@ -39,16 +39,22 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
 
 ---
 
-## Daftar Action
+## 📋 Daftar Action
 
-### context
+### 🔖 context
+
+<details><summary><b>View context actions</b></summary>
 
 | Action       | Ringkasan                                                                                                                                                                                                            |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ctx_info`   | Membaca konteks project: snapshot, memory-bank, scan, saran, atau konteks orkestrasi.                                                                                                                                |
 | `project_id` | Memeriksa project-id; otomatis membuatnya jika belum ada (idempotent). Panggil ini pada respons pertama, sebelum operasi `mem_*`/plan, agar isolasi memori berjalan optimal dan terisolasi tidak masuk ke DB global. |
 
-### memory
+</details>
+
+### 🔖 memory
+
+<details><summary><b>View memory actions</b></summary>
 
 | Action              | Ringkasan                                                                                                                                                                                                                                          |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -65,7 +71,11 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
 
 Untuk `mem_observe` dan `mem_write`, Anda dapat mengirimkan teks tidak terstruktur melalui parameter `raw_text`. Jika dikonfigurasi dengan `LLM_API_KEY` (lihat `.env.example`), server akan secara cerdas mengekstrak observasi dan entitas terstruktur dari teks mentah tersebut menggunakan LLM sebelum menyisipkannya ke dalam SQLite Memory Bank. Jika tidak dikonfigurasi, sistem akan beralih ke logika deterministik standar yang tetap aman.
 
-### plan
+</details>
+
+### 🔖 plan
+
+<details><summary><b>View plan actions</b></summary>
 
 | Action        | Ringkasan                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -74,7 +84,11 @@ Untuk `mem_observe` dan `mem_write`, Anda dapat mengirimkan teks tidak terstrukt
 | `plan_doc`    | Membaca / membuat / memperbarui / menghapus `plan.md` atau `notes.md` suatu plan secara langsung.                                                                                                                                                                                                                                                                                                      |
 | `reg_update`  | Membaca / membuat / memperbarui `registry.md`, berikut detail singkatnya: <br> `create`: plan UUID artifact dibuat oleh mcp → plan baru ditandai sebagai plan yang Aktif ⏹️. <br> `update`: memperbarui status plan menjadi active\|paused\|complete → diletakkan ke tabel yang sesuai dengan status. <br> `delete`: Untuk menghapus plan dan butuh persetujuan ketat pengguna lewat `confirmed=true`. |
 
-### graph
+</details>
+
+### 🔖 graph
+
+<details><summary><b>View graph actions</b></summary>
 
 | Action          | Ringkasan                                                                                                                                                                                                                                                                                                                                       |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,20 +162,32 @@ Setiap pembacaan code-graph (`graph_query`, `graph_path`, `graph_explain`) menge
 - Graph dengan **banyak perubahan file (≥ 20) atau saat build pertama** → dibuild ulang di **latar belakang**, karena tidak dapat memberikan hasil secara langsung ketika agent memanggil fungsi ini maka akan ditampilkan data graph sebelumnya jika ada. Jika `graph_rebuilding: true`, agent akan menunggu sejenak lalu membaca kembali graph yang sudah di build ulang (pembacaan berikutnya akan menampilkan data terbaru).
 - `graph_build` (eksplisit) yang dipanggil saat build ulang yang sedang berlangsung di latar belakang akan **digabungkan (coalesced)** — operasi ini mengembalikan status `rebuilding: true` alih-alih memulai proses pembangunan ulang yang sama.
 
-### task
+</details>
+
+### 🔖 task
+
+<details><summary><b>View task actions</b></summary>
 
 | Action        | Ringkasan                                                                |
 | ------------- | ------------------------------------------------------------------------ |
 | `task_read`   | Membaca tasks.md dari plan dalam bentuk JSON terstruktur/mentah/minimal. |
 | `task_update` | Membuat atau memperbarui tasks.md / task.                                |
 
-### util
+</details>
+
+### 🔖 util
+
+<details><summary><b>View util actions</b></summary>
 
 | Action      | Ringkasan                                                                                   |
 | ----------- | ------------------------------------------------------------------------------------------- |
 | `util_info` | Menampilkan informasi versi mcp server / metadata project (atau pembuatan mermaid diagram). |
 
-### workflow
+</details>
+
+### 🔖 workflow
+
+<details><summary><b>View workflow actions</b></summary>
 
 | Action | Ringkasan                                                                                                                             |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -169,11 +195,13 @@ Setiap pembacaan code-graph (`graph_query`, `graph_path`, `graph_explain`) menge
 
 ---
 
-## Pengolahan User Pattern
+</details>
+
+## 🧁 Pengolahan User Pattern
 
 Mcp server mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipakai ulang:
 
-1. **Observe** — `mem_observe` (yang dijalankan oleh agent saat live chat) atau dari `awlab-ai-assistant.exe hook --agent <host> --event <event>` (event lifecycle host milik agent) menambahkan action ke `.ai/memory-bank/observations.jsonl` untuk melakukan penghapusan duplikat data berdasarkan _fingerprint_.
+1. **Observe** — `mem_observe` (yang dijalankan oleh agent saat live chat) atau dari `awlab-ai-assistant hook --agent <host> --event <event>` (event lifecycle host milik agent) menambahkan action ke `.ai/memory-bank/observations.jsonl` untuk melakukan penghapusan duplikat data berdasarkan _fingerprint_.
 2. **Bake / Proses Pengolahan** — setiap `action_call` menjalankan `bake_tick` dengan alur kerja `baca → key → hitung → consistency → confidence`. Pattern / pola yang sudah diolah kemudian ditulis ke `.ai/memory-bank/baked.json` hanya jika berubah. Confidence = `frequency(min(1,count/5)) × consistency × source_weight` (`explicit`/`corrected` 0.9, `behavioral` 0.6, `inferred` 0.4). Sebuah pattern / pola butuh `count ≥ 2 ∧ consistency ≥ 0.5 ∧ confidence ≥ 0.6`.
 3. **Deliver (tell-once)** — `ctx_info mode="context"` / `mem_search store="patterns"` mengembalikan atau menghasilkan `pattern_candidates` / `baked_patterns` (scoped ke stack). Penanda dalam sistem pengiriman mencatat pola kebiasaan yang telah disampaikan, sehingga pola tersebut TIDAK AKAN PERNAH disampaikan ulang sampai ada pola baru yang mematangkan pola tersebut (_baked_).
 
@@ -184,19 +212,20 @@ Mcp server mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipa
 3. sub-agent (`awlab-baker`, yang berjalan jika ada pola baru)
    ketiganya menggunakan `observations.jsonl` dan `baked.json` yang sama, sehingga pola yang dihasilkan identik apa pun tahapnya.
 
-**Mode hook (opsional)** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` menangkap observasi dari event lifecycle host (prompt pengguna, penggunaan tool, mulai/selesai-nya sesi, proses dari sub-agent). Registrasi hook wajib dilakukan per-host agent. Executable (mcp yang sudah dibuild contoh dalam bentuk .exe pada windows) menentukan project per event (lihat [`INSTALL.md`](INSTALL.md)).
+**Mode hook (opsional)** — `awlab-ai-assistant hook --agent <host> --event <event>` menangkap observasi dari event lifecycle host (prompt pengguna, penggunaan tool, mulai/selesai-nya sesi, proses dari sub-agent). Registrasi hook wajib dilakukan per-host agent. Executable (mcp yang sudah dibuild contoh dalam bentuk .exe pada windows) menentukan project per event (lihat [`INSTALL.md`](INSTALL.md)).
 
-## Cache offline (`pending.jsonl`)
+## 💾 Cache offline (`pending.jsonl`)
 
-Saat gagal menyimpan atau server MCP tidak bisa dijangkau, data akan disimpan dalam bentuk **antrian (queue)** — ke `.ai/memory-bank/pending.jsonl`:
+> [!NOTE]
+> Saat gagal menyimpan atau server MCP tidak bisa dijangkau, data akan disimpan dalam bentuk **> **antrian (queue)**** — ke `.ai/memory-bank/pending.jsonl`:
 
 - **Sisi server (otomatis):** `mem_write`/`mem_remove` saat store mati, atau `task_update` saat DB-sync mati → operasi diantrekan otomatis.
 - **Sisi agent (MCP mati):** ketika agent melakukan `mem_write` / `mem_remove` / `task_update` data akan ditulis ke dalam file JSONL memakai tool file Anda sendiri atau dari IDE atau menulisnya secara manual jika agent memiliki kapabilitas untuk melakukan edit pada perangkat Anda, namun jika dilakukan secara manual tidak menutup kemungkinan data tersebut tidak disimpan atau tidak ditulis oleh agent (sesuai aturan / rules [`14-mcp-offline-cache`](../../assets/rules/14-mcp-offline-cache.md)).
-- **Proses Impor ulang:** `mem_replay` mengimpor antrean (queue) data dari cache yang tersimpan offline dari file JSONL (bila ada file atau datanya) — entri yang sukses dijalankan akan dihapus, dan yang gagal akan disimpan kembali untuk dicoba ulang. Fitur `dry_run` akan melakukan pratinjau terlebih dahulu sebelum benar-benar dijalankan atau dieksekusi.
+> - **Proses Impor ulang:** `mem_replay` mengimpor antrean (queue) data dari cache yang tersimpan offline dari file JSONL (bila ada file atau datanya) — entri yang sukses dijalankan akan dihapus, dan >   yang gagal akan disimpan kembali untuk dicoba ulang. Fitur `dry_run` akan melakukan pratinjau terlebih dahulu sebelum benar-benar dijalankan atau dieksekusi.
 
-## Project Family
+## 👨‍👩‍👧‍👦 Project Family
 
-Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda dan berbagi code-graph gabungan serta penyimpanan memori khusus bernama `family_<slug>`. File `~/.awlab-id/agent-memory/project-families.json` mendaftarkan setiap project kedalam grup dengan bentuk seperti berikut:
+Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda dan berbagi code-graph gabungan serta penyimpanan memori khusus bernama `family_<slug>`. Untuk petunjuk penyiapan lengkap, lihat [Konfigurasi Project Families](PROJECT_FAMILIES.md). File `~/.awlab-id/agent-memory/project-families.json` mendaftarkan setiap project kedalam grup dengan bentuk seperti berikut:
 
 ```json
 {

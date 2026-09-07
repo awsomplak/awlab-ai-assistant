@@ -1,4 +1,4 @@
-# Dukungan Memori Cloud (CRDT Sync)
+# 📖 Dukungan Memori Cloud (CRDT Sync)
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Dukungan Memori Cloud (CRDT Sync)**
 
@@ -6,7 +6,7 @@ Secara bawaan, Memory Bank milik AWLab-AI-Assistant beroperasi sepenuhnya secara
 
 ---
 
-## Cara kerjanya
+## 📌 Cara kerjanya
 
 Ketika server MCP AWLab-AI-Assistant tersambung ke dalam database memori SQLite, server secara aktif akan mencari keberadaan _compiled extension_ `cr-sqlite`. Jika ekstensi tersebut ditemukan, maka akan langsung disuntikkan ke dalam koneksi SQLite tersebut.
 
@@ -17,11 +17,11 @@ Hal ini memberikan berkas `memory.db` lokal Anda kemampuan CRDT, yang berarti da
 
 ---
 
-## Panduan Instalasi
+## 📌 Panduan Instalasi
 
 Untuk mengaktifkan dukungan CRDT, Anda perlu menempatkan pustaka bersama (shared library) `cr-sqlite` yang telah dikompilasi ke dalam direktori konfigurasi yang tepat.
 
-### 1. Unduh Ekstensi
+### 🔖 1. Unduh Ekstensi
 
 Unduh ekstensi `crsqlite` yang sudah dikompilasi sesuai dengan sistem operasi Anda dari [halaman rilis resmi vlcn.io](https://github.com/vlcn-io/cr-sqlite/releases).
 
@@ -29,12 +29,12 @@ Unduh ekstensi `crsqlite` yang sudah dikompilasi sesuai dengan sistem operasi An
 - **macOS:** `crsqlite.dylib`
 - **Linux:** `crsqlite.so`
 
-### 2. Simpan di Direktori Konfigurasi
+### 🔖 2. Simpan di Direktori Konfigurasi
 
 Buat sebuah folder bernama `extensions` di dalam direktori konfigurasi utama (`~/.awlab-id/agent-memory/`) dan pindahkan file yang telah diunduh ke dalamnya.
 
 ```bash
-# Contoh untuk Linux/macOS
+# 📖 Contoh untuk Linux/macOS
 mkdir -p ~/.awlab-id/agent-memory/extensions/
 mv ~/Downloads/crsqlite.so ~/.awlab-id/agent-memory/extensions/crsqlite.so
 ```
@@ -42,13 +42,13 @@ mv ~/Downloads/crsqlite.so ~/.awlab-id/agent-memory/extensions/crsqlite.so
 > [!NOTE]
 > Pastikan nama filenya tepat: `crsqlite.dll`, `crsqlite.dylib`, atau `crsqlite.so` tergantung pada OS Anda. Sistem akan mencari nama file yang spesifik ini.
 
-### 3. Jalankan Ulang (Restart) Server
+### 🔖 3. Jalankan Ulang (Restart) Server
 
 Setelah file ditempatkan dengan benar, Anda cukup menjalankan ulang AI agent Anda. Server MCP akan mendeteksi ekstensi secara otomatis, menambal (patch) koneksi SQLite, dan mengaktifkan `cr-sqlite`. Anda akan melihat keterangan pemuatan ekstensi ini pada catatan log debug jika Anda mengaktifkan pengaturan logging (`LOG_LEVEL=DEBUG`).
 
 ---
 
-## Menyinkronkan ke Cloud
+## 📌 Menyinkronkan ke Cloud
 
 Setelah ekstensi berhasil dimuat, berkas `memory.db` Anda siap untuk disinkronkan.
 

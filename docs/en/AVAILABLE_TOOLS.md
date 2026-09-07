@@ -1,4 +1,4 @@
-# Available MCP Tools
+# 🧰 Available MCP Tools
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Available MCP Tools**
 
@@ -15,17 +15,27 @@
 
 ---
 
-## Server Architecture
+## 🏛️ Server Architecture
 
 One consolidated executable — the `REGISTRY` routes to all actions:
 
-| Binary | Server | Exposed Tools |
-|--------|--------|---------------|
-| `awlab-ai-assistant.exe` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
+```mermaid
+graph LR
+  Agent["AI Agent"] -->|Tool Call| AM["AWLab-AI-Assistant<br/>(action_call)"]
+  AM --> Router{"Action Router"}
+  Router -->|mem_*| M["Memory Bank"]
+  Router -->|plan_*| P["Plan Registry"]
+  Router -->|graph_*| G["Code Graph"]
+  Router -->|task_*| T["Task Manager"]
+```
+
+| Binary               | Server               | Exposed Tools                |
+| -------------------- | -------------------- | ---------------------------- |
+| `awlab-ai-assistant` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
 
 ---
 
-## Exposed Tools
+## 🛠️ Exposed Tools
 
 ### `action_call(action, params=None)`
 
@@ -41,50 +51,64 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 
 ---
 
-## Actions (group -> name)
+## 📋 Actions (group -> name)
 
-### context
+### 🔖 context
 
-| Action | Summary |
-|--------|---------|
-| `ctx_info` | Read project context: snapshot, memory-bank, scan, suggestions, or orchestration context. |
+<details><summary><b>View context actions</b></summary>
+
+| Action       | Summary                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx_info`   | Read project context: snapshot, memory-bank, scan, suggestions, or orchestration context.                                                                                        |
 | `project_id` | Check the project-id; auto-create it if missing (idempotent). Call this on first response, before any `mem_*`/plan op, so memory isolation never falls through to the global DB. |
 
-### memory
+</details>
 
-| Action | Summary |
-|--------|---------|
-| `mem_dedupe` | Merge same-named memory entities (keep data-bearing, archive dupes). |
-| `mem_list_entities` | List all memory entities (name/type/obs count) for auditing. |
-| `mem_observe` | Record user-pattern evidence into the observation store (`.ai/memory-bank/observations.jsonl`) — baking-pipeline input. |
-| `mem_read` | Read node details or the graph neighbourhood. |
-| `mem_remove` | Archive entities or delete observations/relations (type-safe — refuses ambiguous names). |
-| `mem_replay` | Replay the offline cache (`.ai/memory-bank/pending.jsonl`) — re-apply mutations queued when the store/MCP was down; failed entries are kept for retry. `dry_run` previews. |
-| `mem_search` | Hybrid BM25+dense search over memory (optionally by entity type). store=patterns + scope/context for stack-scoped user patterns; store=family_<slug> for correlated-project memory. |
-| `mem_write` | Create/tag entities, add observations, or relate entities. |
+### 🔖 memory
+
+<details><summary><b>View memory actions</b></summary>
+
+| Action              | Summary                                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mem_dedupe`        | Merge same-named memory entities (keep data-bearing, archive dupes).                                                                                                                 |
+| `mem_list_entities` | List all memory entities (name/type/obs count) for auditing.                                                                                                                         |
+| `mem_observe`       | Record user-pattern evidence into the observation store (`.ai/memory-bank/observations.jsonl`) — baking-pipeline input.                                                              |
+| `mem_read`          | Read node details or the graph neighbourhood.                                                                                                                                        |
+| `mem_remove`        | Archive entities or delete observations/relations (type-safe — refuses ambiguous names).                                                                                             |
+| `mem_replay`        | Replay the offline cache (`.ai/memory-bank/pending.jsonl`) — re-apply mutations queued when the store/MCP was down; failed entries are kept for retry. `dry_run` previews.           |
+| `mem_search`        | Hybrid BM25+dense search over memory (optionally by entity type). store=patterns + scope/context for stack-scoped user patterns; store=family\_<slug> for correlated-project memory. |
+| `mem_write`         | Create/tag entities, add observations, or relate entities.                                                                                                                           |
 
 #### Optional LLM Memory Extraction
 
 For `mem_observe` and `mem_write`, you can pass unstructured text via the `raw_text` parameter. If configured with an `LLM_API_KEY` (see `.env.example`), the server will intelligently extract structured observations and entities from the raw text using an LLM before inserting them into the SQLite Memory Bank. If unconfigured, it safely falls back to standard deterministic logic.
 
-### plan
+</details>
 
-| Action | Summary |
-|--------|---------|
-| `plan_status` | Read plan/registry status: active plan, next task, completeness, phase gate. |
-| `plan_update` | Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks. |
-| `plan_doc` | Read / create / update / delete a plan's `plan.md` or `notes.md` directly (pass full content; no diff review). |
-| `reg_update` | Single registry.md CRUD: `create` (server-generated UUID, Active ⏹️, Date + immutable Created At) / `update` (status active\|paused\|complete → move to correct table, refresh Date, keep Created At, optional summary) / `delete` (strict user approval via `confirmed=true`). |
+### 🔖 plan
 
-### graph
+<details><summary><b>View plan actions</b></summary>
 
-| Action | Summary |
-|--------|---------|
-| `graph_build` | Build/update the Code Knowledge Graph into `.ai/codegraph/`. This uses **LanceDB** for vector embeddings (AST structures + semantic search). `family=<slug>` builds a merged graph for multi-project workspaces. Incremental builds are fast as only changed files are re-extracted. |
-| `graph_status` | Report code-graph freshness (exists? stale? changed files). |
-| `graph_query` | Search the code graph (labels / source files / types). Auto-freshens first. |
-| `graph_path` | Shortest path between two graph nodes. Auto-freshens first. |
-| `graph_explain` | Explain a graph node (details + direct neighbours). Auto-freshens first. |
+| Action        | Summary                                                                                                                                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plan_status` | Read plan/registry status: active plan, next task, completeness, phase gate.                                                                                                                                                                                                    |
+| `plan_update` | Mutate plan/registry: switch active plan, mark phase complete, resolve deferred tasks.                                                                                                                                                                                          |
+| `plan_doc`    | Read / create / update / delete a plan's `plan.md` or `notes.md` directly (pass full content; no diff review).                                                                                                                                                                  |
+| `reg_update`  | Single registry.md CRUD: `create` (server-generated UUID, Active ⏹️, Date + immutable Created At) / `update` (status active\|paused\|complete → move to correct table, refresh Date, keep Created At, optional summary) / `delete` (strict user approval via `confirmed=true`). |
+
+</details>
+
+### 🔖 graph
+
+<details><summary><b>View graph actions</b></summary>
+
+| Action          | Summary                                                                                                                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `graph_build`   | Build/update the Code Knowledge Graph into `.ai/codegraph/`. This uses **LanceDB** for vector embeddings (AST structures + semantic search). `family=<slug>` builds a merged graph for multi-project workspaces. Incremental builds are fast as only changed files are re-extracted. |
+| `graph_status`  | Report code-graph freshness (exists? stale? changed files).                                                                                                                                                                                                                          |
+| `graph_query`   | Search the code graph (labels / source files / types). Auto-freshens first.                                                                                                                                                                                                          |
+| `graph_path`    | Shortest path between two graph nodes. Auto-freshens first.                                                                                                                                                                                                                          |
+| `graph_explain` | Explain a graph node (details + direct neighbours). Auto-freshens first.                                                                                                                                                                                                             |
 
 #### Indexed scope (read this before querying)
 
@@ -100,7 +124,7 @@ For `mem_observe` and `mem_write`, you can pass unstructured text via the `raw_t
   path over `imports_from`/`imports` edges (`mode: "module"`), and otherwise reports a rich
   "no path" diagnostic with both source files.
 - **Vite/JS path-alias imports are indexed** (`@/stores/auth`, `@pages/...`, `~/components/...`).
-  graphifyy only resolves relative imports + tsconfig/jsconfig `paths`; the bridge adds a
+  graphify only resolves relative imports + tsconfig/jsconfig `paths`; the bridge adds a
   post-build pass that reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or
   array form, including `fileURLToPath(new URL(...))` replacements) and emits the missing
   `imports_from`/`imports` edges — so `.vue` SFCs and any `@/`-importing file stay connected
@@ -123,12 +147,12 @@ For `mem_observe` and `mem_write`, you can pass unstructured text via the `raw_t
 On large projects a full graph build can spike RAM/CPU. To keep it smooth, `graph_build`
 processes the corpus in **bounded chunks** (queue style):
 
-| Param / Env | Default | Meaning |
-|-------------|---------|---------|
-| `chunk_size` / `GRAPH_CHUNK_SIZE` | `200` | Max files processed per build. Each run advances the manifest by exactly that many and returns `processed_files` / `remaining_files` / `chunked`. |
-| `max_files` / `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
-| `background` | `true` | Fire-and-forget trigger: return immediately and let the background worker process chunks until `remaining_files == 0`; set `false` to process one chunk synchronously (never blocked by an in-flight rebuild). |
-| `force` | `false` | Bypass the in-flight guard and start a fresh build even if a stale rebuilding flag/worker is present (escape hatch for a stuck state). |
+| Param / Env                       | Default | Meaning                                                                                                                                                                                                        |
+| --------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chunk_size` / `GRAPH_CHUNK_SIZE` | `200`   | Max files processed per build. Each run advances the manifest by exactly that many and returns `processed_files` / `remaining_files` / `chunked`.                                                              |
+| `max_files` / `GRAPH_MAX_FILES`   | (unset) | Cap the FIRST build's leading corpus (initial chunk).                                                                                                                                                          |
+| `background`                      | `true`  | Fire-and-forget trigger: return immediately and let the background worker process chunks until `remaining_files == 0`; set `false` to process one chunk synchronously (never blocked by an in-flight rebuild). |
+| `force`                           | `false` | Bypass the in-flight guard and start a fresh build even if a stale rebuilding flag/worker is present (escape hatch for a stuck state).                                                                         |
 
 - **Flat resource usage** — every build touches ≤ `chunk_size` files, so peak RAM/CPU stays
   flat instead of one big spike; ideal for very large projects.
@@ -177,44 +201,59 @@ Every graph read (`graph_query`, `graph_path`, `graph_explain`) returns these
 metadata fields so the agent can always tell whether the data is current and
 whether a rebuild is in flight:
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| `graph_fresh` | `bool` | Whether the served graph was fresh at read time (source unchanged since the last build). |
-| `graph_exists` | `bool` | Whether a graph exists yet (`false` on a first-ever read). |
+| Field              | Type   | Meaning                                                                                                  |
+| ------------------ | ------ | -------------------------------------------------------------------------------------------------------- |
+| `graph_fresh`      | `bool` | Whether the served graph was fresh at read time (source unchanged since the last build).                 |
+| `graph_exists`     | `bool` | Whether a graph exists yet (`false` on a first-ever read).                                               |
 | `graph_rebuilding` | `bool` | `true` when a heavy rebuild is running in the background (the read may have served slightly stale data). |
-| `graph_built_at` | `str` | ISO timestamp of the last successful build. |
+| `graph_built_at`   | `str`  | ISO timestamp of the last successful build.                                                              |
 
 **Freshness behavior:**
+
 - A stale graph with **few changed files** → rebuilt **synchronously** before the read (results are accurate).
 - A stale graph with **many changed files (≥ 20) or a first build** → rebuilt in a **background thread**; the read returns immediately and may serve the previous graph. When `graph_rebuilding: true`, wait a moment and re-read (the next read is fresh).
 - `graph_build` (explicit) during an in-flight background rebuild **coalesces** — it returns `rebuilding: true` instead of starting a duplicate build. Set `force: true` to bypass the guard and start fresh, or `background: false` to process one chunk synchronously regardless.
 
-### task
+</details>
 
-| Action | Summary |
-|--------|---------|
-| `task_read` | Read a plan's tasks.md as structured/raw/minimal JSON. |
+### 🔖 task
+
+<details><summary><b>View task actions</b></summary>
+
+| Action        | Summary                                                        |
+| ------------- | -------------------------------------------------------------- |
+| `task_read`   | Read a plan's tasks.md as structured/raw/minimal JSON.         |
 | `task_update` | Create or update tasks.md / tasks (multi-level paths, atomic). |
 
-### util
+</details>
 
-| Action | Summary |
-|--------|---------|
+### 🔖 util
+
+<details><summary><b>View util actions</b></summary>
+
+| Action      | Summary                                                    |
+| ----------- | ---------------------------------------------------------- |
 | `util_info` | Server version / project metadata (or mermaid generation). |
 
-### workflow
+</details>
 
-| Action | Summary |
-|--------|---------|
-| `wf` | List or execute a workflow (workspace-free; shared `work-flows` dir, `workflows_dir` override). |
+### 🔖 workflow
+
+<details><summary><b>View workflow actions</b></summary>
+
+| Action | Summary                                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------- |
+| `wf`   | List or execute a workflow (workspace-free; shared `work-flows` dir, `workflows_dir` override). |
 
 ---
 
-## Pattern baking & delivery
+</details>
+
+## 🧁 Pattern baking & delivery
 
 The server turns recurring user-pattern evidence into reusable candidates **deterministically (no LLM)**:
 
-1. **Observe** — `mem_observe` (agent-relayed) or `awlab-ai-assistant.exe hook --agent <host> --event <event>`
+1. **Observe** — `mem_observe` (agent-relayed) or `awlab-ai-assistant hook --agent <host> --event <event>`
    (host lifecycle events) append signals to `.ai/memory-bank/observations.jsonl` (dedup by fingerprint).
 2. **Bake** — every `action_call` runs an inline `bake_tick`: read → key → count → consistency →
    confidence. Candidates are written to `.ai/memory-bank/baked.json` only when they change.
@@ -228,29 +267,30 @@ The server turns recurring user-pattern evidence into reusable candidates **dete
 active workspaces), and subagent (`awlab-baker`, gated by new candidates) all share the same
 `observations.jsonl` + `baked.json`, so candidates are identical regardless of tier.
 
-**Hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` captures observations from
+**Hook mode** — `awlab-ai-assistant hook --agent <host> --event <event>` captures observations from
 host lifecycle events (user prompt, tool use, session start/stop, subagent stop) with **zero LLM cost**.
 Registration is per-host; the exe derives the project per event (see `docs/en/INSTALL.md`).
 
-## Offline cache (`pending.jsonl`)
+## 💾 Offline cache (`pending.jsonl`)
 
-When a store write fails or the MCP server is unreachable, intended mutations are
-**queued — never dropped** — to `.ai/memory-bank/pending.jsonl` (JSONL: one JSON
-object per line):
+> [!NOTE]
+> When a store write fails or the MCP server is unreachable, intended mutations are
+> **> **queued — never dropped\*\*\*\* — to `.ai/memory-bank/pending.jsonl` (JSONL: one JSON
+> object per line):
 
 - **Server-side (automatic):** `mem_write`/`mem_remove` store down or `task_update`
   DB-sync down → the operation is queued automatically.
 - **Agent-side (MCP down):** append the intended `mem_write` / `mem_remove` /
   `task_update` as one JSONL line with your own file tools, never claim success
   (rule `14-mcp-offline-cache`).
-- **Replay:** `mem_replay` drains the queue — successful entries are removed,
-  failed ones kept for retry; `dry_run` previews first.
+  > - **Replay:** `mem_replay` drains the queue — successful entries are removed,
+  >   failed ones kept for retry; `dry_run` previews first.
 
-## Project families
+## 👨‍👩‍👧‍👦 Project families
 
 Correlated projects at different paths share a merged code graph and a dedicated
 `family_<slug>` memory store. `project-families.json` (v2) declares members as
 `[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
 the declared id (reconciled automatically on family build), fresh members are
 seeded, and `graph_build` with `family=<slug>` produces the merged graph with
-`<project_id>::`-tagged nodes.
+`<project_id>::`-tagged nodes. For full setup instructions, see [Project Families Configuration](PROJECT_FAMILIES.md).

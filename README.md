@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/awsomplak/awlab-ai-assistant?color=blue&label=version" alt="Latest Version" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/tests-405%20passing-brightgreen" alt="405 tests passing" />
+  <img src="https://img.shields.io/badge/tests-55%20passing-brightgreen" alt="55 tests passing" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Cross-platform" />
 </p>
@@ -51,7 +51,7 @@ AWLab-AI-Assistant solves this by transforming your plain project into a **Proje
 - **Strategic Planning** — The AI creates, follows, and updates a structured plan for every task, ensuring it never loses its place.
 - **Dual-Brain Architecture** —
   - **Memory Bank (SQLite):** Learns your preferences, rules, and past decisions across sessions.
-  - **Code Knowledge Graph (LanceDB):** Instantly vectorizes and understands your code's structure so the AI doesn't have to read every file manually.
+  - **Code Knowledge Graph (Graphify + LanceDB):** Instantly vectorizes and understands your code's structure so the AI doesn't have to read every file manually.
 
 ---
 
@@ -116,6 +116,21 @@ graph LR
 
 ---
 
+## 🛡️ Performance & Token Protections
+
+The MCP server architecture is heavily optimized to protect your LLM's context window. There are no accidental token burn traps:
+
+1. **Structural Plan Parsing (`ctx_info`)** — Instead of dumping the entire `plan.md` into the context on every initialization, `ctx_info` strips out massive paragraphs and only extracts bullet points for approaches, expected outcomes, and open questions.
+2. **Graph Returns (`graph_query`, `graph_explain`)** — Nodes returned by the graph do **not** include raw source code snippets (only IDs, labels, and file locations). The agent must explicitly request to read the file, preventing massive AST dumps in the prompt.
+3. **Hard Limits** — `graph_query` defaults to `limit=10`, `graph_explain` limits neighbors to 30, and `mem_search` caps at 5-10 results.
+4. **Memory Inventory (`mem_list_entities`)** — Instead of returning full memory entities with their observation histories, the inventory truncates the output to just `{name, entityType, observation_count}`.
+
+> [!TIP]
+> **Designed for Long-Running Projects:**
+> AWLab-AI-Assistant handles all token protections automatically under the hood. The system dynamically enforces protocols that instruct AI agents to avoid massive raw file dumps and instead rely on optimized endpoints like `ctx_info`. This ensures your agent stays focused and productive for months without exhausting its context window or driving up your API costs!
+
+---
+
 ## ✅ Tested on
 
 ### Supported AI agents
@@ -154,6 +169,7 @@ This README is the single documentation entry point. Use the tables below to fin
 | Understand what this project is and its features                      | _(you're already here — keep reading)_            |
 | Install the MCP server, build it, and wire it into my AI agent        | [Install & Implement](docs/en/INSTALL.md)         |
 | See every MCP action (`action_call` / `action_help`) and what it does | [Available MCP Tools](docs/en/AVAILABLE_TOOLS.md) |
+| Configure multi-repository workspaces (unified graph & memory)        | [Project Families](docs/en/PROJECT_FAMILIES.md)   |
 | Register the optional hook automation layer (zero-LLM capture)        | [Hook Registration](docs/en/HOOKS.md)             |
 | Synchronize agent memory across devices via cloud (cr-sqlite)         | [Cloud Memory Support](docs/en/CRDT_SYNC.md)      |
 | Read the Indonesian version                                           | [README_ID.md](README_ID.md)                      |
@@ -161,16 +177,16 @@ This README is the single documentation entry point. Use the tables below to fin
 
 ### Document map
 
-| Document                                                   | What it covers                                                                                                                                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`README.md`](README.md)                                   | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (English)                                                                                            |
-| [`README_ID.md`](README_ID.md)                             | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (Bahasa Indonesia)                                                                                   |
-| [`docs/en/CRDT_SYNC.md`](docs/en/CRDT_SYNC.md)             | Experimental guide on enabling CRDT memory sync across the cloud                                                                                                          |
-| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                 | Step-by-step setup and connection (Bahasa Indonesia)                                                                                                                      |
-| [`docs/en/INSTALL.md`](docs/en/INSTALL.md)                 | Requirements, install from source, build the standalone executable, publish rules + skills, wire the MCP server per agent, environment variables, CLI reference           |
-| [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md) | The 2 exposed MCP tools and the **23 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
-| [`docs/en/HOOKS.md`](docs/en/HOOKS.md)                     | Optional zero-LLM hook automation — per-agent registration (Claude Code, Hermes, Cline, Copilot), event behaviour, pros/cons vs MCP-only, verification & troubleshooting  |
-| [`CHANGELOG.md`](CHANGELOG.md)                             | Version-by-version release notes                                                                                                                                          |
+| Document                                                     | What it covers                                                                                                                                                            |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`README.md`](README.md)                                     | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (English)                                                                                            |
+| [`README_ID.md`](README_ID.md)                               | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (Bahasa Indonesia)                                                                                   |
+| [`docs/en/CRDT_SYNC.md`](docs/en/CRDT_SYNC.md)               | Experimental guide on enabling CRDT memory sync across the cloud                                                                                                          |
+| [`docs/en/INSTALL.md`](docs/en/INSTALL.md)                   | Requirements, install from source, build the standalone executable, publish rules + skills, wire the MCP server per agent, environment variables, CLI reference           |
+| [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md)   | The 2 exposed MCP tools and the **23 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
+| [`docs/en/PROJECT_FAMILIES.md`](docs/en/PROJECT_FAMILIES.md) | Documentation on configuring project families for unified code graphs and shared episodic memory across multi-repository workspaces                                       |
+| [`docs/en/HOOKS.md`](docs/en/HOOKS.md)                       | Optional zero-LLM hook automation — per-agent registration (Claude Code, Hermes, Cline, Copilot), event behaviour, pros/cons vs MCP-only, verification & troubleshooting  |
+| [`CHANGELOG.md`](CHANGELOG.md)                               | Version-by-version release notes                                                                                                                                          |
 
 ### Fastest path (new user)
 
@@ -196,7 +212,8 @@ AWLab-AI-Assistant keeps **all** of its state inside a single `.ai/` directory a
 └── temp/                  # Scratch/temp files — following file-hygiene rule
 ```
 
-No junk files, no scattered state — everything the AI assistant creates lives inside `.ai/`, so your source tree stays exactly as you'd expect.
+> [!TIP]
+> **No junk files, no scattered state** — everything the AI assistant creates lives inside `.ai/`, so your source tree stays exactly as you'd expect.
 
 ---
 
@@ -204,7 +221,7 @@ No junk files, no scattered state — everything the AI assistant creates lives 
 
 - **Python 3.10+** (for the MCP server)
 - **agent-recall** (knowledge-graph memory backend)
-- **graphifyy** (code knowledge-graph indexing)
+- **graphify** (code knowledge-graph indexing)
 - One of: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, or **Google Antigravity / Antigravity IDE**
 
 ---

@@ -1,4 +1,4 @@
-# Instal & Terapkan
+# 📖 Instal & Terapkan
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Instal & Terapkan**
 
@@ -17,7 +17,7 @@ Panduan ini mencakup semua yang Anda butuhkan untuk menjalankan AWLab-AI-Assista
 
 ---
 
-## Struktur Project
+## 📌 Struktur Project
 
 Tata letak repositori:
 
@@ -42,7 +42,7 @@ Tata letak repositori:
 
 ---
 
-## Kebutuhan Instalasi
+## 📌 Kebutuhan Instalasi
 
 - **Python 3.10+** (untuk build server MCP dan wajib sudah terinstall sebelumnya)
 - **agent-recall** (sebagai backend memori / knowledge-graph)
@@ -54,69 +54,69 @@ Tata letak repositori:
 
 ---
 
-## 1. Clone repositori
+## 📌 1. Clone repositori
 
 ```bash
-# Clone
+# 📖 Clone
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
 
-# Masuk ke dalam folder repositori hasil clone
+# 📖 Masuk ke dalam folder repositori hasil clone
 cd AWLab-AI-Assistant
 ```
 
-## 2. Instalasi python-venv dan dependensi server MCP
+## 📌 2. Instalasi python-venv dan dependensi server MCP
 
 > ⚠️ **Sesuaikan dengan OS Anda.** Perintah aktivasi virtual environment python berbeda antara Windows dan Linux/macOS — melakukan copy paste command yang salah akan menyebabkan kegagalan.
 
-### Aktivasi python virtual-env
+### 🔖 Aktivasi python virtual-env
 
 #### Windows (PowerShell)
 
 ```powershell
-# Buat virtual environment
+# 📖 Buat virtual environment
 python -m venv .venv
 
-# Aktifkan python virtual-env di powershell
+# 📖 Aktifkan python virtual-env di powershell
 .venv\Scripts\Activate.ps1
 
-# Jika menggunakan cmd bisa menggunakan command berikut
+# 📖 Jika menggunakan cmd bisa menggunakan command berikut
 #
-# Aktifkan python virtual-env di cmd
+# 📖 Aktifkan python virtual-env di cmd
 .venv\Scripts\activate.bat
 ```
 
 #### Linux / macOS
 
 ```bash
-# Buat virtual environment
+# 📖 Buat virtual environment
 python -m venv .venv
 
-# Aktifkan python virtual-env di terminal
+# 📖 Aktifkan python virtual-env di terminal
 source .venv/bin/activate
 ```
 
-### Instalasi dependensi python
+### 🔖 Instalasi dependensi python
 
 ```bash
-# Dengan python virtual-venv yang sudah aktif sebelumnya
+# 📖 Dengan python virtual-venv yang sudah aktif sebelumnya
 #
-# Instalasi dependensi standar (siap pakai)
+# 📖 Instalasi dependensi standar (siap pakai)
 pip install -e .
 
-# atau
-# Instalasi dependensi untuk development/test (opsional)
+# 📖 atau
+# 📖 Instalasi dependensi untuk development/test (opsional)
 pip install -e ".[dev]"
 ```
 
 ---
 
-## 3. Build binary executable
+## 📌 3. Build binary executable
 
 ```bash
-# Build untuk OS saat ini (menggunakan PyInstaller)
+# 📖 Build untuk OS saat ini (menggunakan PyInstaller)
 python scripts/run.py build
 
-# Build untuk target tertentu
+# 📖 Build untuk target tertentu
 python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all
 ```
@@ -133,12 +133,12 @@ Satu executable — dispatcher `action_call` menangani semua operasi (plan, task
 
 ---
 
-## 4. Publikasikan rules & skill ke agent Anda
+## 📌 4. Publikasikan rules & skill ke agent Anda
 
 AWLab-AI-Assistant — **AI-Assisted Development System** menyediakan **14 rules** dan **5 skill** bawaan yang berada di folder `assets/`. Ketika Anda sudah melakukan build dari project ini fungsi `publish` akan otomatis mempublikasikan profil yang sudah terkompilasi ke direktori agent masing-masing (sesuai target) — fungsi ini cukup dipanggil / dilakukan **sekali saja** per-agent. **SANGAT DISARANKAN** untuk melakukan **BACKUP** jika Anda memiliki pengaturan milik Anda sendiri, cek [target publikasi](#target-publikasi).
 
 ```bash
-# Publikasikan ke asisten tertentu
+# 📖 Publikasikan ke asisten tertentu
 python scripts/run.py publish --target=cline        # Cline
 python scripts/run.py publish --target=copilot      # VSCode Copilot
 python scripts/run.py publish --target=claude       # Claude Code
@@ -147,12 +147,12 @@ python scripts/run.py publish --target=opencode     # OpenCode
 python scripts/run.py publish --target=antigravity  # Google Antigravity & Antigravity IDE
 python scripts/run.py publish --target=all          # Semua asisten
 
-# Copot pemasangan
+# 📖 Copot pemasangan
 python scripts/run.py publish --uninstall
 python scripts/run.py publish --uninstall --target=copilot
 ```
 
-### Target publikasi
+### 🔖 Target publikasi
 
 | Target        | Rules                          | Skill                                 |
 | ------------- | ------------------------------ | ------------------------------------- |
@@ -168,7 +168,7 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ---
 
-## 5. Sambungkan server MCP
+## 📌 5. Sambungkan server MCP
 
 MCP server `AWLab-AI-Assistant` menyediakan **2 tool MCP** — `action_call` dan `action_help` (lihat [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md) untuk detailnya). Menyambungkannya berarti menambahkan **satu entri server MCP** ke konfigurasi agent Anda, arahkan konfigurati MCP-nya ke executable yang Anda build pada panduan [§3](#3-build-binary-executable):
 
@@ -177,7 +177,7 @@ MCP server `AWLab-AI-Assistant` menyediakan **2 tool MCP** — `action_call` dan
   "mcpServers": {
     "AWLab-AI-Assistant": {
       "type": "stdio",
-      "command": "dist/bin/awlab-ai-assistant.exe",
+      "command": "dist/bin/awlab-ai-assistant",
       "args": [],
       "env": {
         "LOG_ENABLED": "true",
@@ -196,37 +196,37 @@ MCP server `AWLab-AI-Assistant` menyediakan **2 tool MCP** — `action_call` dan
 
 Gabungkan entri konfigurasi `AWLab-AI-Assistant` ke server MCP yang sudah ada di agent Anda — jangan mengganti seluruh file konfigurasi — lalu mulai ulang agent/chat. Berikut di bawah ini adalah lokasi konfigurasi masing-masing agent.
 
-### Cline
+### 🔖 Cline
 
 Tempel bloknya lewat **Cline Settings → MCP Servers → Edit JSON**.
 
-### VSCode Copilot
+### 🔖 VSCode Copilot
 
 Tambahkan blok ke `.vscode/mcp.json` (workspace) atau lewat Command Palette → **MCP**.
 
-### Claude Code
+### 🔖 Claude Code
 
 Daftarkan server dari terminal:
 
 ```bash
-claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant.exe
+claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant
 ```
 
-### Hermes Agent
+### 🔖 Hermes Agent
 
 Tambahkan entri di key `mcp_servers:` pada `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
   AWLab-AI-Assistant:
-    command: dist/bin/awlab-ai-assistant.exe
+    command: dist/bin/awlab-ai-assistant
     args: []
     env:
       LOG_ENABLED: "true"
       LOG_LEVEL: INFO
 ```
 
-### OpenCode
+### 🔖 OpenCode
 
 Tambahkan entri di key `mcp` ke `~/.config/opencode/opencode.json` (OpenCode memakai objek key `mcp`, bukan `mcpServers`):
 
@@ -235,14 +235,14 @@ Tambahkan entri di key `mcp` ke `~/.config/opencode/opencode.json` (OpenCode mem
   "mcp": {
     "AWLab-AI-Assistant": {
       "type": "local",
-      "command": ["dist/bin/awlab-ai-assistant.exe"],
+      "command": ["dist/bin/awlab-ai-assistant"],
       "enabled": true
     }
   }
 }
 ```
 
-### Google Antigravity & Antigravity IDE
+### 🔖 Google Antigravity & Antigravity IDE
 
 Tambahkan entri `AWLab-AI-Assistant` ke `~/.gemini/config/mcp_config.json`:
 
@@ -250,7 +250,7 @@ Tambahkan entri `AWLab-AI-Assistant` ke `~/.gemini/config/mcp_config.json`:
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
-      "command": "dist/bin/awlab-ai-assistant.exe",
+      "command": "dist/bin/awlab-ai-assistant",
       "args": []
     }
   }
@@ -259,17 +259,17 @@ Tambahkan entri `AWLab-AI-Assistant` ke `~/.gemini/config/mcp_config.json`:
 
 ---
 
-## 6. Gunakan di agent Anda
+## 📌 6. Gunakan di agent Anda
 
 Setelah tersambung, Anda dapat melakukan prompt seperti biasa atau menggunakan slash command:
 
-### Penggunaan skill dalam propt biasa
+### 🔖 Penggunaan skill dalam propt biasa
 
 - _"follow rules"_ → memuat registry & plan serta melakukan instruksi kepada agent untuk mengikuti aturan yang ada
 - _"create plan"_ → membuat rencana implementasi baru dan menulisnya ke dalam `plan.md` serta tugas-tugas yang diperlukan ke dalam `tasks.md`.
 - _"start phase 1"_ → menjalankan fase pertama dari tugas pada `tasks.md` yang sudah dibuat.
 
-### Penggunaan menggunakan slash command
+### 🔖 Penggunaan menggunakan slash command
 
 - `/create plan` → membuat rencana implementasi baru dan menulisnya ke dalam `plan.md` serta tugas-tugas yang diperlukan ke dalam `tasks.md`.
 - `/plan-status` → memeriksa status dari plan saat ini akah sedang berjalan, dijeda (paused), atau sudah selesai.
@@ -277,7 +277,7 @@ Setelah tersambung, Anda dapat melakukan prompt seperti biasa atau menggunakan s
 
 ---
 
-## 7. Verifikasi pemasangan
+## 📌 7. Verifikasi pemasangan
 
 1. **Server aktif** — pastikan `util_info` mengembalikan versi + build tag:
 
@@ -291,7 +291,7 @@ Setelah tersambung, Anda dapat melakukan prompt seperti biasa atau menggunakan s
 
 ---
 
-## 8. Environment variabel & konfigurasi
+## 📌 8. Environment variabel & konfigurasi
 
 Pengaturan runtime yang berjalan memiliki prioritas urutan dalam menentukan mana yang harus diambil untuk sumber pengaturan sebagai berikut: **environment variable → `config.json` → pengaturan nilai (value) default**.
 
@@ -310,7 +310,7 @@ Pengaturan runtime yang berjalan memiliki prioritas urutan dalam menentukan mana
 
 Pengaturan dapat berupa file `config.json` atau `.env` untuk diterapkan secara global, atau bisa juga diterapkan sebagai environment variable saat mendaftarkan MCP server atau juga dapat diatur langsung dari OS.
 
-### Kapan harus menggunakan `GRAPH_PARALLEL` ?
+### 🔖 Kapan harus menggunakan `GRAPH_PARALLEL` ?
 
 Proses ekstraksi code-graph saat menjalankan perintah `graph_build` **berjalan berurutan (sekuensial) secara bawaan**, dan ini adalah pilihan terbaik untuk sebagian besar project karena dua alasan utama:
 
@@ -335,7 +335,7 @@ Gunakan `GRAPH_PARALLEL=1` hanya jika:
 
 ---
 
-## 9. Referensi CLI
+## 📌 9. Referensi CLI
 
 ```bash
 python scripts/run.py <command> [options]
@@ -350,7 +350,7 @@ python scripts/run.py <command> [options]
 | `help`          | Menampilkan bantuan terperinci untuk masing-masing perintah                                                    |
 | `--version`     | Menampilkan versi dan build tag                                                                                |
 
-### compile-rules
+### 🔖 compile-rules
 
 ```bash
 python scripts/run.py compile-rules
@@ -367,41 +367,41 @@ dist/profiles/
 └── .clinerules        # Monolit tingkat-project (tidak dipublikasikan)
 ```
 
-### build
+### 🔖 build
 
 ```bash
-# Build penuh (profil + binary executable)
+# 📖 Build penuh (profil + binary executable)
 python scripts/run.py build
 
-# Lewati build binary executable
+# 📖 Lewati build binary executable
 python scripts/run.py build --no-bin
 
-# Lewati kompilasi profil hanya melakukan build binary executable
+# 📖 Lewati kompilasi profil hanya melakukan build binary executable
 python scripts/run.py build --no-rules
 ```
 
-### publish
+### 🔖 publish
 
 ```bash
-# Publikasikan semua target (build dulu jika /dist tidak ada)
+# 📖 Publikasikan semua target (build dulu jika /dist tidak ada)
 python scripts/run.py publish
 
-# Publikasikan ke satu target
+# 📖 Publikasikan ke satu target
 python scripts/run.py publish --target=claude
 
-# Lewati build otomatis
+# 📖 Lewati build otomatis
 python scripts/run.py publish --target=all --skip-build
 
-# Paksa (lewati prompt konfirmasi)
+# 📖 Paksa (lewati prompt konfirmasi)
 python scripts/run.py publish --force
 
-# Hapus file yang sudah dipublikasi
+# 📖 Hapus file yang sudah dipublikasi
 python scripts/run.py publish --uninstall
 ```
 
 ---
 
-## 10. Pemecahan masalah
+## 📌 10. Pemecahan masalah
 
 | Masalah                                                                                   | Solusi                                                                                                                                                                                                 |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -414,7 +414,7 @@ python scripts/run.py publish --uninstall
 
 ---
 
-## Langkah berikutnya
+## 📌 Langkah berikutnya
 
 - Pelajari seluruh fitur yang tersedia: [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md)
 - Kembali ke [Halaman utama dokumentasi](../../README_ID.md#dokumentasi)

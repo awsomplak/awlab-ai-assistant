@@ -1,4 +1,4 @@
-# REGISTRY Schema — action_call / action_help Dispatcher
+# 📖 REGISTRY Schema — action_call / action_help Dispatcher
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **REGISTRY Schema**
 
@@ -27,7 +27,7 @@
 
 ---
 
-## 1. Goals & Principles
+## 📌 1. Goals & Principles
 
 1. **One source of truth** — `REGISTRY` drives tool description, `action_help`, and SKILL.md.
 2. **Server-owned orchestration** — the agent makes ONE call; the server guarantees the
@@ -44,7 +44,7 @@
 6. **Loud failure + transparent trace** — every response includes `executed`/`skipped`;
    a failure names the exact step that failed.
 
-## 2. File Layout
+## 📌 2. File Layout
 
 ```
 src/mcp_server/
@@ -56,7 +56,7 @@ src/mcp_server/
 └── helpers/                 # existing helpers — REUSED
 ```
 
-### 2.1. Path resolution & symlinks (G5)
+### 🔖 2.1. Path resolution & symlinks (G5)
 
 Every file-touching action receives a `workspace_path` (absolute project root)
 and resolves it via `pathlib.Path.resolve()` in `Settings._resolve_workspace`
@@ -80,7 +80,7 @@ canonical absolute path the agent originally passed is preserved through
 `Path.resolve()`; only the **display path** the agent sees may differ from
 the on-disk location if symlinks were involved.
 
-## 3. ActionSpec Schema
+## 📌 3. ActionSpec Schema
 
 Each key in `REGISTRY` is an action name. The value is an `ActionSpec`:
 
@@ -130,7 +130,7 @@ PRECONDITIONS: dict[str, callable] = {
 }
 ```
 
-## 4. Param Schema (JSON-schema subset)
+## 📌 4. Param Schema (JSON-schema subset)
 
 `params[name]` supports the subset needed for validation + help generation:
 
@@ -147,7 +147,7 @@ PRECONDITIONS: dict[str, callable] = {
 The dispatcher validates params **before** running preconditions and fails loudly listing
 missing/invalid params — no downstream partial work.
 
-## 5. PRECONDITIONS Contract
+## 📌 5. PRECONDITIONS Contract
 
 Each precondition: `async def (workspace_path, params, state) -> tuple[bool, str, dict]`
 returning `(ok, note, state_update)`. It is **idempotent**: it checks whether its job is
@@ -164,7 +164,7 @@ async def _pre_graph_fresh(workspace_path, params, state):
 
 A precondition that returns `ok=False` aborts the whole action with a loud error naming it.
 
-## 6. Dispatcher Flow
+## 📌 6. Dispatcher Flow
 
 ### `action_call(action, params)`
 
@@ -192,7 +192,7 @@ action_help(action)      → full spec: params+defaults+enum, example, precondit
 action_help("fuzzy...")  → did-you-mean suggestions + nearest actions
 ```
 
-## 7. Generation (no drift)
+## 📌 7. Generation (no drift)
 
 | Output | Generator | Source |
 |--------|-----------|--------|
@@ -202,7 +202,7 @@ action_help("fuzzy...")  → did-you-mean suggestions + nearest actions
 
 All three read the **same dict** — editing one entry updates every surface.
 
-## 8. Worked Examples
+## 📌 8. Worked Examples
 
 ### `task_update` (merges 5 task tools — create-or-update, multi-level)
 
@@ -281,7 +281,7 @@ with an in-flight background rebuild (returns `rebuilding: true`, no duplicate
 build). Builds are serialized per project (a per-workspace lock); different
 projects build concurrently.
 
-## 9. Backward-Compat Alias Map (36 → 23)
+## 📌 9. Backward-Compat Alias Map (36 → 23)
 
 | New action | Absorbed old tools |
 |-----------|--------------------|
@@ -305,7 +305,7 @@ projects build concurrently.
 **Dropped entirely** (no REGISTRY consumer): `ctx_store`, `ctx_get_fragment`
 (folded into `mem_*`), `reg_generate_retrospective` (fold into pattern extraction / `mem_write`).
 
-## 10. Open Questions — RESOLVED
+## 📌 10. Open Questions — RESOLVED
 
 1. **Sync/async handler wrapper** — ✅ RESOLVED: dispatcher calls sync handlers directly and
    `await`s coroutines via `_maybe_await` (`src/mcp_server/modules/dispatcher.py`). No wrapping
@@ -320,7 +320,7 @@ projects build concurrently.
    **not** implemented — old names still work but are not counted (acceptable: docs/rules are
    already migrated off them).
 
-## 11. Observation Record (pattern-baking input)
+## 📌 11. Observation Record (pattern-baking input)
 
 The observation store (`.ai/memory-bank/observations.jsonl`) holds raw pattern-evidence
 signals that the baking pipeline later keys → counts → measures consistency → computes
@@ -346,7 +346,7 @@ Record shape:
 old fingerprint, so re-scans never double-count. "Count = genuine recurrence", not "count =
 times the server was woken".
 
-## 12. Baking & Delivery pipeline
+## 📌 12. Baking & Delivery pipeline
 
 The observation store feeds a **deterministic, LLM-free** baking pipeline
 (`src/mcp_server/helpers/baking.py`), which persists emerging candidates to
@@ -377,6 +377,6 @@ identical regardless of tier:
 | Async | `modules/bake_scheduler.py` daemon re-bakes known workspaces every 30s | no |
 | Subagent | `awlab-baker` agent, gated by `should_spawn_subagent` (new undelivered candidates) | host |
 
-**Hook mode** — `awlab-ai-assistant.exe hook --agent <host> --event <event>` (`src/mcp_server/hooks/`)
+**Hook mode** — `awlab-ai-assistant hook --agent <host> --event <event>` (`src/mcp_server/hooks/`)
 normalizes host lifecycle events into observations (`HOOK_ADAPTERS` mirror `REGISTRY`), appending to
 the same store with zero LLM cost.

@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/awsomplak/awlab-ai-assistant?color=blue&label=version" alt="Latest Version" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/tests-405%20passing-brightgreen" alt="405 tes lulus" />
+  <img src="https://img.shields.io/badge/tests-55%20passing-brightgreen" alt="55 tes lulus" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="Lisensi MIT" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Multi-platform" />
 </p>
@@ -51,7 +51,7 @@ AWLab-AI-Assistant menyelesaikan masalah ini dengan mengubah proyek biasa Anda m
 - **Perencanaan Strategis** — AI akan membuat, mengikuti, dan memperbarui rencana terstruktur untuk setiap tugas, memastikan ia tidak pernah kehilangan arah.
 - **Arsitektur Otak Ganda (Dual-Brain)** —
   - **Bank Memori (SQLite):** Mengingat preferensi Anda, aturan, dan keputusan masa lalu di seluruh sesi.
-  - **Code Knowledge Graph (LanceDB):** Secara instan memetakan dan memahami struktur kode Anda melalui vektor, sehingga AI tidak perlu membaca setiap file secara manual.
+  - **Code Knowledge Graph (Graphify + LanceDB):** Secara instan memetakan dan memahami struktur kode Anda melalui vektor, sehingga AI tidak perlu membaca setiap file secara manual.
 
 ---
 
@@ -116,6 +116,21 @@ graph LR
 
 ---
 
+## 🛡️ Performa & Proteksi Token
+
+Arsitektur server MCP ini sangat dioptimalkan untuk melindungi jendela konteks (context window) LLM Anda. Tidak ada jebakan token burn (pemborosan token) yang tidak disengaja:
+
+1. **Parsing Rencana Struktural (`ctx_info`)** — Alih-alih memasukkan seluruh `plan.md` ke dalam konteks setiap kali inisialisasi, `ctx_info` memotong paragraf yang panjang dan hanya mengekstrak poin-poin penting (bullets) untuk approach, expected outcomes, dan open questions.
+2. **Pengembalian Grafik (`graph_query`, `graph_explain`)** — Node yang dikembalikan oleh grafik **tidak** menyertakan potongan kode sumber mentah (hanya menyertakan ID, label, dan lokasi file). Agen harus secara eksplisit meminta untuk membaca file tersebut, mencegah pembuangan AST dalam jumlah besar ke dalam prompt.
+3. **Batas Ketat (Hard Limits)** — `graph_query` memiliki batas bawaan `limit=10`, `graph_explain` membatasi tetangga (neighbors) hingga 30, dan `mem_search` maksimal 5-10 hasil.
+4. **Inventaris Memori (`mem_list_entities`)** — Alih-alih mengembalikan seluruh entitas memori beserta riwayat observasinya, inventaris memotong output menjadi hanya `{name, entityType, observation_count}`.
+
+> [!TIP]
+> **Didesain untuk Proyek Jangka Panjang:**
+> AWLab-AI-Assistant menangani semua perlindungan token secara otomatis di balik layar. Sistem ini secara dinamis menegakkan protokol yang menginstruksikan agen AI untuk menghindari pembacaan file mentah berukuran besar dan sebaliknya bergantung pada endpoint yang dioptimalkan seperti `ctx_info`. Ini memastikan agen Anda tetap fokus dan produktif selama berbulan-bulan tanpa menghabiskan batas penggunaan konteks (context window) atau melambungkan tagihan API Anda!
+
+---
+
 ## ✅ Supported Agent
 
 ### Agent AI yang didukung
@@ -154,6 +169,7 @@ README ini adalah sumber dokumentasi awal. Gunakan tabel di bawah untuk menemuka
 | Memahami tentang project ini dan fiturnya                                    | _(Anda sudah di sini — lanjut baca)_                 |
 | Menginstal server MCP, membuild-nya, dan menyambungkannya ke agent AI        | [Instal & Terapkan](docs/id/INSTALL.md)              |
 | Melihat setiap action dari MCP (`action_call` / `action_help`) dan fungsinya | [Tool MCP yang Tersedia](docs/id/AVAILABLE_TOOLS.md) |
+| Konfigurasi ruang kerja multi-repositori (unified graph & memory)            | [Project Families](docs/id/PROJECT_FAMILIES.md)      |
 | Registrasi hook (opsional)                                                   | [Registrasi Hook](docs/id/HOOKS.md)                  |
 | Sinkronisasi memori agent antar perangkat via cloud (cr-sqlite)              | [Dukungan Memori Cloud](docs/id/CRDT_SYNC.md)        |
 | Baca versi Bahasa Inggris                                                    | [README.md](README.md)                               |
@@ -161,15 +177,16 @@ README ini adalah sumber dokumentasi awal. Gunakan tabel di bawah untuk menemuka
 
 ### Daftar Dokumentasi
 
-| Dokumen                                                    | Isi                                                                                                                                                                 |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`README_ID.md`](README_ID.md)                             | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Indonesia)                                                                                                    |
-| [`README.md`](README.md)                                   | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Inggris)                                                                                                      |
-| [`docs/id/CRDT_SYNC.md`](docs/id/CRDT_SYNC.md)             | Panduan eksperimental untuk mengaktifkan sinkronisasi memori CRDT melalui cloud                                                                                     |
-| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                 | Persyaratan, instal dari source, build executable mandiri, publikasi rules + skill, implementasi server MCP per agent, variabel penggunaan, referensi CLI           |
-| [`docs/id/AVAILABLE_TOOLS.md`](docs/id/AVAILABLE_TOOLS.md) | 2 tool MCP yang tersedia dan **23 action** yang ditanganinya (plan, task, memory, graph, context, util, workflow), graph, cache offline, dan multi project          |
-| [`docs/id/HOOKS.md`](docs/id/HOOKS.md)                     | Otomasi hook zero-LLM opsional — registrasi per-agent (Claude Code, Hermes, Cline, Copilot), perilaku event, pro/kontra vs MCP-saja, verifikasi & pemecahan masalah |
-| [`CHANGELOG.md`](CHANGELOG.md)                             | Catatan rilis per versi                                                                                                                                             |
+| Dokumen                                                      | Isi                                                                                                                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`README_ID.md`](README_ID.md)                               | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Indonesia)                                                                                                    |
+| [`README.md`](README.md)                                     | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Inggris)                                                                                                      |
+| [`docs/id/CRDT_SYNC.md`](docs/id/CRDT_SYNC.md)               | Panduan eksperimental untuk mengaktifkan sinkronisasi memori CRDT melalui cloud                                                                                     |
+| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                   | Persyaratan, instal dari source, build executable mandiri, publikasi rules + skill, implementasi server MCP per agent, variabel penggunaan, referensi CLI           |
+| [`docs/id/AVAILABLE_TOOLS.md`](docs/id/AVAILABLE_TOOLS.md)   | 2 tool MCP yang tersedia dan **23 action** yang ditanganinya (plan, task, memory, graph, context, util, workflow), graph, cache offline, dan multi project          |
+| [`docs/id/PROJECT_FAMILIES.md`](docs/id/PROJECT_FAMILIES.md) | Dokumentasi untuk mengonfigurasi keluarga proyek (project families) guna menggabungkan grafik kode dan berbagi memori episodik lintas repositori                    |
+| [`docs/id/HOOKS.md`](docs/id/HOOKS.md)                       | Otomasi hook zero-LLM opsional — registrasi per-agent (Claude Code, Hermes, Cline, Copilot), perilaku event, pro/kontra vs MCP-saja, verifikasi & pemecahan masalah |
+| [`CHANGELOG.md`](CHANGELOG.md)                               | Catatan rilis per versi                                                                                                                                             |
 
 ### Jalur tercepat (pengguna baru)
 
@@ -200,7 +217,8 @@ AWLab-AI-Assistant **AI-Assisted Development System** menyimpan **semua** state-
 └── temp/                        # File scratch/temp — mengikuti file-hygiene rule
 ```
 
-Tidak ada file sampah, tidak ada state yang tersebar — semua yang dibuat asisten AI ada di dalam `.ai/`, jadi repositori Anda tetap bersih dan persis seperti yang Anda harapkan.
+> [!TIP]
+> **Tidak ada file sampah, tidak ada status (state) yang berserakan** — semua yang dibuat oleh asisten AI hidup di dalam `.ai/`, jadi source tree Anda tetap persis seperti yang Anda harapkan.
 
 ---
 
@@ -208,7 +226,7 @@ Tidak ada file sampah, tidak ada state yang tersebar — semua yang dibuat asist
 
 - **Python 3.10+** (untuk server MCP)
 - **agent-recall** (backend memori knowledge-graph)
-- **graphifyy** (pengindeks code knowledge-graph)
+- **graphify** (pengindeks code knowledge-graph)
 - Salah satu dari: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, atau **Google Antigravity / Antigravity IDE**
 
 ---

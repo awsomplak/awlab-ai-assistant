@@ -1,4 +1,4 @@
-# Cloud Memory Support (CRDT Sync)
+# 📖 Cloud Memory Support (CRDT Sync)
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Cloud Memory Support (CRDT Sync)**
 
@@ -6,7 +6,7 @@ By default, AWLab-AI-Assistant's Memory Bank operates entirely offline using loc
 
 ---
 
-## How it works
+## 📌 How it works
 
 When the AWLab-AI-Assistant MCP server connects to the SQLite memory database, it actively checks for a compiled `cr-sqlite` extension. If the extension is found, it is injected directly into the SQLite connection.
 
@@ -17,11 +17,11 @@ This gives your local `memory.db` file CRDT capabilities, meaning it can be repl
 
 ---
 
-## Installation Guide
+## 📌 Installation Guide
 
 To enable CRDT support, you need to place the compiled `cr-sqlite` shared library in the correct configuration directory.
 
-### 1. Download the Extension
+### 🔖 1. Download the Extension
 
 Download the compiled `crsqlite` extension for your operating system from the official [vlcn.io releases page](https://github.com/vlcn-io/cr-sqlite/releases).
 
@@ -29,12 +29,12 @@ Download the compiled `crsqlite` extension for your operating system from the of
 - **macOS:** `crsqlite.dylib`
 - **Linux:** `crsqlite.so`
 
-### 2. Place it in the Configuration Directory
+### 🔖 2. Place it in the Configuration Directory
 
 Create an `extensions` folder inside the primary configuration directory (`~/.awlab-id/agent-memory/`) and place the downloaded file inside it.
 
 ```bash
-# Example for Linux/macOS
+# 📖 Example for Linux/macOS
 mkdir -p ~/.awlab-id/agent-memory/extensions/
 mv ~/Downloads/crsqlite.so ~/.awlab-id/agent-memory/extensions/crsqlite.so
 ```
@@ -42,13 +42,13 @@ mv ~/Downloads/crsqlite.so ~/.awlab-id/agent-memory/extensions/crsqlite.so
 > [!NOTE]
 > Ensure the file is named exactly `crsqlite.dll`, `crsqlite.dylib`, or `crsqlite.so` depending on your OS. The system looks for this exact filename.
 
-### 3. Restart the Server
+### 🔖 3. Restart the Server
 
 Once the file is in place, simply restart your AI agent. The MCP server will automatically detect the extension, patch the SQLite connection, and enable `cr-sqlite`. You will see the extension loaded in the debug logs if you have logging enabled (`LOG_LEVEL=DEBUG`).
 
 ---
 
-## Syncing to the Cloud
+## 📌 Syncing to the Cloud
 
 Once the extension is loaded, your `memory.db` file is ready to be synchronized.
 

@@ -241,7 +241,7 @@ mcp_server/
 ├── helpers/
 │   ├── __init__.py         # Re-exports all helpers
 │   ├── agent_recall.py     # agent-recall bridge (library import)
-│   ├── graphify_bridge.py  # Code knowledge graph (graphifyy, AST-only)
+│   ├── graphify_bridge.py  # Code knowledge graph (graphify, AST-only)
 │   ├── file_utils.py       # File I/O and markdown parsing
 │   ├── registry_utils.py   # Registry.md parsing and updating
 │   ├── embeddings.py       # FastEmbed integration

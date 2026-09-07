@@ -1,4 +1,4 @@
-# Install & Implement
+# 📖 Install & Implement
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Install & Implement**
 
@@ -16,7 +16,7 @@ This guide covers everything you need to get AWLab-AI-Assistant running in your 
 
 ---
 
-## Project structure
+## 📌 Project structure
 
 Reference layout of the repository:
 
@@ -39,7 +39,7 @@ project-root/
 
 ---
 
-## Requirements
+## 📌 Requirements
 
 - **Python 3.10+**
 - `git`
@@ -49,60 +49,60 @@ project-root/
 
 ---
 
-## 1. Install the MCP server
+## 📌 1. Install the MCP server
 
 > ⚠️ **Pick the guide for your OS only.** The python virtual-environment activation command is different on Windows vs Linux/macOS — copy-pasting the wrong one will result in failure.
 
-### Windows (PowerShell)
+### 🔖 Windows (PowerShell)
 
 ```powershell
-# Clone
+# 📖 Clone
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
 cd AWLab-AI-Assistant
 
-# Create a virtual environment
+# 📖 Create a virtual environment
 python -m venv .venv
 
-# Activate it — PowerShell: .venv\Scripts\Activate.ps1
-# cmd: .venv\Scripts\activate.bat
+# 📖 Activate it — PowerShell: .venv\Scripts\Activate.ps1
+# 📖 cmd: .venv\Scripts\activate.bat
 .venv\Scripts\Activate.ps1
 
-# Install package (editable mode)
+# 📖 Install package (editable mode)
 pip install -e .
 
-# Install dev/test dependencies (optional)
+# 📖 Install dev/test dependencies (optional)
 pip install -e ".[dev]"
 ```
 
-### Linux / macOS
+### 🔖 Linux / macOS
 
 ```bash
-# Clone
+# 📖 Clone
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
 cd AWLab-AI-Assistant
 
-# Create a virtual environment
+# 📖 Create a virtual environment
 python -m venv .venv
 
-# Activate it
+# 📖 Activate it
 source .venv/bin/activate
 
-# Install package (editable mode)
+# 📖 Install package (editable mode)
 pip install -e .
 
-# Install dev/test dependencies (optional)
+# 📖 Install dev/test dependencies (optional)
 pip install -e ".[dev]"
 ```
 
 ---
 
-## 2. Build the standalone executable
+## 📌 2. Build the standalone executable
 
 ```bash
-# Build for current OS (uses PyInstaller)
+# 📖 Build for current OS (uses PyInstaller)
 python scripts/run.py build
 
-# Build for specific targets
+# 📖 Build for specific targets
 python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all     # Specs for non-host OSes
 ```
@@ -111,7 +111,7 @@ Built binary at `dist/bin/`:
 
 | Binary                   | Server               | Exposed Tools                             |
 | ------------------------ | -------------------- | ----------------------------------------- |
-| `awlab-ai-assistant.exe` | `AWLab-AI-Assistant` | `action_call` (dispatcher), `action_help` |
+| `awlab-ai-assistant` | `AWLab-AI-Assistant` | `action_call` (dispatcher), `action_help` |
 
 One consolidated executable — the `action_call` dispatcher routes to all operations (plan, task, memory, graph, context, util, workflow). Binaries are fully standalone — no Python or source files needed.
 
@@ -119,12 +119,12 @@ One consolidated executable — the `action_call` dispatcher routes to all opera
 
 ---
 
-## 3. Publish rules & skills to your agent
+## 📌 3. Publish rules & skills to your agent
 
 AWLab-AI-Assistant ships **14 rules** and **5 skills** as sources under `assets/`. Assuming you've already built in [§2](#2-build-the-standalone-executable), `publish` installs the compiled profiles into your agent's home directory — a **one-time setup** per machine.
 
 ```bash
-# Publish to specific assistant(s)
+# 📖 Publish to specific assistant(s)
 python scripts/run.py publish --target=cline        # Cline
 python scripts/run.py publish --target=copilot      # VS Code Copilot
 python scripts/run.py publish --target=claude       # Claude Code
@@ -133,12 +133,12 @@ python scripts/run.py publish --target=opencode     # OpenCode
 python scripts/run.py publish --target=antigravity  # Google Antigravity & Antigravity IDE
 python scripts/run.py publish --target=all          # All assistants
 
-# Uninstall
+# 📖 Uninstall
 python scripts/run.py publish --uninstall
 python scripts/run.py publish --uninstall --target=copilot
 ```
 
-### Publish targets
+### 🔖 Publish targets
 
 | Target        | Rules                          | Skills                       |
 | ------------- | ------------------------------ | ---------------------------- |
@@ -154,7 +154,7 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ---
 
-## 4. Wire the MCP server
+## 📌 4. Wire the MCP server
 
 The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `action_help` (see [Available MCP Tools](AVAILABLE_TOOLS.md)). Wiring it means adding **one MCP-server entry** to your agent's config, pointing at the executable you built in [§2](#2-build-the-standalone-executable):
 
@@ -163,7 +163,7 @@ The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `a
   "mcpServers": {
     "AWLab-AI-Assistant": {
       "type": "stdio",
-      "command": "dist/bin/awlab-ai-assistant.exe",
+      "command": "dist/bin/awlab-ai-assistant",
       "args": [],
       "env": {
         "LOG_ENABLED": "true",
@@ -181,37 +181,37 @@ The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `a
 
 Merge the `AWLab-AI-Assistant` entry into your agent's existing MCP servers — don't replace the whole config file — then restart the agent / chat. Per-agent config locations below.
 
-### Cline
+### 🔖 Cline
 
 Paste the block via **Cline Settings → MCP Servers → Edit JSON**.
 
-### VS Code Copilot
+### 🔖 VS Code Copilot
 
 Add the block to `.vscode/mcp.json` (workspace) or via Command Palette → **MCP**.
 
-### Claude Code
+### 🔖 Claude Code
 
 Register the server from the terminal:
 
 ```bash
-claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant.exe
+claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant
 ```
 
-### Hermes Agent
+### 🔖 Hermes Agent
 
 Add the entry under `mcp_servers:` in `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
   AWLab-AI-Assistant:
-    command: dist/bin/awlab-ai-assistant.exe
+    command: dist/bin/awlab-ai-assistant
     args: []
     env:
       LOG_ENABLED: "true"
       LOG_LEVEL: INFO
 ```
 
-### OpenCode
+### 🔖 OpenCode
 
 Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `mcp` object, not `mcpServers`):
 
@@ -220,14 +220,14 @@ Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `
   "mcp": {
     "AWLab-AI-Assistant": {
       "type": "local",
-      "command": ["dist/bin/awlab-ai-assistant.exe"],
+      "command": ["dist/bin/awlab-ai-assistant"],
       "enabled": true
     }
   }
 }
 ```
 
-### Google Antigravity & Antigravity IDE
+### 🔖 Google Antigravity & Antigravity IDE
 
 Merge the `AWLab-AI-Assistant` entry into `~/.gemini/config/mcp_config.json`:
 
@@ -235,7 +235,7 @@ Merge the `AWLab-AI-Assistant` entry into `~/.gemini/config/mcp_config.json`:
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
-      "command": "dist/bin/awlab-ai-assistant.exe",
+      "command": "dist/bin/awlab-ai-assistant",
       "args": []
     }
   }
@@ -244,17 +244,17 @@ Merge the `AWLab-AI-Assistant` entry into `~/.gemini/config/mcp_config.json`:
 
 ---
 
-## 5. Use it in your agent
+## 📌 5. Use it in your agent
 
 Once wired, drive AWLab-AI-Assistant with plain-language prompts (Cline) or slash commands (VS Code Copilot):
 
-### Cline
+### 🔖 Cline
 
 - _"follow rules"_ → load registry & plan
 - _"create plan"_ → create a new implementation plan
 - _"start phase 1"_ → execute the first phase
 
-### VS Code Copilot
+### 🔖 VS Code Copilot
 
 - `/create plan` → create a new plan
 - `/plan-status` → check the current plan
@@ -262,7 +262,7 @@ Once wired, drive AWLab-AI-Assistant with plain-language prompts (Cline) or slas
 
 ---
 
-## 6. Verify the setup
+## 📌 6. Verify the setup
 
 1. **Server is alive** — confirm `util_info` returns the version + build tag:
 
@@ -282,7 +282,7 @@ Once wired, drive AWLab-AI-Assistant with plain-language prompts (Cline) or slas
 
 ---
 
-## 7. Environment variables & configuration
+## 📌 7. Environment variables & configuration
 
 Runtime settings resolve in this order: **environment variable → `config.json` → default**.
 
@@ -317,7 +317,7 @@ most `chunk_size` files and advances the freshness manifest by exactly that many
 
 ---
 
-## 8. CLI reference
+## 📌 8. CLI reference
 
 ```bash
 python scripts/run.py <command> [options]
@@ -332,7 +332,7 @@ python scripts/run.py <command> [options]
 | `help`          | Show detailed help for a command                                        |
 | `--version`     | Show version and build tag                                              |
 
-### compile-rules
+### 🔖 compile-rules
 
 ```bash
 python scripts/run.py compile-rules
@@ -349,54 +349,54 @@ dist/profiles/
 └── .clinerules        # Project-level monolith (not published)
 ```
 
-### build
+### 🔖 build
 
 ```bash
-# Full build (profiles + binaries)
+# 📖 Full build (profiles + binaries)
 python scripts/run.py build
 
-# Skip binary build
+# 📖 Skip binary build
 python scripts/run.py build --no-bin
 
-# Skip profile compilation
+# 📖 Skip profile compilation
 python scripts/run.py build --no-rules
 ```
 
-### publish
+### 🔖 publish
 
 ```bash
-# Publish all targets (builds first if /dist missing)
+# 📖 Publish all targets (builds first if /dist missing)
 python scripts/run.py publish
 
-# Publish to a single target
+# 📖 Publish to a single target
 python scripts/run.py publish --target=claude
 
-# Skip automatic build
+# 📖 Skip automatic build
 python scripts/run.py publish --target=all --skip-build
 
-# Force (skip confirmation prompts)
+# 📖 Force (skip confirmation prompts)
 python scripts/run.py publish --force
 
-# Remove installed files
+# 📖 Remove installed files
 python scripts/run.py publish --uninstall
 ```
 
 ---
 
-## 9. Troubleshooting
+## 📌 9. Troubleshooting
 
 | Symptom                               | Fix                                                                                                                                                |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pip install -e .` fails              | Confirm Python 3.10+ and that you're in the project root.                                                                                          |
 | Build fails / `dist/bin` is locked    | A running server locks the executable. Stop running `awlab-*` servers first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell).             |
-| Agent doesn't see MCP tools           | Register the server (`dist/bin/awlab-ai-assistant.exe` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
+| Agent doesn't see MCP tools           | Register the server (`dist/bin/awlab-ai-assistant` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
 | Graph queries are slow on first run   | First build is a full extraction and runs in a background thread — re-read after it finishes (`graph_rebuilding: true` means it's still building). |
 | Parallel graph build hangs in the exe | `ProcessPoolExecutor` hangs in frozen onefile builds — keep `GRAPH_PARALLEL` off in production.                                                    |
 | Memory writes silently lost           | Mutations queue to `.ai/memory-bank/pending.jsonl` when the store is down — run `mem_replay` after recovery to re-apply them.                      |
 
 ---
 
-## Next steps
+## 📌 Next steps
 
 - Explore the full tool surface: [Available MCP Tools](AVAILABLE_TOOLS.md)
 - Back to the [Documentation home](../../README.md#documentation)
