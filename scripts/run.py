@@ -4,7 +4,7 @@ awlab-ai-assistant Development CLI — Single entry point for all project operat
 
 Usage:
     run.py build [--no-bin] [--no-rules]
-    run.py publish [--target=<name>] [--skip-build] [--force]
+    run.py publish [--target=<name>] [--skip-build] [--force] [--uninstall] [--no-bin]
     run.py test [<pytest-args>...]
     run.py compile-rules
     run.py help [<command>]
@@ -22,10 +22,13 @@ Commands:
 
 import argparse
 import json
+import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,7 +86,7 @@ PUBLISH_MAP = {
     "binary": (
         "Core Binary",
         [
-            (f"bin/awlab-ai-assistant{BIN_EXT}", "{home}/.awlab-id/agent-memory/bin/awlab-ai-assistant{BIN_EXT}"),
+            (f"bin/awlab-ai-assistant{BIN_EXT}", f"{{home}}/.awlab-id/agent-memory/bin/awlab-ai-assistant{BIN_EXT}"),
         ],
     ),
     "cline": (
@@ -273,12 +276,16 @@ Publish /dist contents to AI assistant locations.
 Use --uninstall to remove previously installed files.
 
 Options:
-    --target=<name>   One of: cline, copilot, claude, hermes, opencode, antigravity, all
+    --target=<name>   One of: binary, cline, copilot, claude, hermes, opencode, antigravity, all
     --skip-build      Fail if /dist doesn't exist instead of building
     --force           Skip confirmation prompts
     --uninstall       Remove installed files instead of installing
+    --no-bin          Skip publishing binary (when target=all)
 
 Target Paths:
+    Binary:
+        binary       ~/.awlab-id/agent-memory/bin/awlab-ai-assistant
+
     Skills:
         cline        ~/.agents/skills/
         copilot      ~/.agents/skills/ (shared with Cline)
@@ -887,8 +894,6 @@ def cmd_compile_rules() -> tuple[list[dict], list[dict]]:
 
 def _detect_current_os() -> str:
     """Detect the current operating system."""
-    import platform
-
     sys_platform = platform.system().lower()
     if sys_platform == "windows":
         return "windows"
@@ -903,7 +908,7 @@ def _exe_name(base: str, target_os: str) -> str:
 
 
 def _stop_awlab_processes() -> None:
-    """Stop stale awlab-ai-assistant server processes so /dist isn't locked.
+    """Stop stale awlab-ai-assistant server processes before binary updates.
 
     Only ``awlab-ai-assistant`` exists now (single executable — the legacy
     awlab-plan / awlab-memory binaries were removed; ``awlab-mcp`` is the
@@ -913,8 +918,33 @@ def _stop_awlab_processes() -> None:
         for name in ("awlab-ai-assistant.exe", "awlab-mcp.exe"):
             subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True)
     else:
-        for name in ("awlab-ai-assistant", "awlab-mcp"):
-            subprocess.run(["pkill", "-f", name], capture_output=True)
+        # Avoid killing unrelated processes (such as IDE language servers or scripts)
+        # that may contain 'awlab-ai-assistant' in their command-line arguments.
+        # Only terminate processes whose executable name is awlab-ai-assistant or awlab-mcp.
+        try:
+            out = subprocess.check_output(["ps", "-eo", "pid,command"], text=True)
+            current_pid = os.getpid()
+            for line in out.strip().splitlines()[1:]:
+                parts = line.strip().split(None, 1)
+                if len(parts) < 2:
+                    continue
+                pid_str, cmd = parts
+                try:
+                    pid = int(pid_str)
+                except ValueError:
+                    continue
+                if pid == current_pid:
+                    continue
+                exe_part = cmd.split()[0]
+                exe_name = Path(exe_part).name
+                if exe_name in ("awlab-ai-assistant", "awlab-mcp") or exe_name.startswith("awlab-ai-assist"):
+                    try:
+                        os.kill(pid, 15)  # SIGTERM
+                    except OSError:
+                        pass
+        except Exception:
+            for name in ("awlab-ai-assistant", "awlab-mcp"):
+                subprocess.run(["pkill", "-x", name[:15]], capture_output=True)
 
 
 def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "auto") -> None:
@@ -933,11 +963,9 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
     _info(f"Host OS: {current_os}")
     _info(f"Target(s): {', '.join(build_targets)}")
 
-    # Auto-stop stale server processes ONLY when rebuilding the binary — the
-    # running exe holds a lock on dist/bin. A rules/skills-only build (--no-bin)
-    # must not kill a live MCP server.
-    if not no_bin:
-        _stop_awlab_processes()
+    # MCP server processes are NOT stopped during build because building outputs
+    # to /dist, which does not conflict with the published binary in ~/.awlab-id/...
+    # Process stopping is strictly isolated to publishing the binary target.
 
     # Selectively clean /dist based on what is being built, so partial builds
     # never delete artifacts they aren't regenerating:
@@ -1144,16 +1172,39 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
 
 
 def _resolve_dest(dest_tpl: str, home: Path, name: str = "") -> Path:
-    return Path(dest_tpl.replace("{home}", str(home)).replace("{name}", name))
+    return Path(dest_tpl.replace("{home}", str(home)).replace("{name}", name).replace("{BIN_EXT}", BIN_EXT))
 
 
 def cmd_publish(
-    target: str = "all", skip_build: bool = False, force: bool = False, uninstall: bool = False, no_bin: bool = False
+    target: str = "all",
+    skip_build: bool = False,
+    force: bool = False,
+    uninstall: bool = False,
+    no_bin: bool = False,
 ) -> None:
+    """Publish awlab-ai-assistant to target(s)."""
+    home = Path.home()
+    if target == "all":
+        targets = list(PUBLISH_MAP)
+    elif target in PUBLISH_MAP:
+        targets = [target]
+    else:
+        _fail(f"Unknown target: '{target}'. Available: {', '.join(list(PUBLISH_MAP) + ['all'])}")
+        return
+
+    if no_bin and "binary" in targets:
+        targets.remove("binary")
+
+    needs_bin = "binary" in targets
+    needs_rules = any(t != "binary" for t in targets)
+
     if uninstall:
         _header("Uninstalling")
-        home = Path.home()
-        targets = [target] if target != "all" else list(PUBLISH_MAP)
+        if needs_bin:
+            _info("Stopping running awlab processes for binary uninstall...")
+            _stop_awlab_processes()
+            time.sleep(0.3)
+
         total = 0
         for t in targets:
             if t not in PUBLISH_MAP:
@@ -1191,21 +1242,42 @@ def cmd_publish(
         print(f"\n  {Style.GREEN}{Style.BOLD}\u2713 Removed {total} file(s){Style.RESET}")
         return
 
+    # Check build prerequisites selectively based on target(s)
+    bin_file = DIST / f"bin/awlab-ai-assistant{BIN_EXT}"
+    profiles_dir = DIST / "profiles"
+
     if not DIST.exists():
         if skip_build:
             _fail("/dist not found. Run build first.")
-        _info("/dist not found — building first\n")
-        cmd_build()
+        if needs_bin and not needs_rules:
+            _info("/dist not found — building binary first\n")
+            cmd_build(no_rules=True)
+        elif needs_rules and not needs_bin:
+            _info("/dist not found — compiling rules/skills first\n")
+            cmd_build(no_bin=True)
+        else:
+            _info("/dist not found — building all first\n")
+            cmd_build()
+    else:
+        if needs_bin and not bin_file.exists():
+            if skip_build:
+                _fail(f"Binary not found in {bin_file}. Run build first.")
+            _info("Binary not found in /dist — building binary first\n")
+            cmd_build(no_rules=True)
+        if needs_rules and not profiles_dir.exists():
+            if skip_build:
+                _fail(f"Profiles not found in {profiles_dir}. Run compile-rules or build first.")
+            _info("Profiles not found in /dist — compiling rules first\n")
+            cmd_build(no_bin=True)
 
     mf = DIST / "build-manifest.json"
     if mf.exists():
-        m = json.loads(mf.read_text("utf-8"))
-        _info(f"v{m['version']} ({m['buildTag']}) — built {m['buildTime'][:19]}")
+        try:
+            m = json.loads(mf.read_text("utf-8"))
+            _info(f"v{m['version']} ({m['buildTag']}) — built {m['buildTime'][:19]}")
+        except Exception:
+            pass
 
-    home = Path.home()
-    targets = [target] if target != "all" else list(PUBLISH_MAP)
-    if no_bin and "binary" in targets:
-        targets.remove("binary")
     total = 0
 
     for t in targets:
@@ -1215,7 +1287,45 @@ def cmd_publish(
         label, mappings = PUBLISH_MAP[t]
         _header(f"Publishing: {label}")
 
+        # Stop active MCP server only when publishing the binary target
+        if t == "binary":
+            _info("Stopping running awlab processes for binary update...")
+            _stop_awlab_processes()
+            time.sleep(0.3)
+
         for src_rel, dest_tpl in mappings:
+            # Standalone handling for binary target with retries and permissions
+            if t == "binary":
+                src = DIST / src_rel
+                dest = _resolve_dest(dest_tpl, home)
+                if not src.exists():
+                    _warn(f"{src_rel} not found in /dist")
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                copied = False
+                for attempt in range(5):
+                    try:
+                        shutil.copy2(src, dest)
+                        copied = True
+                        break
+                    except PermissionError as pe:
+                        if attempt < 4:
+                            _detail(f"File locked, retrying ({attempt + 1}/5)...")
+                            time.sleep(0.5)
+                        else:
+                            _fail(
+                                f"Failed to copy binary to {dest}: {pe}. A process may still be holding the file lock."
+                            )
+                if copied:
+                    if not sys.platform.startswith("win"):
+                        try:
+                            dest.chmod(dest.stat().st_mode | 0o755)
+                        except OSError:
+                            pass
+                    _detail(f"{dest}")
+                    total += 1
+                continue
+
             if "{name}" in dest_tpl:
                 sd = DIST / "skills"
                 if not sd.exists():
@@ -1247,6 +1357,7 @@ def cmd_publish(
             elif src.exists():
                 dest.parent.mkdir(parents=True, exist_ok=True)
 
+                # Check if exists and is json then deep merge
                 if dest.exists() and dest.suffix == ".json" and not force:
                     try:
                         with open(src, "r", encoding="utf-8") as fs, open(dest, "r", encoding="utf-8") as fd:
@@ -1269,8 +1380,8 @@ def cmd_publish(
                         continue
                     except Exception as e:
                         _warn(f"Failed to merge JSON {dest}: {e}")
-                        # Fallback to copy below
 
+                # Fallback to copy
                 shutil.copy2(src, dest)
                 _detail(f"{dest}")
                 total += 1
@@ -1430,7 +1541,13 @@ def main() -> None:
         case "build":
             cmd_build(no_bin=args.no_bin, no_rules=args.no_rules, target_os=args.target_os)
         case "publish":
-            cmd_publish(target=args.target, skip_build=args.skip_build, force=args.force, uninstall=args.uninstall)
+            cmd_publish(
+                target=args.target,
+                skip_build=args.skip_build,
+                force=args.force,
+                uninstall=args.uninstall,
+                no_bin=args.no_bin,
+            )
         case "test":
             cmd_test(args.pytest_args)
         case "lint":
