@@ -17,6 +17,7 @@ Commands:
     lint            Run lint & code hygiene (ruff)
     ruff            Run ruff directly with arbitrary arguments
     compile-rules   Compile rules to assistant-specific profiles
+    release         Scaffold release notes in CHANGELOG
     help            Show this message or help for a specific command
 """
 
@@ -1451,6 +1452,76 @@ def _get_build_tag() -> str:
         return "build.000"
 
 
+def cmd_release(target_version: str | None = None) -> None:
+    version = target_version or _get_version()
+    print(f"Scaffolding release notes for v{version}...")
+
+    changelog_path = ROOT / "CHANGELOG.md"
+    template_path = ROOT / "assets" / "template" / "release_template.md"
+
+    if not changelog_path.exists():
+        print("ERROR: CHANGELOG.md not found.")
+        return
+    if not template_path.exists():
+        print("ERROR: Release template not found in assets/template.")
+        return
+
+    changelog_text = changelog_path.read_text("utf-8")
+    target_header = f"## [{version}]"
+
+    if target_header not in changelog_text:
+        print(f"ERROR: Version block {target_header} not found in CHANGELOG.md!")
+        print("Please add the version header (e.g. `## [3.0.6]`) first.")
+        return
+
+    # Extract template sections (H2 -> H3 for CHANGELOG nesting)
+    template_lines = template_path.read_text("utf-8").splitlines()
+    template_content = []
+    for line in template_lines:
+        if line.startswith("## "):
+            template_content.append("#" + line)
+        elif line.startswith("<!--") or (not line and template_content):
+            template_content.append(line)
+
+    template_str = "\n".join(template_content).strip()
+
+    # Check if we already injected to avoid duplicates
+    if "### 🚀 Highlights" in changelog_text[changelog_text.find(target_header) :]:
+        print("Release template is already present in this version block.")
+        return
+
+    # Inject right under the version header, preserving date updates
+    lines = changelog_text.splitlines()
+    new_lines = []
+    in_version = False
+    injected = False
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    for line in lines:
+        if line.startswith("## [") and target_header in line:
+            in_version = True
+            if " - " not in line:
+                line = f"{target_header} - {today}"
+            else:
+                line = re.sub(r" - \d{4}-\d{2}-\d{2}", f" - {today}", line)
+            new_lines.append(line)
+            continue
+
+        if in_version and line.startswith("## ["):
+            in_version = False
+
+        if in_version and not injected:
+            new_lines.append("")
+            new_lines.append(template_str)
+            new_lines.append("")
+            injected = True
+
+        new_lines.append(line)
+
+    changelog_path.write_text("\n".join(new_lines) + "\n", "utf-8")
+    print("SUCCESS: Release template injected into CHANGELOG.md!")
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  CLI
 # ══════════════════════════════════════════════════════════════════════════
@@ -1477,6 +1548,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("lint", ["--fix", "--format", "paths"], "Run lint & code hygiene (ruff)"),
         ("ruff", ["ruff_args"], "Run ruff directly with arguments"),
         ("compile-rules", [], "Compile rules to assistant profiles"),
+        ("release", ["--target-version"], "Scaffold release notes in CHANGELOG"),
         ("help", ["help_command"], "Show help for a command"),
     ]:
         sp = sub.add_parser(name, help=desc)
@@ -1508,6 +1580,10 @@ def build_parser() -> argparse.ArgumentParser:
                 sp.add_argument("pytest_args", nargs=argparse.REMAINDER)
             elif o == "ruff_args":
                 sp.add_argument("ruff_args", nargs=argparse.REMAINDER)
+            elif o == "--target-version":
+                sp.add_argument(
+                    "--target-version", default=None, help="Target specific version in CHANGELOG (defaults to current)"
+                )
             elif o == "paths":
                 sp.add_argument("paths", nargs=argparse.REMAINDER)
             elif o == "help_command":
@@ -1556,6 +1632,8 @@ def main() -> None:
             cmd_ruff(args.ruff_args)
         case "compile-rules":
             cmd_compile_rules()
+        case "release":
+            cmd_release(args.target_version)
         case "help":
             cmd_help(args.help_command)
         case _:
