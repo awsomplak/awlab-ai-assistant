@@ -15,7 +15,7 @@ When calling actions that operate on files (plans, registry, memory bank, scanni
 ```
 action_call(action="task_read", params={
   "plan_uuid": "hulqlotc",
-  "workspace_path": "d:\\Project\\IDE\\cline-ai-assisted-dev"
+  "workspace_path": "d:\\Project\\IDE\\awlab-ai-assistant"
 })
 ```
 
@@ -35,7 +35,7 @@ The `get_project_id` tool has been **removed**. To get the project ID, read `.ai
 action_call(action="ctx_info", params={
   "mode": "memory_bank",
   "filename": "project-id",
-  "workspace_path": "d:\\Project\\IDE\\cline-ai-assisted-dev"
+  "workspace_path": "d:\\Project\\IDE\\awlab-ai-assistant"
 })
 ```
 

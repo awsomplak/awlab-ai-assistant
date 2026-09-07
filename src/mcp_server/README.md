@@ -2,7 +2,7 @@
 
 **Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
 
-Part of the [cline-ai-assisted-dev](../) system.
+Part of the [awlab-ai-assistant](../../README.md) system.
 
 | Server               | MCP tools                     | Actions (via `action_call`)                                                   | Entry Point                 |
 | -------------------- | ----------------------------- | ----------------------------------------------------------------------------- | --------------------------- |
