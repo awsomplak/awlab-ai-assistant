@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "awlab-ai-assistant"
+name = "AWLab-AI-Assistant"
 version = "3.0.4"
 description = "Deterministic MCP server for plan management, cross-session memory, and AI-assisted development workflows"
 requires-python = ">=3.10"
@@ -18,6 +18,9 @@ dependencies = [
     "pyinstaller>=6.0",
     "fastembed>=0.5.0",
     "graphifyy>=0.9.0",
+    "lancedb>=0.17.0",
+    "instructor>=1.3.3",
+    "openai>=1.40.0",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +32,7 @@ dev = [
 ]
 
 [project.scripts]
-awlab-ai-assistant = "mcp_server.server:main"
+AWLab-AI-Assistant = "mcp_server.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

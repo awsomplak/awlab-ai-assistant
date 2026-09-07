@@ -3,15 +3,15 @@
 
 ## Strategy
 
-**Per-Project Memory Namespace** (implemented by the `awlab-ai-assistant` wrapper)
+**Per-Project Memory Namespace** (implemented by the `AWLab-AI-Assistant` wrapper)
 
 Each project gets its own isolated memory namespace driven by `AGENT_RECALL_SLUG`. The slug is derived from the workspace folder name and stored in `.ai/project-id`.
 
-There is **ONE** MCP server: `awlab-ai-assistant` (single executable `dist/bin/awlab-ai-assistant.exe`). It exposes exactly 2 tools — `action_call` + `action_help` — that route the 23 actions (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`).
+There is **ONE** MCP server: `AWLab-AI-Assistant` (single executable `dist/bin/awlab-ai-assistant.exe`). It exposes exactly 2 tools — `action_call` + `action_help` — that route the 23 actions (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`).
 
 ## Isolation Mechanism
 
-The `awlab-ai-assistant` wrapper script reads `.ai/project-id` from the current project root and sets `AGENT_RECALL_SLUG`, which routes all memory operations to the correct project-specific namespace.
+The `AWLab-AI-Assistant` wrapper script reads `.ai/project-id` from the current project root and sets `AGENT_RECALL_SLUG`, which routes all memory operations to the correct project-specific namespace.
 
 - `AGENT_RECALL_SLUG` is set by the wrapper script from `.ai/project-id`
 - Sanitized: lowercase, non-alphanumeric → `_`, collapse underscores
@@ -19,7 +19,7 @@ The `awlab-ai-assistant` wrapper script reads `.ai/project-id` from the current 
 
 ## Action Mapping
 
-All memory operations use the `awlab-ai-assistant` memory actions. See `01-memory-bank.md` for the full reference:
+All memory operations use the `AWLab-AI-Assistant` memory actions. See `01-memory-bank.md` for the full reference:
 
 | Action | Covers (legacy aliases) | Purpose |
 |--------|--------------------------|---------|
@@ -35,6 +35,6 @@ All memory operations use the `awlab-ai-assistant` memory actions. See `01-memor
 
 ## Implementation
 
-The isolation is handled entirely by the `awlab-ai-assistant` wrapper script, which reads `.ai/project-id` and sets `AGENT_RECALL_SLUG`. No manual bridge code is needed.
+The isolation is handled entirely by the `AWLab-AI-Assistant` wrapper script, which reads `.ai/project-id` and sets `AGENT_RECALL_SLUG`. No manual bridge code is needed.
 
 See `08-project-id.md` for the auto-detection bootstrap protocol.

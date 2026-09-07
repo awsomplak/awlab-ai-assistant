@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AWLab-ID Development CLI — Single entry point for all project operations.
+awlab-ai-assistant Development CLI — Single entry point for all project operations.
 
 Usage:
     run.py build [--no-bin] [--no-rules]
@@ -597,7 +597,7 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
     ]
     unified = _build_unified(stripped)
     (profiles_dir / ".clinerules").write_text(
-        f"# Cline Rules \u2014 AWLab-ID\n\n{unified}\n\n"
+        f"# Cline Rules \u2014 awlab-ai-assistant\n\n{unified}\n\n"
         f"{_baking_capability_note('cline')}\n\n"
         f"## Available MCP Tools\n{MCP_TOOLS}\n",
         "utf-8",
@@ -629,7 +629,7 @@ def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) 
     }
     for r in rules:
         base = r["filename"].replace(".md", "")
-        desc = descriptions.get(base, f"AWLab-ID rule: {base}")
+        desc = descriptions.get(base, f"awlab-ai-assistant rule: {base}")
         # Strip HTML comments, offset headings, rewrite refs to heading anchors
         cleaned = _offset_headings(_strip_html_comments(r["content"]), levels=1)
         cleaned = _rewrite_refs(cleaned)
@@ -661,7 +661,7 @@ def _compile_claude(rules: list[dict], skills: list[dict], profiles_dir: Path) -
     unified = _build_unified(processed)
 
     (claude_dir / "CLAUDE.md").write_text(
-        f"# Claude Code — AWLab-ID\n\nMCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n\n"
+        f"# Claude Code — awlab-ai-assistant\n\nMCP Tools via agent-memory:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n\n"
         f"{_baking_capability_note('claude')}\n",
         "utf-8",
     )
@@ -689,12 +689,12 @@ def _compile_hermes(rules: list[dict], skills: list[dict], profiles_dir: Path) -
     (rules_skill / "SKILL.md").write_text(
         f"---\n"
         f"name: awlab-rules\n"
-        f"description: AWLab-ID rules for plan management, cross-session memory, "
+        f"description: awlab-ai-assistant rules for plan management, cross-session memory, "
         f"project scanning, and AI-assisted development conventions\n"
         f"applyTo: '**/*'\n"
         f"---\n"
         f"\n"
-        f"# AWLab-ID Rules\n\n"
+        f"# awlab-ai-assistant Rules\n\n"
         f"MCP Tools:\n{MCP_TOOLS}\n\n{unified}\n\n"
         f"{_baking_capability_note('hermes')}\n",
         "utf-8",
@@ -728,7 +728,7 @@ def _compile_opencode(rules: list[dict], skills: list[dict], profiles_dir: Path)
         processed.append({"filename": r["filename"], "content": _rewrite_refs(cleaned)})
     unified = _build_unified(processed)
     (opencode_dir / "AGENTS.md").write_text(
-        f"# OpenCode — AWLab-ID\n\n"
+        f"# OpenCode — awlab-ai-assistant\n\n"
         f"Global rules for OpenCode (loaded from ~/.config/opencode/AGENTS.md).\n\n"
         f"MCP Tools via awlab-ai-assistant:\n{MCP_TOOLS}\n\n## Rules\n\n{unified}\n\n"
         f"{_baking_capability_note('opencode')}\n",
@@ -1348,7 +1348,7 @@ def _get_build_tag() -> str:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="run.py",
-        description="AWLab-ID Development CLI",
+        description="awlab-ai-assistant Development CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--version", action="store_true", help="Show version")
@@ -1421,7 +1421,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print(f"AWLab-ID Development CLI  v{_get_version()} ({_get_build_tag()})")
+        print(f"awlab-ai-assistant Development CLI  v{_get_version()} ({_get_build_tag()})")
         return
 
     match args.command:

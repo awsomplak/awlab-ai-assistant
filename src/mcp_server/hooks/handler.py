@@ -34,7 +34,7 @@ def _make_project_id(root: Path) -> str:
     """Derive a unique project-id slug for ``root``.
 
     Appends a 4-character path hash so projects with the same directory name
-    (e.g. two ``awlab-ai-assistant`` clones at different paths) never share a
+    (e.g. two ``AWLab-AI-Assistant`` clones at different paths) never share a
     slug, preventing silent memory isolation failures.
 
     Format: ``<sanitized_dir_name>_<4hex>`` (e.g. ``awlab_ai_assistant_a3f1``).

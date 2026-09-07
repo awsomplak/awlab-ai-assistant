@@ -1,5 +1,6 @@
 <p align="center">
-  <strong>AWLab-ID — AI-Assisted Development System</strong><br/>
+  <strong>AWLab-AI-Assistant — AI-Assisted Development System</strong><br/>
+  <em>Powered by AWLab-ID</em><br/>
   Rules · Workflows · Skills · One Deterministic MCP Server
 </p>
 
@@ -33,26 +34,30 @@
 </p>
 
 <p align="center">
-  <img src="assets/images/banner.png" alt="AWLab-ID — AI-Assisted Development System" width="880" />
+  <img src="assets/images/banner.png" alt="AWLab-AI-Assistant — AI-Assisted Development System" width="880" />
 </p>
 
 ---
 
 ## 💡 About
 
-AWLab-ID **AI-Assisted Development System** turns a plain project into a project-aware AI development environment. It ships:
+AWLab-AI-Assistant supercharges your AI assistant by giving it **long-term memory**, **strategic planning abilities**, and an **instant understanding of your entire codebase**.
 
-- **14 composable rules + 5 skills** (sources under `assets/`) that are compiled into **per-agent profiles** — Cline, VS Code Copilot, Claude Code, Hermes Agent, OpenCode, and Google Antigravity / Antigravity IDE each get their native format automatically.
-- **A single deterministic MCP server** — `awlab-ai-assistant` (one standalone executable) exposing **2 tools** — `action_call` + `action_help` — that route **23 actions** across plan, task, memory, graph, context, util, and workflow. One `REGISTRY` dict is the single source of truth for everything the agent sees, so nothing drifts.
-- **Structured plan management** with server-owned, validated state transitions, **cross-session memory** on a knowledge graph, and a **code knowledge graph** with incremental rebuilds (~40× faster).
+Most AI coding assistants suffer from a short attention span: they forget what you told them yesterday, get confused by large projects, and stumble through complex tasks without a plan.
 
-The core promise: your agent **remembers the project across sessions**, follows a **consistent plan discipline**, and sees a **minimal, deterministic MCP surface** — no tool sprawl, no hallucinated state, no silent memory loss (offline mutations are queued and replayed).
+AWLab-AI-Assistant solves this by transforming your plain project into a **Project-Aware AI Development Environment**. It provides:
+
+- **A Single, Reliable Connection (MCP)** — Instead of confusing your AI with too many tools, we provide one clean interface. This prevents the AI from hallucinating commands or taking destructive actions.
+- **Strategic Planning** — The AI creates, follows, and updates a structured plan for every task, ensuring it never loses its place.
+- **Dual-Brain Architecture** —
+  - **Memory Bank (SQLite):** Learns your preferences, rules, and past decisions across sessions.
+  - **Code Knowledge Graph (LanceDB):** Instantly vectorizes and understands your code's structure so the AI doesn't have to read every file manually.
 
 ---
 
 ## 🏗️ Architecture
 
-A visual overview of the components and how agents connect to the server:
+A simple overview of how your favorite AI agents connect to our intelligent server:
 
 ```mermaid
 graph TB
@@ -60,10 +65,10 @@ graph TB
   CP["VS Code Copilot"]
   CC["Claude Code"]
   HR["Hermes Agent"]
-  AM["awlab-ai-assistant<br/>(single exe: action_call + action_help, 23 actions)"]
-  ART["artifacts/ registry.md + plans"]
-  AG["agent-recall Knowledge Graph"]
-  CG["code graph .ai/codegraph/ (graphify)"]
+  AM["AWLab-AI-Assistant<br/>(Single MCP Server)"]
+  ART["Project Plans & Tasks"]
+  AG["Memory Bank<br/>(SQLite / agent-recall)"]
+  CG["Code Knowledge Graph<br/>(LanceDB Vector Search)"]
 
   CL --> AM
   CP --> AM
@@ -78,36 +83,36 @@ graph TB
 
 ## ⚙️ How it works
 
-Every session follows a predictable flow:
+Every time you start a new session, the AI follows a highly disciplined, predictable flow:
 
 ```mermaid
 graph LR
-  A["Agent session starts"] --> B["project_id<br/>(memory isolation)"]
-  B --> C["plan_status / task_read<br/>(plan discipline)"]
-  C --> D["ctx_info mode=context<br/>(orchestration snapshot)"]
-  D --> E["action_call<br/>(23 actions)"]
+  A["Session Starts"] --> B["Identify Project<br/>(Isolate Memory)"]
+  B --> C["Check Plan & Tasks<br/>(Stay Disciplined)"]
+  C --> D["Gather Context<br/>(Code + Memories)"]
+  D --> E["Execute Work<br/>(Safe Actions)"]
 ```
 
-1. **Agent session starts** — the agent begins working on your project.
-2. **`project_id`** — _(memory isolation)_ confirms or creates the project identity so all memory stays scoped to this project, never leaking into the global store.
-3. **`plan_status` / `task_read`** — _(plan discipline)_ loads the active plan and the next eligible task, so the agent works from a consistent, server-owned state.
-4. **`ctx_info mode="context"`** — _(orchestration snapshot)_ assembles plan + next task + relevant code + memory in one server-owned call and atomically writes `.ai/memory-bank/context.md`.
-5. **`action_call`** — _(23 actions)_ drives the rest of the work through the action surface (plan, task, memory, code graph, context). If a store or the server is ever unreachable, mutations are queued to `.ai/memory-bank/pending.jsonl` and replayed via `mem_replay` — nothing is silently lost.
+1. **Session Starts** — You ask your AI agent to build a feature or fix a bug.
+2. **Identify Project** — The AI checks which project it's in to ensure it only uses memories relevant to this specific codebase.
+3. **Check Plan & Tasks** — The AI reads the active plan to pick up exactly where it left off.
+4. **Gather Context** — In a single step, the server bundles the plan, the next task, relevant code snippets, and your past instructions together so the AI has perfect context.
+5. **Execute Work** — The AI uses our safe, validated tools to write code, update the plan, and save new memories. If the connection drops, work is safely queued and replayed later!
 
 ---
 
 ## ✨ Features
 
-| Feature                           | Description                                                                                                                                                                                    |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **One deterministic MCP surface** | A single `REGISTRY` drives `action_call` + `action_help` and the generated SKILL.md — one source of truth, no drift, and no partial execution (preconditions + pipeline).                      |
-| **Plan artifacts**                | Per-project registry (`plan.md` / `tasks.md` / `notes.md`) with server-owned, validated state transitions (`plan_status`, `plan_update`, `task_read`, `task_update`, `plan_doc`).              |
-| **Cross-session memory**          | Persistent knowledge-graph memory backed by agent-recall, with hybrid BM25 + dense search and entity-type filtering (`mem_write`, `mem_search`, `mem_read`, `mem_remove`, …).                  |
-| **Pattern-baking core**           | An observation store (`.ai/memory-bank/observations.jsonl`) records user-pattern evidence (`mem_observe`) that the baking pipeline keys → counts → measures consistency → computes confidence. |
-| **Code knowledge graph**          | AST-only structural graph with incremental rebuild (only changed files re-extracted), powering cheap auto-refresh and code-aware queries (`graph_build` … `graph_explain`).                    |
-| **Project families**              | Correlated projects at different paths share a merged code graph and a dedicated `family_<slug>` memory store, with file-authoritative project-id reconciliation.                              |
-| **Offline cache**                 | Intended mutations are queued to `.ai/memory-bank/pending.jsonl` when the server or a store is unavailable, then replayed via `mem_replay` — state is never silently lost.                     |
-| **Agentic orchestration**         | A single `ctx_info mode="context"` call assembles plan, next task, code, and memory, and atomically writes `.ai/memory-bank/context.md`; graph reads correlate related memory.                 |
+| Feature                        | Why you'll love it                                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Laser Focus (One Tool)**     | The AI only sees one main tool, eliminating confusion, tool sprawl, and unpredictable behavior.                                                                  |
+| **Built-in Task Manager**      | The AI maintains its own `plan.md` and `tasks.md` documents, meticulously checking off tasks as it works so it never gets lost.                                  |
+| **Human-Like Memory**          | Using our SQLite `agent-recall` backend, the AI remembers your coding style, past bugs, and architectural decisions across reboots.                              |
+| **Pattern Learning**           | The system quietly observes how you correct the AI. If you tell it "always use X instead of Y", it records that rule and applies it automatically in the future. |
+| **Instant Code Understanding** | Using a local **LanceDB** vector database, the server instantly maps your codebase (functions, classes, files) so the AI can find relevant code in milliseconds. |
+| **Multi-Project Intelligence** | Working on a frontend and backend in separate folders? They can share a united code graph and memory bank.                                                       |
+| **Offline Safety Net**         | If a database is locked or unavailable, the AI's thoughts and memories are cached locally and synced the moment it's safe.                                       |
+| **One-Shot Context**           | The AI pulls all necessary context (plans, tasks, code, memories) in a single, perfectly orchestrated snapshot.                                                  |
 
 ---
 
@@ -124,7 +129,7 @@ The compiled rules + skills and the MCP server are verified on all four agents:
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code)                                                            | ✅ tested    | Single `CLAUDE.md` monolith with heading anchors                  |
 | [Hermes Agent](https://github.com/nousresearch/hermes-agent)                                                             | ✅ tested    | Rules packaged as `awlab-rules/SKILL.md`                          |
 | [OpenCode](https://opencode.ai)                                                                                          | 🆕 supported | Global `AGENTS.md` + skills in `~/.config/opencode/`              |
-| [Google Antigravity](https://antigravity.google) / [Antigravity IDE](https://antigravity.google/product/antigravity-ide) | 🆕 supported | Modular rules in `~/.gemini/config/rules/` + skills + MCP + hooks |
+| [Google Antigravity](https://antigravity.google) / [Antigravity IDE](https://antigravity.google/product/antigravity-ide) | ✅ tested    | Modular rules in `~/.gemini/config/rules/` + skills + MCP + hooks |
 
 ### Supported operating systems
 
@@ -150,6 +155,7 @@ This README is the single documentation entry point. Use the tables below to fin
 | Install the MCP server, build it, and wire it into my AI agent        | [Install & Implement](docs/en/INSTALL.md)         |
 | See every MCP action (`action_call` / `action_help`) and what it does | [Available MCP Tools](docs/en/AVAILABLE_TOOLS.md) |
 | Register the optional hook automation layer (zero-LLM capture)        | [Hook Registration](docs/en/HOOKS.md)             |
+| Synchronize agent memory across devices via cloud (cr-sqlite)         | [Cloud Memory Support](docs/en/CRDT_SYNC.md)      |
 | Read the Indonesian version                                           | [README_ID.md](README_ID.md)                      |
 | Read the version history                                              | [CHANGELOG](CHANGELOG.md)                         |
 
@@ -157,8 +163,10 @@ This README is the single documentation entry point. Use the tables below to fin
 
 | Document                                                   | What it covers                                                                                                                                                            |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`README.md`](README.md)                                   | What AWLab-ID is, features, tested OS/agents, architecture (English)                                                                                                      |
-| [`README_ID.md`](README_ID.md)                             | What AWLab-ID is, features, tested OS/agents, architecture (Bahasa Indonesia)                                                                                             |
+| [`README.md`](README.md)                                   | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (English)                                                                                            |
+| [`README_ID.md`](README_ID.md)                             | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (Bahasa Indonesia)                                                                                   |
+| [`docs/en/CRDT_SYNC.md`](docs/en/CRDT_SYNC.md)             | Experimental guide on enabling CRDT memory sync across the cloud                                                                                                          |
+| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                 | Step-by-step setup and connection (Bahasa Indonesia)                                                                                                                      |
 | [`docs/en/INSTALL.md`](docs/en/INSTALL.md)                 | Requirements, install from source, build the standalone executable, publish rules + skills, wire the MCP server per agent, environment variables, CLI reference           |
 | [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md) | The 2 exposed MCP tools and the **23 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
 | [`docs/en/HOOKS.md`](docs/en/HOOKS.md)                     | Optional zero-LLM hook automation — per-agent registration (Claude Code, Hermes, Cline, Copilot), event behaviour, pros/cons vs MCP-only, verification & troubleshooting  |
@@ -175,7 +183,7 @@ This README is the single documentation entry point. Use the tables below to fin
 
 ## 🧹 Your project stays clean
 
-AWLab-ID keeps **all** of its state inside a single `.ai/` directory at your project root — the agent's plans, memory, and code graph are never scattered as loose files across your repository:
+AWLab-AI-Assistant keeps **all** of its state inside a single `.ai/` directory at your project root — the agent's plans, memory, and code graph are never scattered as loose files across your repository:
 
 ```
 {project-root}/.ai/

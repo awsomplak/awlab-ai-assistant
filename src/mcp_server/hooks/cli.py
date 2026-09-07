@@ -26,7 +26,7 @@ from .adapters import normalize_payload, serialize_output
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="awlab-ai-assistant hook", description="Unified host hook handler")
+    p = argparse.ArgumentParser(prog="AWLab-AI-Assistant hook", description="Unified host hook handler")
     p.add_argument(
         "--agent", required=True, choices=["copilot", "claude", "cline", "hermes", "antigravity", "opencode"]
     )

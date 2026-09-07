@@ -14,13 +14,13 @@ from ..helpers.logger import Logger
 
 # ── App Instance ─────────────────────────────────────────────────────────────
 
-mcp = FastMCP("awlab-ai-assistant")
+mcp = FastMCP("AWLab-AI-Assistant")
 
 
 # ── Shared runner — used by all server entry points ─────────────────────────
 
 
-def run_server(mcp_instance: FastMCP, server_name: str = "awlab-ai-assistant") -> None:
+def run_server(mcp_instance: FastMCP, server_name: str = "AWLab-AI-Assistant") -> None:
     """Run an MCP server instance on stdio transport with full initialization."""
     # Bootstrap settings (load .env + config.json)
     settings.bootstrap()
@@ -70,7 +70,7 @@ def run_server(mcp_instance: FastMCP, server_name: str = "awlab-ai-assistant") -
 
 def main():
     """Run the default MCP server on stdio transport."""
-    run_server(mcp, server_name="awlab-ai-assistant")
+    run_server(mcp, server_name="AWLab-AI-Assistant")
 
 
 if __name__ == "__main__":

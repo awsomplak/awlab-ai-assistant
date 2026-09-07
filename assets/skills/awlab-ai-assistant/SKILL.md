@@ -1,9 +1,9 @@
 ---
-name: awlab-ai-assistant
+name: AWLab-AI-Assistant
 description: Dispatch consolidated MCP actions via action_call(action=...). Two tools only: action_call + action_help. Always pass workspace_path; params is a single nested JSON object — never flatten at the top level.
 ---
 
-# awlab-ai-assistant — Action Reference
+# AWLab-AI-Assistant — Action Reference
 
 ## ⚠️ Read this first (most first-contact failures happen here)
 

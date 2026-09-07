@@ -1,9 +1,10 @@
 <!-- → authority: 00-meta.md -->
+
 # Agent-MCP Workspace Path Rule
 
 ## Purpose
 
-The `awlab-ai-assistant` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
+The `AWLab-AI-Assistant` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
 
 ## Rules
 

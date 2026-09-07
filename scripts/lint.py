@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lint & code-hygiene runner for AWLab-ID.
+Lint & code-hygiene runner for awlab-ai-assistant.
 
 Easy to call from scripts/::
 
