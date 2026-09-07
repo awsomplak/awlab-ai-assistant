@@ -1,8 +1,20 @@
 # Changelog
 
-## [3.0.6]
+All notable changes to this project will be documented in this file.
 
-### Added
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [3.0.6] - 2026-09-07
+
+### 🚀 Highlights
+
+- **First-class Google Antigravity & IDE Support**: Fully modular compilation profiles and advanced lifecycle hooks adapter for deep Antigravity integration.
+- **LanceDB Semantic Search**: Dedicated LanceDB vector engine strictly for Code Knowledge Graph precision.
+- **Experimental CRDT Sync**: Cloud sync support for `memory.db` via `cr-sqlite` for seamless multi-device persistence without merge conflicts.
+- **LLM Memory Extraction**: Opt-in structured observation extraction using an LLM directly via `mem_observe`.
+
+### ✨ New Features
 
 - **LanceDB Semantic Search Precision** — strictly defined LanceDB's role as the engine for the **Code Knowledge Graph**, while `agent-recall` (SQLite) remains the engine for the **Memory Graph**. This ensures rapid, vector-based code lookups alongside persistent, human-like pattern memory.
 - **Experimental CRDT Sync Support** — introduced experimental support for cloud syncing the SQLite Memory Bank via `cr-sqlite`. Users can now replicate their `memory.db` across devices using CRDT-compatible sync servers without encountering merge conflicts.
@@ -18,27 +30,38 @@
 - **Publish `--no-bin` Flag** — added `--no-bin` to `scripts/run.py publish` to skip binary distribution and only deploy rules and configurations.
 - **Optional LLM Memory Extraction** — added support for passing `raw_text` to `mem_observe` and `mem_write`. When configured with an `LLM_API_KEY`, the server intelligently uses an LLM (via `instructor`) to extract structured observations and entities from the text automatically before inserting them into the SQLite Memory Bank.
 
-### Changed
+- **Project Families Documentation** — added `PROJECT_FAMILIES.md` documentation to `docs/en` and `docs/id` to guide multi-repository unified graph configurations.
+
+### 🛠️ Enhancements & Changes
 
 - **Publish Path Normalization** — refactored path resolution in `scripts/run.py` to always generate absolute paths instead of relying on `~/` expansion, ensuring maximum compatibility on Windows. Constants like `PUBLISH_MAP` have also been moved to the top of the file for better organization.
 - **Code Hygiene** — fixed trailing whitespace on blank lines in `scripts/run.py` and ran `ruff format` to ensure compliance with 120-character line limits. Configured VS Code workspace to trim trailing whitespace automatically.
 - **Test Suite Optimization** — aggressively pruned the internal test suite from 247 tests down to 55 core tests. Removed peripheral edge-case parameters to strictly focus on validating core "happy path" integrations and speed up continuous development.
+- **Token Protection Protocols** — injected strict context-burn protections (`plan_doc(mode="read")` hazard) natively into the `awlab-protocol.md` bootstrapper (`context_builder.py`) and `AGENTS.md`, and promoted the feature in READMEs.
+- **Cross-Platform Naming** — dropped the `.exe` extension from all documentation (`docs/en/`, `docs/id/`, READMEs) to accurately reflect Linux/macOS and modern Windows terminals.
+- **Test Badges** — synchronized README test badges to correctly reflect the pruned core suite count (55 passing tests).
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Windows MCP Stdin Hang** — fixed a critical bug in `src/mcp_server/helpers/file_utils.py` where Windows file lock generation incorrectly closed the `stdin` file descriptor (`os.close(0)`), causing AI agents to hang indefinitely during `action_call`. Replaced with a sentinel object and guard checks.
 - **`graph_status` Background Rebuild Deadlock** — fixed a critical deadlock in `src/mcp_server/helpers/graphify_bridge.py` where spawning the `_background_rebuild` thread recursively attempted to acquire `_BUILD_LOCKS_GUARD` while already holding it, hanging the event loop. The inner lock acquisition was removed, restoring concurrent `graph_status` polling during heavy background graph rebuilds.
 - **Mac binary extension bug** — patched `scripts/run.py publish` which was hardcoding the `"dist/bin/awlab-ai-assistant.exe"` path in `mcp_config.json`, causing MCP initialization failures on macOS/Linux. The binary extension is now dynamically stripped outside of Windows.
 - **Stale published `SKILL.md`** — regenerated the static `assets/skills/awlab-ai-assistant/SKILL.md` via `registry.build_skill_md()` before publishing, ensuring `plan_create` and the new `plan_doc` walkthrough parameters are correctly documented in the live configuration.
 
-## [3.0.5]
+### 📦 Migration / Upgrading
 
-### Added
+- The compiled binary is now deployed centrally to `~/.awlab-id/agent-memory/bin/`. Ensure any host configurations point to this new centralized binary location.
+- **Strict Token Burn Protections** have been enabled by default across all profiles (`plan_doc(mode="read")` hazard prevention).
+- Use `python scripts/run.py publish --target=antigravity` to scaffold your Antigravity environment natively.
+
+## [3.0.5] - 2026-08-25
+
+### ✨ New Features
 
 - **G4 — `fcntl.flock(LOCK_EX|LOCK_NB)` for cross-process file locks (POSIX)** — `_acquire_lock` in `helpers/file_utils.py` now branches on platform: POSIX uses `fcntl.flock` (atomic at the kernel level, no PID race, no stale-PID detection needed), non-POSIX (Windows) keeps the `O_CREAT|O_EXCL` sentinel-file mechanism with stale-PID detection. The contract is "returns the open fd on success, None on timeout"; on POSIX the fd must stay open for the lock to be held (caller passes it to `_release_lock` which closes it + unlinks the sentinel for parity). A new test in `test_file_utils.py` spawns two `multiprocessing` `spawn` children that both call `write_file_safe` on the same path through a barrier, then asserts the final file content is exactly one of the two payloads — never a mix, never truncated, never empty. The lock sentinel is verified cleaned up after the race. 416 → 417 tests pass; no regressions.
 - **G10 — Optional non-blocking async logger (`LOG_ASYNC=1`)** — `Logger` in `helpers/logger.py` now has an opt-in async sink: when `LOG_ASYNC=1` is set, `info/warning/error/debug` calls become `queue.put_nowait` and a daemon thread drains the queue, calling `_write` synchronously. The default (env var unset) keeps the synchronous, deterministic path. Slow disk therefore cannot block the dispatcher's error-path or `bake_tick` log calls. The drain thread resolves `_write` through the bound logger instance at call time (not a captured reference), so test monkey-patches of `Logger._write` are honored by the drain thread too. A new test in `test_dispatcher_surface.py` replaces `_write` with a 1-second sleep, calls `info`/`warning`/`error` three times, and asserts each call returns in <200ms (proving non-blocking); `flush()` then blocks until all 3 are drained. 417 → 418 tests pass; no regressions.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **First-contact agent failures (3 predictable mistakes)** — the auto-generated `action_call` tool description, SKILL.md, and `action_help` overview now front-load the strict call contract: "TWO tools only (`action_call` + `action_help`)", "params is a SINGLE nested JSON object — never flatten at the top level", "`workspace_path` (absolute) is required for plan/task/memory/graph/ctx_info", "types are strict (int / bool / list / exact enum)", and the first-response workflow (`project_id` → `ctx_info mode=context` → action). The same contract is now embedded in every failed `action_call` response payload under a top-level `contract` key, so an agent that makes a wrong call is re-educated on the very next turn without re-reading docs. 4 new contract tests in `test_dispatcher_surface.py` lock the contract in. Source-level: 0 tests regressed (410 pass).
 - **G9 — Context: `except BaseException:` in `context_builder.write_context_md_atomic`** — narrowed to `except Exception:` so `KeyboardInterrupt`/`SystemExit` propagate cleanly to the caller; the temp-file cleanup still runs via the nested `except OSError`. Without this, Ctrl-C during a context.md write would silently swallow the interrupt and return a partial file.
@@ -55,9 +78,9 @@
 
 - **Duplicate `_Settings()` instantiation in `config.py`** — `settings = _Settings()` was assigned twice (lines 332 and 336); the second instance silently overwrote the first. Both instances were equal, so no functional impact, but the dead store is removed.
 
-## [3.0.4]
+## [3.0.4] - 2026-08-21
 
-### Added
+### ✨ New Features
 
 - **Large-graph HTML viz (graph.html / family.html)** — every rendered visualization now embeds a self-contained client-side layer so projects with thousands of nodes stay usable:
   - **Filter bar** — filter by file path (`src/components`), by minimum degree (de-hairball), or **Focus 2-hop** (neighborhood of the selected node); edges clip to the visible nodes; **Reset** restores the initial view.
@@ -68,14 +91,14 @@
   - **Collapsible Filter bar** — a **Filters** header button collapses/expands the filter controls to free sidebar space.
 - **Non-blocking `graph_build`** — `background` now defaults to `true`: the call is a fire-and-forget trigger (returns `triggered: true, background_started: true`) and the chunk worker drains `remaining_files` to 0; graph reads return `mode: "pending"` while a build is incomplete so stale/partial data is never served.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Background chunk-worker stall on large projects (eka-panel)** — a bare `*` in a Laravel-style nested `.gitignore` (`*` + `!.gitignore` re-inclusions) became a GLOBAL basename glob that excluded every file, so `_source_manifest` returned 0, the incremental/chunked branch was skipped, and a full-corpus extract ran in ONE call ignoring `chunk_size`. `.gitignore` + `.graphignore` now parse into ONE additive rule set with identical file/dir glob semantics; bare `*`/`**` ignore-all lines are skipped; `_source_manifest` has a blank-detection guard. Verified end-to-end on eka-panel: the background worker drains `remaining_files` to 0 (2673 → 0) and reaches `fresh: true`.
 - **`background: false` blocked by a stale in-flight guard (Bug 3)** — a synchronous build now always proceeds (serialized on a bounded per-project lock) instead of returning "rebuild already in progress"; `force: true` bypasses the guard entirely.
 - **`graph_status` staleness** — `processed_files` is now cumulative (`total − remaining`); a partial build reports `exists: true`; `rebuilding` reflects a live worker and a stale persisted flag is auto-cleared on read; `background_error` surfaces worker failures and survives server restarts.
 - **Worker lifecycle hardening** — the chunk-drain loop distinguishes `remaining_files` `None` vs `0`; a stall watchdog surfaces a real `background_error` and stops treating a zombie thread as in-flight; the per-project build lock is bounded (600s).
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Exclusion visibility** — `graph_status` reports `scanned_files` / `excluded_files` / `supported_files` (scanned count memoized); `.gitignore` / `.graphignore` are no longer counted as graph source.
 
@@ -86,7 +109,7 @@
 
 ## [3.0.3] - 2026-08-19
 
-### Added
+### ✨ New Features
 
 - **Chunked graph builds (queue-chunk semantics)** — `graph_build` now processes the corpus in bounded chunks so peak RAM/CPU stays flat on large projects:
   - `chunk_size` / `GRAPH_CHUNK_SIZE` (default `200`) — max files processed per build; each run advances the freshness manifest by exactly that many.
@@ -97,12 +120,12 @@
 - **`.graphignore` exclusion file** — gitignore syntax, combined ADDITIVELY with the project's `.gitignore` (parsed at every directory level): exclude files/directories from the code graph only (generated code, vendored copies, …) without ever affecting git. A `.graphignore` change triggers a rebuild.
 - **Documentation** — `.graphignore` + chunked-build behavior documented in the generated per-project `.ai/codegraph/README.md` and in `docs/en/` + `docs/id/` (AVAILABLE_TOOLS graph sections + INSTALL env rows `GRAPH_CHUNK_SIZE` / `GRAPH_MAX_FILES`).
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Test suite compaction** — merged repetitive clusters into loop/combined tests (`test_workspace` 22→6, `test_context_tools` 27→13, graph scalability 11→7) and parametrized the status-transition / validation clusters in `test_plan_tools` + `test_integration_mcp_tools` — same coverage, 368 tests.
 - **`.gitignore` support unchanged** — `.graphignore` is parsed alongside it, never replacing it.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Oversized-graph build failure** — a graph over the HTML viz limit previously raised `ValueError` _after_ writing graph.json but _before_ `.build_state.json` (→ stale-manifest rebuild loop); it now renders an aggregated community view (or skips HTML) and the build completes normally.
 
@@ -112,7 +135,7 @@
 
 ## [3.0.2] - 2026-08-16
 
-### Added
+### ✨ New Features
 
 - **Pattern-baking core (Phase 4)**: append-only observation store (`.ai/memory-bank/observations.jsonl`, torn-tail tolerant) + deterministic LLM-free bake engine (`key → count → consistency → confidence`) persisting candidates to `baked.json`; async background bake scheduler + per-action inline bake tick.
 - **`mem_observe` action** — records user-pattern evidence (signals) into the observation store, dedup/delta-guarded by fingerprint; feeds the baking pipeline.
@@ -125,13 +148,13 @@
 - **Live probe script** (`scripts/live_probe.py`) — smoke-tests the built exe over real stdio MCP (action surface, baking, plan/memory/graph lifecycle, hook mode).
 - **Indonesian documentation** — `docs/id/` (AVAILABLE_TOOLS, HOOKS, INSTALL) + `README_ID.md`; English docs moved to `docs/en/`; README redesigned with banner + language switcher.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Action surface 20 → 23** — `project_id`, `plan_doc`, `mem_observe` join the 20-action `REGISTRY`.
 - **Docs reorganized** — `docs/` split into `docs/en/` + `docs/id/`; `REGISTRY_SCHEMA.md` moved to `docs/en/`.
 - **Rules updated for pattern baking** — `01` (STRICT FIRST-CALL), `02` (notes.md discipline), `08` (project-id check-and-create), `09` (observation-driven capture + baking tiers), `10` (computed confidence + stack tagging + delivery), `11` (23 actions).
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Markdown table cells with literal `|`** now round-trip via `\|` escaping in registry parsing (legacy rows with a raw `|` still parse, surplus cells rejoined into the summary).
 - **Task descriptions with embedded newlines** are normalized to a single line so they can't produce malformed `tasks.md` entries.
@@ -142,9 +165,9 @@
 
 ## [3.0.1] - 2026-08-08
 
-### Added
+### ✨ New Features
 
-- **Code knowledge graph (graph)**: per-project structural graph via `graphifyy` (AST-only, no LLM) — `graph_build`, `graph_status`, `graph_query`, `graph_path`, `graph_explain` under a single `graph` action group. The graph html will genereted at `{project_root}/.ai/codegraph/graph.html`.
+- **Code knowledge graph (graph)**: per-project structural graph via `graphify` (AST-only, no LLM) — `graph_build`, `graph_status`, `graph_query`, `graph_path`, `graph_explain` under a single `graph` action group. The graph html will genereted at `{project_root}/.ai/codegraph/graph.html`.
 - **Incremental graph rebuild**: `graph_build` re-extracts only changed source files (unchanged corpus passed as resolution context) and merges into the prior graph — ~40x faster than a full rebuild, with output identical to a full rebuild at the same source state. Auto-refresh via the `graph_fresh` precondition is now cheap.
 - **Scratch/temp file hygiene rule** (`13-file-hygiene.md`): strict temp-file placement in `.ai/temp/` (gitignored) — no scratch files in the project root.
 - **Background non-blocking graph rebuild**: heavy stale/first builds run in a background thread so reads never block; small incremental rebuilds stay synchronous for accuracy.
@@ -155,9 +178,9 @@
 - **Offline cache / `mem_replay`** — a new `mem_replay` action (19th) drains the offline cache at `.ai/memory-bank/pending.jsonl` (JSONL — one JSON object per line). Mutations are queued there instead of dropped when a store write fails (`mem_write`/`mem_remove` store down, `task_update` DB-sync down) or when the MCP server is unreachable. Successful entries are removed, failed ones kept for retry; `dry_run` previews.
 - **`14-mcp-offline-cache` rule** — agent-side protocol: when the MCP server is down, queue intended `mem_write`/`mem_remove`/`task_update` to `pending.jsonl` with your own file tools, never claim success, and replay via `mem_replay` on recovery. Compiled into all agent profiles (14 rules).
 - **`reg_update` — single registry.md CRUD** — `create` (server-generated UUID, no agent UUID thinking; Active ⏹️) / `update` (status `active|paused|complete` → move the row to the correct table, refresh `Date`, keep the immutable `Created At` column, optional summary) / `delete` (strict user approval via `confirmed=true`; the server refuses without it). registry.md now has an immutable `Created At` column (legacy 4-column rows still parse). Replaces the one-off plan-complete path — one registry.md action.
-- **Vite/JS path-alias import indexing** — a post-build pass reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or array form, string or `fileURLToPath(new URL(...))` replacements) and emits the missing `imports_from`/`imports` edges for `@/...`, `@pages/...`, `~/...` imports that graphifyy cannot resolve (it only reads tsconfig/jsconfig `paths`). `.vue` SFCs and any alias-importing file now stay connected in `graph_path` even with no `tsconfig.json`. Handles multi-segment keys via longest-prefix match, is idempotent, and self-heals previously-built graphs on their next no-op read.
+- **Vite/JS path-alias import indexing** — a post-build pass reads `resolve.alias` from `vite.config.*` / `nuxt.config.*` (object or array form, string or `fileURLToPath(new URL(...))` replacements) and emits the missing `imports_from`/`imports` edges for `@/...`, `@pages/...`, `~/...` imports that graphify cannot resolve (it only reads tsconfig/jsconfig `paths`). `.vue` SFCs and any alias-importing file now stay connected in `graph_path` even with no `tsconfig.json`. Handles multi-segment keys via longest-prefix match, is idempotent, and self-heals previously-built graphs on their next no-op read.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **MCP tool consolidation**: 36 tools across 3 servers → single mcp server with **2 tools** (`action_call` + `action_help`) routing **20 actions** (incl. `graph_*`, the `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache replay, and the `reg_update` single registry.md CRUD) via a single `REGISTRY` dict (single source of truth for tool description, help, and SKILL.md). Single executable `dist/bin/awlab-ai-assistant.exe`; legacy 3-server files removed.
 - **Server renamed `awlab-mcp` → `AWLab-AI-Assistant`** — MCP server name, executable (`dist/bin/awlab-ai-assistant.exe`), pip distribution (`AWLab-AI-Assistant`), the `awlab-mcp` skill (folder + generated SKILL.md), and the profile/build generator all renamed to match the new repo `awsomplak/awlab-ai-assistant` and brand AWLab AI-Assistant. The `~/.awlab-id/` config home and the AWLab-AI-Assistant platform brand are unchanged.
@@ -170,7 +193,7 @@
 - **Rules 13 → 14** — the offline-cache rule is compiled into the cline / copilot / claude / hermes profiles.
 - **Family project-id resolution is file-authoritative** — `family_member_id()` precedence is now `.ai/project-id` file > declared `project_id` > `<slug>-<dir>` (previously declared-first).
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Frozen exe graph-build deadlock**: `to_json` no longer shells out to `git` (pure file read of `.git/HEAD`/refs) — the subprocess deadlock that hung the onefile exe is gone.
 - **Path node resolution**: `any`/`path` global placeholders remapped to module-scoped `_py_any`/`_py_path`; dangling edges cleaned on merge.
@@ -183,7 +206,7 @@
 
 ## [3.0.0] - 2026-07-01
 
-### Added
+### ✨ New Features
 
 - **Per-Agent Compilation Pipeline**: Rules and skills are now compiled into per-agent profiles via `python scripts/run.py compile-rules`, each with format-optimized output:
   - **Cline**: Individual `.md` files (HTML comments preserved) → `~/Documents/Cline/Rules/`
@@ -202,7 +225,7 @@
 - **`_copy_skills()`** shared helper to avoid duplication across compile functions
 - **Hermes publish target** in `PUBLISH_MAP`: publishes skills + compiled rules to `~/.hermes/skills/`
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **`cmd_compile_rules()`**: Refactored into per-agent output functions (`_compile_cline`, `_compile_copilot`, `_compile_claude`, `_compile_hermes`)
 - **`PUBLISH_MAP`**: Each agent has dedicated publish paths — Cline+Copilot share `~/.agents/skills/`, Claude uses `~/.claude/skills/`, Hermes uses `~/.hermes/skills/`
@@ -223,18 +246,18 @@
 - **`hermes-config.json`**: No longer generated — Hermes uses skills natively
 - **`skills` → `~/.agents/skills/`** shared publish target — replaced by per-agent skills paths
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **VS Code batch approval bug**: Added scripts to pre-approve MCP tools in VS Code's state database
 
 ## [2.2.0] - 2026-06-29
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Renamed CLI entry point**: `awlab-ai-assistant-mcp` → `awlab-mcp` across all source files, build scripts, configs, and documentation. Executable now outputs as `awlab-mcp.exe` (Windows) / `awlab-mcp` (Linux/macOS).
 - **Cross-platform build support**: `run.py build --target-os=windows|linux|macos|all` — builds for a specific OS or all platforms. Generates `.spec` files for non-host OS targets. Default (`auto`) builds for the current OS. (`scripts/run.py`)
 
-### Added
+### ✨ New Features
 
 - **Production/Development environment detection** — Auto-detects production mode (PyInstaller exe or `AWLAB_ENV=production`) vs development mode (source). Routes config, logs, and `.env` loading to appropriate paths:
   - Production: `~/.awlab-id/agent-memory/` (config, `.env`, `config.json`, logs)
@@ -245,7 +268,7 @@
 
 ## [2.1.0] - 2026-06-28
 
-### Added
+### ✨ New Features
 
 - **Copilot Dual-Environment Support** — Full transformation of Cline workflows and rules for VS Code Copilot:
   - **Workflows → Skills**: 4 Cline workflows converted to Copilot skills at `~/.agents/skills/` (`plan-status`, `retrospective`, `switch-plan`, `test-flow`) with proper YAML frontmatter (`name`, `description`, `user-invocable`)
@@ -253,7 +276,7 @@
   - **Skill Updates**: `plan-creator` and `extract-patterns` now detect Cline vs Copilot environment (`$ENV`) and adapt paths, references, and behaviors accordingly
   - **Memory Maintenance**: Generalized "Agent-Recall" references to "knowledge graph" for cross-platform compatibility
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Hallucination Prevention** (`07-model-router.instructions.md`) — Restored full anti-hallucination safeguards: Anti-Malformed Tool Call Rules, Native Tool Priority with concrete examples, API Response Strictness protocol, and Universal Model Awareness section
 - **Missing Protocols Restored** (`02-plan-artifacts.instructions.md`) — Re-added Uninitialized Recovery Protocol, Bug Report Protocol, retrospective auto-trigger, and archiving rules that were omitted during initial conversion
@@ -262,33 +285,33 @@
 - **Stale Tool Name** (`Cline/Rules/00-meta.md`) — Fixed `memory_search` → `search_nodes` (wrong knowledge graph tool name)
 - **Test Flow Vague Instructions** (`test-flow/SKILL.md`) — Rewrote with full framework detection table (Jest, Vitest, Pytest, PHPUnit, Flutter, Cargo, Go) and dependency check step
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **plan-creator skill**: `environment.md` generation is now conditional (Cline only); review queue path is conditional; ending references use correct file format per environment
 - **Cline Rules expanded**: Added 3 new rule files — `08-project-id.md`, `09-user-patterns.md`, `10-pattern-lifecycle.md` (previously existed as skills/workflows, now formalized as rules)
 
 ## [2.0.5] - 2026-06-11
 
-### Added
+### ✨ New Features
 
 - **MCP Server package build & installation** (`pyproject.toml`, `mcp_server/`) — Added `[project.scripts]` entry point `awlab-mcp = "mcp_server.server:main"` so the server can be invoked as a CLI command after `pip install -e .`.
 - **MCP Server documentation** (`README.md`, `mcp_server/README.md`) — Added mermaid architecture diagram showing the relationship between Cline Rules, agent-memory MCP, agent-recall, and the Python package. Added three configuration options (installed CLI, registered console script, and raw python module) in Cline's `cline_mcp_settings.json`.
 - **MCP Server v1.1.0 features** (`mcp_server/`) — Workspace resolution fix with 5-layer fallback chain, `get_server_version` tool, `read_graph` tool, `delete_relations` tool. See `mcp_server/CHANGELOG.md` for details.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Removed redundant wrapper files** — Deleted `awlab-ai-assistant.mcp_server.cmd` and the `awlab_id/` wrapper package. The `mcp_server/` package is now the single source of truth for the MCP server implementation, with the `pyproject.toml` entry point and `pip install -e .` serving as the installation mechanism.
 - **README.md** — Fully rewritten with professional MCP architecture diagrams, workspace resolution flowchart, quick-start guide, and comprehensive documentation of all 40+ server tools grouped by domain.
 
 ## [2.0.4] - 2026-05-19
 
-### Added
+### ✨ New Features
 
 - **Rules Compact Profile** (`Cline/portability/.clinerules`) — Single high-density `.clinerules` profile in `Cline/portability/` (achieving ~90% token reduction).
 - **Permissive Q&A Exception** (`02-plan-artifacts.md`) — Refactored the Uninitialized Recovery Protocol to introduce a permissive exception: read-only, exploratory, and diagnostic actions completely bypass active plan locks and registry gates instantly, while code modifications remain strictly gated.
 - **Continuous Phase Execution** (`02-plan-artifacts.md`) — Implemented continuous phase transitions, permitting the agent to bypass sequential phase gate halts and yield pauses when continuous execution is explicitly requested by the developer.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Obsolete Shell Date Mismatches Resolved** (`01-memory-bank.md`, `06-project-scanner.md`, `07-model-router.md`) — Removed all fragile, shell-based date comparison scripts for environment and cache staleness checks. Replaced with **Cognitive Date-Math** against system prompt metadata, and cleaned up obsolete exception rules in `07-model-router.md`.
 - **Retrospective Status Alignment** (`02-plan-artifacts.md`, `retrospective.md`) — Formally added the retrospective status `🔄` (Retrospective/Reviewing) to the approved registry Status Values inside the core constraints, eliminating model parsing warnings.
@@ -296,12 +319,12 @@
 
 ## [2.0.3] - 2026-05-19
 
-### Added
+### ✨ New Features
 
 - **High-Speed Cloud Model Routing** (`07-model-router.md`) — Introduced dedicated awareness and optimization guidelines for high-speed cloud models (e.g. Gemini 3 Pro/Flash, GPT-4o-mini, Claude 3.5 Haiku, DeepSeek v4 Pro/Flash, and etc.), authorizing them to handle complex scopes eagerly while strictly maintaining native tool priority for maximum performance.
 - **Archived Plans Visibility** (`plan-status.md`) — Added support to parse and display the total count of completed plans located in the archive table, preventing user confusion about deleted plans.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Registry Archive Overwriting** (`02-plan-artifacts.md`) — Updated the archiving protocol to overwrite existing plan records in the archive instead of filtering them as duplicates, preserving the latest completion summaries and timestamps for re-opened plans.
 - **Dependency Deadlock Protections** (`02-plan-artifacts.md`) — Mandated that `→ depends: {exact task name}` must exactly match the name of another task in the same plan, preventing the agent from stalling on conceptual or unwritten dependencies.
@@ -314,7 +337,7 @@
 
 ## [2.0.2] - 2026-05-19
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Oversimplification Bugs Resolved** (`02-plan-artifacts.md`) — Reinstated critical instructional sub-bullets, execution steps, and markdown templates that were accidentally stripped, restoring the AI's ability to properly execute phases and format registry files.
 - **Infinite Loop Skip Trap** (`02-plan-artifacts.md`) — Introduced the `[⏳]` (Deferred) marker to differentiate tasks skipped due to unmet dependencies from those permanently skipped (`[—]`), preventing infinite re-evaluation loops.
@@ -324,7 +347,7 @@
 
 ## [2.0.1] - 2026-05-18
 
-### Added
+### ✨ New Features
 
 - **System Authority Framework** (`00-meta.md`) — establishes a strict hierarchy for resolving conflicts between rules and workflows. All rules now declare their authority.
 - **Model Router** (`07-model-router.md`) — auto-classifies tasks as Simple (🟢), Medium (🟡), or Complex (🔴), enabling dynamic escalation for local LLM routing and token awareness.
@@ -335,7 +358,7 @@
 - **Strict Linear Phase checklists** (`02-plan-artifacts.md`) — streamlined task checklists to enforce sequential execution inside phases. This removes complex non-linear topological sorting overhead and resolves potential "Dependency Cascade Failures" in complex plans.
 - **Native IDE Tool Priority Protocol** (`07-model-router.md`) — mandates that agents prioritize native IDE/system tools (`view_file`, `replace_file_content`, `grep_search`, `write_to_file`) over raw terminal command scripts (`cat`, `sed`, `grep`, `echo`), accelerating file manipulation and avoiding terminal permission blocks.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Task Status Update Bloat Fixed** (`02-plan-artifacts.md`) — explicitly allows batching of small, related task updates instead of saving `tasks.md` after every single checkbox, saving massive tokens.
 - **Command Validation Silenced** (`05-environment.md`) — forces the command verification protocol to be executed silently in the AI's thought process rather than over-narrating in the chat window.
@@ -343,7 +366,7 @@
 - **Install Scripts Upgraded** (`install.ps1`, `install.sh`) — updated headers to v2.0.1 and bumped verification check counts to 8 rules (`00-07`).
 - **Plan Templates Documentation Added** (`README.md`) — resolved a documentation gap by adding a detailed **Plan Templates** section, describing all six pre-built skeletons and how keyword-matching operates in the `plan-creator` skill.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - **Hallucination Vectors Closed** — explicitly added fallback prompts to `brief.md` and `context.md` in `01-memory-bank.md` to prevent hallucinating content when projects lack a README.
 - **Workflow Turn-Yielding Enforced** (`SKILL.md`, `retrospective.md`) — added rigid `STOP AND WAIT` directives after plan creation and retrospective requests, eliminating hallucinated user responses.
@@ -359,7 +382,7 @@
 
 ## [2.0.0] - 2026-05-17
 
-### Added
+### ✨ New Features
 
 - **Smart Project Fingerprinting** (`06-project-scanner.md`) — deterministic detection tables for 30+ languages, frameworks, mobile platforms, monorepo tools, test frameworks, and CI/CD systems. Framework-aware scan targets eliminate wasted token budget on irrelevant directories.
 - **Context Budget System** — turn-counting proxy (15/25/30 checkpoints) replaces unmeasurable "~70% capacity" heuristic. File-size budgets (30-80 lines per memory file) and Memory Compression Protocol prevent bloat.
@@ -374,7 +397,7 @@
 - **Install scripts** — `install.sh` (macOS/Linux) and `install.ps1` (Windows) for one-command installation. Idempotent, colored output, `--uninstall` / `-Uninstall` flag for cleanup.
 - **Output Capture Workaround** (`05-environment.md`) — prevents blank command output in Cline by banning `Format-Table`/`Format-List`, requiring `Out-String` for long pipelines, and providing file-based fallback capture.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Registry Integrity** — rewritten to clarify that automated rule/workflow/skill changes are expected; only manual ad-hoc edits discouraged.
 - **Command Validation Protocol** (`05-environment.md`) — consolidated from 27 lines to 8 lines by removing duplicate ❌ examples that overlapped with Anti-Patterns section. Net reduction: 154 → 133 lines.
@@ -386,7 +409,7 @@
 - **Phase Execution Rule #7** — `[x!]` (completed with warnings) now accepted for plan completion with acknowledgment gate: AI displays warnings summary, asks user to confirm.
 - **README** — Quick Install section with scripts (recommended); manual commands in `<details>` fallback. Directory tree includes `install.sh`/`install.ps1`. Portability section clarifies guides are reference-only.
 
-### Fixed
+### 🐛 Bug Fixes
 
 - Stale `/create-plan` reference in `plan-status.md` → now `create plan` (skill trigger).
 - Duplicated `$?` in Bash exit code row → `$?` and `${PIPESTATUS[@]}`.
@@ -401,14 +424,14 @@
 
 ## [1.0.2] - 2026-05-17
 
-### Added
+### ✨ New Features
 
 - **Environment Detection Rule** (`Cline/Rules/05-environment.md`) — definitive authority on OS/shell detection before any command execution. Includes detection procedure, shell command translation table, anti-patterns by shell, and mid-session shell change detection.
 - **`plan-creator/SKILL.md` improvements** — stronger activation triggers, clearer phase execution reference, and better task generation examples.
 - **`.gitignore`** — excludes `.ai/` and `scripts/` directories from version control.
 - **`update-memory.md` enhancements** — better structure for memory bank sync workflow.
 
-### Changed
+### 🛠️ Enhancements & Changes
 
 - **Memory bank rules** (`01-memory-bank.md`) — clarified auto-setup (directories only, no content population), refined lazy loading strategy, stricter security constraints on path traversal and secret copying.
 - **Plan artifacts rules** (`02-plan-artifacts.md`) — registry integrity section added, external modification detection, orphan detection protocol.
@@ -431,5 +454,7 @@
 - **Documentation** (README) fully updated to reflect all changes.
 
 ## [1.0.0] - 2026-05-15
+
+### 🚀 Highlights
 
 - Initial release with plan management, memory bank, phase‑by‑phase execution, and token saving strategies.
