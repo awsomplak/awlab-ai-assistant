@@ -2,7 +2,7 @@
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Install & Implement**
 
-This guide covers everything you need to get AWLab-ID running in your project and wired into your AI agent:
+This guide covers everything you need to get AWLab-AI-Assistant running in your project and wired into your AI agent:
 
 1. [Install the MCP server](#1-install-the-mcp-server)
 2. [Build the standalone executable](#2-build-the-standalone-executable)
@@ -51,14 +51,14 @@ project-root/
 
 ## 1. Install the MCP server
 
-> ⚠️ **Pick guide for your OS only.** The python virtual-environment activation command is different on Windows vs Linux/macOS — copy-pasting the wrong one will giving fail result.
+> ⚠️ **Pick the guide for your OS only.** The python virtual-environment activation command is different on Windows vs Linux/macOS — copy-pasting the wrong one will result in failure.
 
 ### Windows (PowerShell)
 
 ```powershell
 # Clone
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
-cd awlab-ai-assistant
+cd AWLab-AI-Assistant
 
 # Create a virtual environment
 python -m venv .venv
@@ -79,7 +79,7 @@ pip install -e ".[dev]"
 ```bash
 # Clone
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
-cd awlab-ai-assistant
+cd AWLab-AI-Assistant
 
 # Create a virtual environment
 python -m venv .venv
@@ -109,19 +109,19 @@ python scripts/run.py build --target-os=all     # Specs for non-host OSes
 
 Built binary at `dist/bin/`:
 
-| Binary | Server | Exposed Tools |
-|--------|--------|---------------|
-| `awlab-ai-assistant.exe` | `awlab-ai-assistant` | `action_call` (dispatcher), `action_help` |
+| Binary                   | Server               | Exposed Tools                             |
+| ------------------------ | -------------------- | ----------------------------------------- |
+| `awlab-ai-assistant.exe` | `AWLab-AI-Assistant` | `action_call` (dispatcher), `action_help` |
 
 One consolidated executable — the `action_call` dispatcher routes to all operations (plan, task, memory, graph, context, util, workflow). Binaries are fully standalone — no Python or source files needed.
 
-> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `awlab-ai-assistant`) — the executable build is only required for production deployment.
+> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `AWLab-AI-Assistant`) — the executable build is only required for production deployment.
 
 ---
 
 ## 3. Publish rules & skills to your agent
 
-AWLab-ID ships **14 rules** and **5 skills** as sources under `assets/`. Assuming you've already built in [§2](#2-build-the-standalone-executable), `publish` installs the compiled profiles into your agent's home directory — a **one-time setup** per machine.
+AWLab-AI-Assistant ships **14 rules** and **5 skills** as sources under `assets/`. Assuming you've already built in [§2](#2-build-the-standalone-executable), `publish` installs the compiled profiles into your agent's home directory — a **one-time setup** per machine.
 
 ```bash
 # Publish to specific assistant(s)
@@ -140,14 +140,14 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ### Publish targets
 
-| Target | Rules | Skills |
-|--------|-------|--------|
-| `cline` | `~/Documents/Cline/Rules/` | `~/.agents/skills/` |
-| `copilot` | `~/.copilot/instructions/` | `~/.agents/skills/` (shared) |
-| `claude` | `~/.claude/CLAUDE.md` | `~/.claude/skills/` |
-| `hermes` | — (packaged as skill) | `~/.hermes/skills/` |
-| `opencode` | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills/` |
-| `antigravity` | `~/.gemini/config/rules/` | `~/.gemini/config/skills/` |
+| Target        | Rules                          | Skills                       |
+| ------------- | ------------------------------ | ---------------------------- |
+| `cline`       | `~/Documents/Cline/Rules/`     | `~/.agents/skills/`          |
+| `copilot`     | `~/.copilot/instructions/`     | `~/.agents/skills/` (shared) |
+| `claude`      | `~/.claude/CLAUDE.md`          | `~/.claude/skills/`          |
+| `hermes`      | — (packaged as skill)          | `~/.hermes/skills/`          |
+| `opencode`    | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills/` |
+| `antigravity` | `~/.gemini/config/rules/`      | `~/.gemini/config/skills/`   |
 
 > 💡 If you skipped §2, `publish` auto-builds when `dist/` is missing.
 > Done — publishing is a one-time step. Next, wire the MCP server for your agent (§4).
@@ -156,12 +156,12 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ## 4. Wire the MCP server
 
-The `awlab-ai-assistant` server exposes **2 MCP tools** — `action_call` and `action_help` (see [Available MCP Tools](AVAILABLE_TOOLS.md)). Wiring it means adding **one MCP-server entry** to your agent's config, pointing at the executable you built in [§2](#2-build-the-standalone-executable):
+The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `action_help` (see [Available MCP Tools](AVAILABLE_TOOLS.md)). Wiring it means adding **one MCP-server entry** to your agent's config, pointing at the executable you built in [§2](#2-build-the-standalone-executable):
 
 ```json
 {
   "mcpServers": {
-    "awlab-ai-assistant": {
+    "AWLab-AI-Assistant": {
       "type": "stdio",
       "command": "dist/bin/awlab-ai-assistant.exe",
       "args": [],
@@ -179,7 +179,7 @@ The `awlab-ai-assistant` server exposes **2 MCP tools** — `action_call` and `a
 > (tool use, prompt, session, stop), register the optional hook layer per host — see
 > [Hook Registration](HOOKS.md).
 
-Merge the `awlab-ai-assistant` entry into your agent's existing MCP servers — don't replace the whole config file — then restart the agent / chat. Per-agent config locations below.
+Merge the `AWLab-AI-Assistant` entry into your agent's existing MCP servers — don't replace the whole config file — then restart the agent / chat. Per-agent config locations below.
 
 ### Cline
 
@@ -194,7 +194,7 @@ Add the block to `.vscode/mcp.json` (workspace) or via Command Palette → **MCP
 Register the server from the terminal:
 
 ```bash
-claude mcp add awlab-ai-assistant -- dist/bin/awlab-ai-assistant.exe
+claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant.exe
 ```
 
 ### Hermes Agent
@@ -203,7 +203,7 @@ Add the entry under `mcp_servers:` in `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
-  awlab-ai-assistant:
+  AWLab-AI-Assistant:
     command: dist/bin/awlab-ai-assistant.exe
     args: []
     env:
@@ -218,7 +218,7 @@ Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `
 ```json
 {
   "mcp": {
-    "awlab-ai-assistant": {
+    "AWLab-AI-Assistant": {
       "type": "local",
       "command": ["dist/bin/awlab-ai-assistant.exe"],
       "enabled": true
@@ -229,12 +229,12 @@ Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `
 
 ### Google Antigravity & Antigravity IDE
 
-Merge the `awlab-ai-assistant` entry into `~/.gemini/config/mcp_config.json`:
+Merge the `AWLab-AI-Assistant` entry into `~/.gemini/config/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "awlab-ai-assistant": {
+    "AWLab-AI-Assistant": {
       "command": "dist/bin/awlab-ai-assistant.exe",
       "args": []
     }
@@ -246,13 +246,13 @@ Merge the `awlab-ai-assistant` entry into `~/.gemini/config/mcp_config.json`:
 
 ## 5. Use it in your agent
 
-Once wired, drive AWLab-ID with plain-language prompts (Cline) or slash commands (VS Code Copilot):
+Once wired, drive AWLab-AI-Assistant with plain-language prompts (Cline) or slash commands (VS Code Copilot):
 
 ### Cline
 
-- *"follow rules"* → load registry & plan
-- *"create plan"* → create a new implementation plan
-- *"start phase 1"* → execute the first phase
+- _"follow rules"_ → load registry & plan
+- _"create plan"_ → create a new implementation plan
+- _"start phase 1"_ → execute the first phase
 
 ### VS Code Copilot
 
@@ -289,15 +289,15 @@ Runtime settings resolve in this order: **environment variable → `config.json`
 - **Development** (run from source): `.env` + `config.json` are read from the project root (CWD).
 - **Production** (standalone exe): `.env` + `config.json` are read from the config home `~/.awlab-id/agent-memory/`. Logs are written to `~/.awlab-id/agent-memory/logs/`.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWLAB_ENV` | auto | Mode override. `production`/`prod` or `development`/`dev`. When unset, mode is auto-detected (PyInstaller exe → production, otherwise development). |
-| `LOG_ENABLED` | `true` | File logging on/off (`true`/`1`/`yes` enables, anything else disables). |
-| `LOG_LEVEL` | `info` | Log level for file logging (e.g. `info`, `debug`). |
-| `DB_PATH` | (unset) | Optional override for the agent-recall database path. |
-| `GRAPH_PARALLEL` | `false` | Opt-in parallel graph extraction (`true`/`1`/`yes`). See below. |
-| `GRAPH_CHUNK_SIZE` | `200` | Max files processed per `graph_build` run (queue-chunk semantics). Keeps RAM/CPU flat on large projects; `0`/empty disables chunking. See below. |
-| `GRAPH_MAX_FILES` | (unset) | Cap the FIRST build's leading corpus (initial chunk). |
+| Variable           | Default | Description                                                                                                                                         |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AWLAB_ENV`        | auto    | Mode override. `production`/`prod` or `development`/`dev`. When unset, mode is auto-detected (PyInstaller exe → production, otherwise development). |
+| `LOG_ENABLED`      | `true`  | File logging on/off (`true`/`1`/`yes` enables, anything else disables).                                                                             |
+| `LOG_LEVEL`        | `info`  | Log level for file logging (e.g. `info`, `debug`).                                                                                                  |
+| `DB_PATH`          | (unset) | Optional override for the agent-recall database path.                                                                                               |
+| `GRAPH_PARALLEL`   | `false` | Opt-in parallel graph extraction (`true`/`1`/`yes`). See below.                                                                                     |
+| `GRAPH_CHUNK_SIZE` | `200`   | Max files processed per `graph_build` run (queue-chunk semantics). Keeps RAM/CPU flat on large projects; `0`/empty disables chunking. See below.    |
+| `GRAPH_MAX_FILES`  | (unset) | Cap the FIRST build's leading corpus (initial chunk).                                                                                               |
 
 Set these in the config home (production) or project `.env` (development), or pass them as real environment variables when launching the server.
 
@@ -323,14 +323,14 @@ most `chunk_size` files and advances the freshness manifest by exactly that many
 python scripts/run.py <command> [options]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `compile-rules` | Compile rules + skills into per-agent profiles under `dist/profiles/` |
-| `build` | Compile profiles + build Python package + standalone binaries → `dist/` |
-| `publish` | Publish `dist/` contents to AI assistant locations |
-| `test` | Run the pytest test suite |
-| `help` | Show detailed help for a command |
-| `--version` | Show version and build tag |
+| Command         | Description                                                             |
+| --------------- | ----------------------------------------------------------------------- |
+| `compile-rules` | Compile rules + skills into per-agent profiles under `dist/profiles/`   |
+| `build`         | Compile profiles + build Python package + standalone binaries → `dist/` |
+| `publish`       | Publish `dist/` contents to AI assistant locations                      |
+| `test`          | Run the pytest test suite                                               |
+| `help`          | Show detailed help for a command                                        |
+| `--version`     | Show version and build tag                                              |
 
 ### compile-rules
 
@@ -385,14 +385,14 @@ python scripts/run.py publish --uninstall
 
 ## 9. Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `pip install -e .` fails | Confirm Python 3.10+ and that you're in the project root. |
-| Build fails / `dist/bin` is locked | A running server locks the executable. Stop running `awlab-*` servers first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell). |
-| Agent doesn't see MCP tools | Register the server (`dist/bin/awlab-ai-assistant.exe` or the source entry point) in your agent's MCP config, then restart the agent / chat. |
-| Graph queries are slow on first run | First build is a full extraction and runs in a background thread — re-read after it finishes (`graph_rebuilding: true` means it's still building). |
-| Parallel graph build hangs in the exe | `ProcessPoolExecutor` hangs in frozen onefile builds — keep `GRAPH_PARALLEL` off in production. |
-| Memory writes silently lost | Mutations queue to `.ai/memory-bank/pending.jsonl` when the store is down — run `mem_replay` after recovery to re-apply them. |
+| Symptom                               | Fix                                                                                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pip install -e .` fails              | Confirm Python 3.10+ and that you're in the project root.                                                                                          |
+| Build fails / `dist/bin` is locked    | A running server locks the executable. Stop running `awlab-*` servers first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell).             |
+| Agent doesn't see MCP tools           | Register the server (`dist/bin/awlab-ai-assistant.exe` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
+| Graph queries are slow on first run   | First build is a full extraction and runs in a background thread — re-read after it finishes (`graph_rebuilding: true` means it's still building). |
+| Parallel graph build hangs in the exe | `ProcessPoolExecutor` hangs in frozen onefile builds — keep `GRAPH_PARALLEL` off in production.                                                    |
+| Memory writes silently lost           | Mutations queue to `.ai/memory-bank/pending.jsonl` when the store is down — run `mem_replay` after recovery to re-apply them.                      |
 
 ---
 

@@ -15,6 +15,7 @@ Supports two project isolation strategies:
 """
 
 import json
+import platform
 import re
 import sqlite3
 import threading
@@ -26,6 +27,40 @@ from agent_recall import MCPBridge, MemoryConfig
 from ..config import settings
 from .logger import logger
 from .workspace import resolve_db_path
+
+_SQLITE_PATCHED = False
+
+def _patch_sqlite_for_crsqlite() -> None:
+    global _SQLITE_PATCHED
+    if _SQLITE_PATCHED:
+        return
+    _SQLITE_PATCHED = True
+
+    _orig_connect = sqlite3.connect
+
+    def _cr_connect(*args, **kwargs):
+        conn = _orig_connect(*args, **kwargs)
+
+        system = platform.system().lower()
+        if system == "windows":
+            ext = ".dll"
+        elif system == "darwin":
+            ext = ".dylib"
+        else:
+            ext = ".so"
+
+        cr_path = settings.config_home / "extensions" / f"crsqlite{ext}"
+        if cr_path.exists():
+            try:
+                conn.enable_load_extension(True)
+                conn.load_extension(str(cr_path))
+                conn.enable_load_extension(False)
+            except Exception as e:
+                logger.warning(f"Failed to load cr-sqlite extension from {cr_path}: {e}")
+
+        return conn
+
+    sqlite3.connect = _cr_connect
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -367,6 +402,8 @@ def create_bridge(
     Returns:
         A configured MCPBridge instance ready for use.
     """
+    _patch_sqlite_for_crsqlite()
+
     if db_path is not None or patterns or family:
         # Dedicated store (user-patterns / family / explicit): global scope, no chain.
         if family:

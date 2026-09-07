@@ -21,7 +21,7 @@ One consolidated executable — the `REGISTRY` routes to all actions:
 
 | Binary | Server | Exposed Tools |
 |--------|--------|---------------|
-| `awlab-ai-assistant.exe` | `awlab-ai-assistant` | `action_call`, `action_help` |
+| `awlab-ai-assistant.exe` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
 
 ---
 
@@ -63,6 +63,10 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 | `mem_search` | Hybrid BM25+dense search over memory (optionally by entity type). store=patterns + scope/context for stack-scoped user patterns; store=family_<slug> for correlated-project memory. |
 | `mem_write` | Create/tag entities, add observations, or relate entities. |
 
+#### Optional LLM Memory Extraction
+
+For `mem_observe` and `mem_write`, you can pass unstructured text via the `raw_text` parameter. If configured with an `LLM_API_KEY` (see `.env.example`), the server will intelligently extract structured observations and entities from the raw text using an LLM before inserting them into the SQLite Memory Bank. If unconfigured, it safely falls back to standard deterministic logic.
+
 ### plan
 
 | Action | Summary |
@@ -76,7 +80,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 
 | Action | Summary |
 |--------|---------|
-| `graph_build` | Build/update the code knowledge graph into .ai/codegraph/ (AST-only, no LLM). family=<slug> builds the MERGED family graph (per-member builds + member:: tag merge) — correct even across drives; runtime/API calls belong in memory relations. With include_html, family.html is generated + mirrored into every member's .ai/codegraph/ (graph.html stays each project's own). |
+| `graph_build` | Build/update the Code Knowledge Graph into `.ai/codegraph/`. This uses **LanceDB** for vector embeddings (AST structures + semantic search). `family=<slug>` builds a merged graph for multi-project workspaces. Incremental builds are fast as only changed files are re-extracted. |
 | `graph_status` | Report code-graph freshness (exists? stale? changed files). |
 | `graph_query` | Search the code graph (labels / source files / types). Auto-freshens first. |
 | `graph_path` | Shortest path between two graph nodes. Auto-freshens first. |
@@ -84,7 +88,7 @@ Get per-action usage (params, defaults, example, preconditions, pipeline) or a g
 
 #### Indexed scope (read this before querying)
 
-- The graph is **AST-only** and indexes **file / function / class / component-level labels**.
+- The graph uses **LanceDB** to index file, function, class, and component-level labels via vector embeddings.
   Local/computed/ref/prop variables are **NOT** nodes.
 - When `graph_query` finds **no node** for a term, it falls back to a **whole-word source scan**
   and returns file-level hits with `type: "identifier"` and `mode: "identifier"` — so a query for

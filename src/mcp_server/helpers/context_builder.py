@@ -288,9 +288,9 @@ def materialize_context(
 
 
 AWLAB_PROTOCOL_MD = """\
-# AWLab-ID Protocol — read this first (session start)
+# AWLab-AI-Assistant Protocol — read this first (session start)
 
-This project uses **AWLab-ID** — an AI-Assisted Development System.
+This project uses **AWLab-AI-Assistant** — an AI-Assisted Development System.
 
 ## ⚠️ Session-start protocol (mandatory — prevents hallucination)
 

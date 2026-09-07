@@ -145,11 +145,11 @@ awlab-ai-assistant.exe hook --agent copilot --event stop
 
 ### 5) Google Antigravity & Antigravity IDE
 
-Merge the `awlab-ai-assistant` block from `dist/profiles/hooks/antigravity.hooks.json` into `~/.gemini/config/hooks.json` (or `.agents/hooks.json`). Replace `awlab-ai-assistant.exe` with the absolute path to your built exe:
+Merge the `AWLab-AI-Assistant` block from `dist/profiles/hooks/antigravity.hooks.json` into `~/.gemini/config/hooks.json` (or `.agents/hooks.json`). Replace `awlab-ai-assistant.exe` with the absolute path to your built exe:
 
 ```json
 {
-  "awlab-ai-assistant": {
+  "AWLab-AI-Assistant": {
     "PreToolUse": [
       {
         "matcher": "*",
