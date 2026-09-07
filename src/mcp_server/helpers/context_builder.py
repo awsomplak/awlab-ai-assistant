@@ -307,6 +307,7 @@ At the start of **every** session, before touching any code:
    `action_call(action="mem_search", params={"entity_type": "pattern"})` and apply them to your workflow.
 5. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what
    to work on — do not guess, do not fabricate a task, do not "continue" something you cannot see.
+6. **Token Burn Protection:** NEVER call `plan_doc` with `mode="read"` just to read the plan for context. It dumps the entire raw file and burns tokens. ALWAYS rely on `ctx_info` for plan context. Only use `plan_doc(mode="read")` when explicitly migrating or rewriting the plan document.
 """
 
 

@@ -1510,8 +1510,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "default": True,
                 "desc": (
                     "Non-blocking trigger (default): start the background worker and "
-                    "return immediately; poll graph_status for progress. Set false "
-                    "to process one chunk synchronously."
+                    "return immediately; poll graph_status for progress. "
+                    "CRITICAL FOR AGENTS: NEVER set background=False on initial builds "
+                    "for large projects! It will only process a single chunk and stop, "
+                    "leaving the graph incomplete. Always rely on the default (True)."
                 ),
             },
             "force": {

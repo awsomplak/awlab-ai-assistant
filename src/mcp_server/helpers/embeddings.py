@@ -74,7 +74,7 @@ def _models_dir() -> Path:
 def _lancedb_dir(workspace_path: Path | None = None) -> Path:
     """Return the LanceDB storage directory (created if needed)."""
     if workspace_path is not None:
-        path = workspace_path / ".ai" / "codegraph" / "lancedb"
+        path = Path(workspace_path) / ".ai" / "lancedb"
     else:
         path = settings.config_home / "lancedb"
     path.mkdir(parents=True, exist_ok=True)

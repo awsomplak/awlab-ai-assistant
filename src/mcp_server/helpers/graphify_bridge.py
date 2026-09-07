@@ -23,6 +23,7 @@ import re
 import shutil
 import threading
 import time
+import traceback
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -2077,12 +2078,32 @@ def _build_graph_impl(
 
     scan_root = _resolve_root(workspace_path, root)
     out_root = _resolve_root(workspace_path)
+    is_default_out = out_dir is None
     out_dir = _codegraph_dir(out_root) if out_dir is None else Path(out_dir)
     # Cache follows the OUTPUT location: default → <workspace_root>/.ai/codegraph/
     # (never the scan sub-root, so root="src" cannot drop .ai inside src/); under a
     # sandbox → <out_dir>/cache so NOTHING is written into the scanned project.
-    cache_root = out_root if out_dir is None else out_dir / "cache"
+    cache_root = out_root if is_default_out else out_dir / "cache"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Backward compatibility: move incorrectly nested cache from older builds
+    _correct_cache = cache_root / ".ai" / "codegraph" / "cache"
+    _wrong_cache = _correct_cache / ".ai" / "codegraph" / "cache"
+    if _wrong_cache.exists() and _wrong_cache.is_dir():
+        import shutil
+        _correct_cache.mkdir(parents=True, exist_ok=True)
+        for item in _wrong_cache.iterdir():
+            target = _correct_cache / item.name
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            shutil.move(str(item), str(target))
+        try:
+            shutil.rmtree(_correct_cache / ".ai")
+        except Exception:
+            pass
 
     # Capture the previous manifest BEFORE overwriting (for feedback + diff).
     prev_manifest = _load_manifest(out_dir)
@@ -2365,7 +2386,8 @@ def _build_graph_impl(
             partial=bool(chunked and prev_graph is None),
             pending_files=remaining_files,
         )
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
+    except Exception as e:
+        traceback.print_exc()
         return fail_obj(error=f"graph build failed: {e}")
 
 

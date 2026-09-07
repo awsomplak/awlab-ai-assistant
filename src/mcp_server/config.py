@@ -294,6 +294,9 @@ class _Settings:
         path = self._resolve_workspace(workspace_path=workspace_path) / ".ai"
         if not self.is_production:
             path.mkdir(parents=True, exist_ok=True)
+            # Fully bootstrap the .ai directory structure when it's accessed
+            for subdir in ["codegraph", "lancedb", "temp", "artifacts", "memory-bank"]:
+                (path / subdir).mkdir(exist_ok=True)
         return path
 
     def get_artifacts_dir(self, workspace_path: str | Path = "") -> Path:
