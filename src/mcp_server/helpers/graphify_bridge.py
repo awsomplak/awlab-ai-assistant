@@ -29,7 +29,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .embeddings import add_to_index, search_index
 from ..config import settings
+import hashlib
 from .agent_recall import family_member_id, family_members, seed_member_project_id, sync_family_project_ids
 from .response import fail_obj, ok_obj
 
@@ -2270,6 +2272,25 @@ def _build_graph_impl(
             built_at_commit=_git_head_safe(out_root),
         )
 
+        # Embed nodes into LanceDB
+        docs = []
+        doc_ids = []
+        for n, data in graph.nodes(data=True):
+            nid = str(n)
+            name = str(data.get("label", data.get("name", nid)))
+            ntype = str(data.get("type", "unknown"))
+            fpath = str(data.get("source_file", data.get("filepath", "")))
+            content = f"Name: {name}\nType: {ntype}\nFile: {fpath}"
+            docs.append(content)
+            doc_ids.append(nid)
+
+        if docs:
+            pid = project_id or settings.get_project_id(workspace_path)
+            if not pid:
+                pid = hashlib.md5(str(workspace_path).encode("utf-8")).hexdigest()
+            table_name = f"codegraph_{pid}"
+            add_to_index(table_name, docs, doc_ids, workspace_path=workspace_path)
+
         artifacts = {"graph.json": str(graph_path)}
         html = None
         # Render the interactive graph.html only when the graph is COMPLETE
@@ -2745,21 +2766,56 @@ def query_graph(
         return fail_obj(error="query required")
 
     scored: list[tuple[float, dict[str, Any]]] = []
+
+    # LanceDB Semantic Search
+    pid = project_id or settings.get_project_id(workspace_path)
+    if not pid:
+        pid = hashlib.md5(str(workspace_path).encode("utf-8")).hexdigest()
+    table_name = f"codegraph_{pid}"
+    semantic_results = search_index(table_name, q, limit=limit, workspace_path=workspace_path)
+    # Filter out semantic results that are too far away (distance > 0.80)
+    semantic_results = [s for s in semantic_results if s.get("_distance", 1.0) < 0.80]
+    semantic_map = {str(res.get("id", "")): res for res in semantic_results}
+
+    # If the query contains no spaces and has underscores or uppercase characters,
+    # it's highly likely an exact code identifier lookup (e.g. beta_func, MyClass).
+    # We restrict pure semantic fuzzy matches for these, as it breaks exact lookups (and tests).
+    is_code_identifier = " " not in q and ("_" in q or any(c.isupper() for c in q))
+
     for n in data.get("nodes", []):
         label = (n.get("label") or "").lower()
         source = (n.get("source_file") or "").lower()
         ntype = (n.get("type") or "").lower()
-        if label == q:
-            score = 3.0
-        elif q in label:
-            score = 2.0
-        elif q in source:
-            score = 1.0
-        elif q in ntype:
-            score = 0.5
-        else:
-            continue
-        scored.append((score, n))
+        nid = str(n.get("id"))
+
+        score = 0.0
+        if label == q.lower():
+            score += 3.0
+        elif q.lower() in label:
+            score += 2.0
+        elif q.lower() in source:
+            score += 1.0
+        elif q.lower() in ntype:
+            score += 0.5
+
+        if nid in semantic_map:
+            # Boost score based on semantic similarity
+            if is_code_identifier and score == 0:
+                # Do not add pure semantic matches for strict code identifiers
+                pass
+            else:
+                dist = semantic_map[nid].get("_distance", 1.0)
+                score += max(0.0, (0.80 - dist) * 5)
+
+        if score > 0:
+            scored.append((score, n))
+
+    # Fallback to semantic only if no BM25 matches
+    if not scored and semantic_results and not is_code_identifier:
+        node_map = {str(n.get("id")): n for n in data.get("nodes", [])}
+        for s in semantic_results:
+            if s.get("id") in node_map:
+                scored.append((1.5, node_map[s["id"]]))
 
     scored.sort(key=lambda x: (-x[0], (x[1].get("label") or "").lower()))
     results = [

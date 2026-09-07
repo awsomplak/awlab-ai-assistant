@@ -27,13 +27,23 @@ log = _logger.tool("embeddings")
 # ═══════════════════════════════════════════════════════════════════════════
 
 _HAS_FASTEMBED: bool | None = None
+_TE: Any = None
 
 try:
-    from fastembed import TextEmbedding  # type: ignore[import-untyped]  # noqa: F401 — intentional availability probe
-
+    from fastembed import TextEmbedding as _TE  # type: ignore[import-untyped]  # noqa: F401
     _HAS_FASTEMBED = True
 except ImportError:
     _HAS_FASTEMBED = False
+    _TE = None
+
+try:
+    import lancedb
+    import pyarrow as pa
+    _HAS_LANCEDB = True
+except ImportError:
+    _HAS_LANCEDB = False
+    lancedb = None
+    pa = None
 
 
 def has_fastembed() -> bool:
@@ -57,6 +67,16 @@ def has_fastembed() -> bool:
 def _models_dir() -> Path:
     """Return the model storage directory (created if needed)."""
     path = settings.config_home / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _lancedb_dir(workspace_path: Path | None = None) -> Path:
+    """Return the LanceDB storage directory (created if needed)."""
+    if workspace_path is not None:
+        path = workspace_path / ".ai" / "codegraph" / "lancedb"
+    else:
+        path = settings.config_home / "lancedb"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -153,8 +173,6 @@ class EmbeddingService:
 
         cache_dir = str(_models_dir())
         try:
-            from fastembed import TextEmbedding as _TE  # type: ignore[import-untyped]  # noqa: F811
-
             log.info(f"Loading model {_MODEL_NAME} (cache: {cache_dir})…")
             self._model = _TE(
                 model_name=_MODEL_NAME,
@@ -179,7 +197,7 @@ class EmbeddingService:
         Raises ``RuntimeError`` if fastembed is not available.
         """
         if not has_fastembed():
-            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-ai-assistant[hybrid]")
+            raise RuntimeError("fastembed is not installed. Install with: pip install AWLab-AI-Assistant[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
@@ -191,7 +209,7 @@ class EmbeddingService:
     def compute_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
         """Return embedding vectors for a batch of texts."""
         if not has_fastembed():
-            raise RuntimeError("fastembed is not installed. Install with: pip install awlab-ai-assistant[hybrid]")
+            raise RuntimeError("fastembed is not installed. Install with: pip install AWLab-AI-Assistant[hybrid]")
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
@@ -430,3 +448,71 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  LanceDB Persistent Storage
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _get_table_names(db) -> list[str]:
+    """Helper to extract table names safely across lancedb versions."""
+    res = db.list_tables()
+    return res.tables if hasattr(res, "tables") else list(res)
+
+def add_to_index(table_name: str, documents: list[str], document_ids: list[str], workspace_path: Path | None = None) -> None:
+    """Embed documents and add them to a persistent LanceDB table."""
+    if not _HAS_LANCEDB:
+        log.warning("lancedb not installed. Run: pip install lancedb")
+        return
+
+    if not documents:
+        return
+
+    svc = EmbeddingService.get_instance()
+    try:
+        vecs = svc.compute_embeddings_batch(documents)
+    except RuntimeError as e:
+        log.warning(f"Embedding failed: {e}")
+        return
+
+    db = lancedb.connect(str(_lancedb_dir(workspace_path)))
+    data = [{"id": str(idx), "text": txt, "vector": vec} for idx, txt, vec in zip(document_ids, documents, vecs)]
+
+    if table_name in _get_table_names(db):
+        table = db.open_table(table_name)
+        id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
+        if id_list:
+            table.delete(f"id IN ({id_list})")
+        table.add(data)
+    else:
+        try:
+            db.create_table(table_name, data=data, mode="overwrite")
+        except Exception:
+            table = db.open_table(table_name)
+            id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
+            if id_list:
+                table.delete(f"id IN ({id_list})")
+            table.add(data)
+
+
+def search_index(table_name: str, query: str, limit: int = 10, workspace_path: Path | None = None) -> list[dict]:
+    """Search the persistent LanceDB index."""
+    if not _HAS_LANCEDB:
+        return []
+
+    svc = EmbeddingService.get_instance()
+    try:
+        q_vec = svc.compute_embedding(query)
+    except RuntimeError as e:
+        log.error(f"RuntimeError in compute_embedding: {e}")
+        return []
+
+    db = lancedb.connect(str(_lancedb_dir(workspace_path)))
+    if table_name not in _get_table_names(db):
+        log.error(f"TABLE NOT IN LIST: {table_name}, ALL: {_get_table_names(db)}")
+        return []
+
+    table = db.open_table(table_name)
+    results = table.search(q_vec).limit(limit).to_list()
+    return results
