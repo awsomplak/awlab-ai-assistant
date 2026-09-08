@@ -21,6 +21,12 @@
 | ------------------------ | -------------------- | ---------------------------- |
 | `awlab-ai-assistant` | `AWLab-AI-Assistant` | `action_call`, `action_help` |
 
+> Deployment produksi adalah **pasangan bridge + worker**: `awlab-ai-assistant` adalah
+> *bridge* — proxy stdio tipis (entrypoint tunggal yang dipakai semua konfigurasi IDE/hook) —
+> yang menjalankan `awlab-ai-worker`, server MCP berat tempat `REGISTRY` menangani semua
+> action. Bridge menjaga pipa JSON-RPC IDE tetap hidup, sehingga `publish --target=binary`
+> dapat mengganti (*hot-swap*) worker tanpa membuat IDE mengalami `context canceled`.
+
 ---
 
 ## 🛠️ Tool yang Tersedia

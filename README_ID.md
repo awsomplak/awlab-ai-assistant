@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/awsomplak/awlab-ai-assistant?color=blue&label=version" alt="Latest Version" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/tests-55%20passing-brightgreen" alt="55 tes lulus" />
+  <img src="https://img.shields.io/badge/tests-55%20passing-brightgreen" alt="67 tes lulus" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="Lisensi MIT" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Multi-platform" />
 </p>
@@ -182,7 +182,7 @@ README ini adalah sumber dokumentasi awal. Gunakan tabel di bawah untuk menemuka
 | [`README_ID.md`](README_ID.md)                               | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Indonesia)                                                                                                    |
 | [`README.md`](README.md)                                     | About, fitur, OS/agent yang diuji, arsitektur (Bahasa Inggris)                                                                                                      |
 | [`docs/id/CRDT_SYNC.md`](docs/id/CRDT_SYNC.md)               | Panduan eksperimental untuk mengaktifkan sinkronisasi memori CRDT melalui cloud                                                                                     |
-| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                   | Persyaratan, instal dari source, build executable mandiri, publikasi rules + skill, implementasi server MCP per agent, variabel penggunaan, referensi CLI           |
+| [`docs/id/INSTALL.md`](docs/id/INSTALL.md)                   | Persyaratan, instal dari source, membangun pasangan executable (bridge + worker), publikasi rules + skill, implementasi server MCP per agent, variabel penggunaan, referensi CLI           |
 | [`docs/id/AVAILABLE_TOOLS.md`](docs/id/AVAILABLE_TOOLS.md)   | 2 tool MCP yang tersedia dan **23 action** yang ditanganinya (plan, task, memory, graph, context, util, workflow), graph, cache offline, dan multi project          |
 | [`docs/id/PROJECT_FAMILIES.md`](docs/id/PROJECT_FAMILIES.md) | Dokumentasi untuk mengonfigurasi keluarga proyek (project families) guna menggabungkan grafik kode dan berbagi memori episodik lintas repositori                    |
 | [`docs/id/HOOKS.md`](docs/id/HOOKS.md)                       | Otomasi hook zero-LLM opsional — registrasi per-agent (Claude Code, Hermes, Cline, Copilot), perilaku event, pro/kontra vs MCP-saja, verifikasi & pemecahan masalah |
@@ -190,7 +190,7 @@ README ini adalah sumber dokumentasi awal. Gunakan tabel di bawah untuk menemuka
 
 ### Jalur tercepat (pengguna baru)
 
-1. **Instal** paketnya dan (opsional) build executable mandiri — lihat [`docs/id/INSTALL.md`](docs/id/INSTALL.md#1-instal-server-mcp).
+1. **Instal** paketnya dan (opsional) membangun pasangan executable (bridge + worker) — lihat [`docs/id/INSTALL.md`](docs/id/INSTALL.md#1-instal-server-mcp).
 2. **Publikasikan** rules + skill terkompilasi ke agent Anda — lihat [`docs/id/INSTALL.md`](docs/id/INSTALL.md#3-publikasikan-rules--skill-ke-agent-anda).
 3. **Sambungkan** server MCP ke agent Anda — lihat [`docs/id/INSTALL.md`](docs/id/INSTALL.md#4-sambungkan-server-mcp).
 4. **Jelajahi** tool dan fiturnya — lihat [`docs/id/AVAILABLE_TOOLS.md`](docs/id/AVAILABLE_TOOLS.md).

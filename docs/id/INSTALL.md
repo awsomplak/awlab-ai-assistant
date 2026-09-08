@@ -123,13 +123,21 @@ python scripts/run.py build --target-os=all
 
 Hasil build ada di `dist/bin/`:
 
-| Binary                     | Server               | Tool yang Tersedia                        |
-| -------------------------- | -------------------- | ----------------------------------------- |
-| `AWLab-AI-Assistant{.exe}` | `AWLab-AI-Assistant` | `action_call` (dispatcher), `action_help` |
+| Binary                    | Peran                                                                                                    | Tool yang Tersedia                        |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `awlab-ai-assistant`      | **Bridge** — proxy stdio tipis (ONE-FILE) yang menjaga pipa JSON-RPC IDE tetap hidup. Entrypoint tunggal yang dipakai semua konfigurasi IDE/hook. | `action_call` (dispatcher), `action_help` |
+| `awlab-ai-worker`         | **Worker** — server MCP yang berat (ONEDIR); dijalankan & dikelola oleh bridge, di-*hot-swap* saat publish. | *(2 tool yang sama, dilayani lewat bridge)* |
 
-Satu executable — dispatcher `action_call` menangani semua operasi (plan, task, memory, graph, context, util, workflow). Binary executable yang sudah dibuild sepenuhnya berdiri sendiri dan tidak memerlukan python lagi atau extensi lainnya dan juga tidak memerlukan file dari project ini.
+Mengapa dipecah? Memperbarui satu binary mengharuskan proses MCP yang berjalan dihentikan, dan itu memutus pipa JSON-RPC IDE sehingga muncul `context canceled`. Dengan pasangan **bridge + worker**, proses `publish`:
 
-> **Tips:** untuk pengembangan lokal, Anda bisa menjalankan server langsung dari source (`pip install -e .` + console script `AWLab-AI-Assistant`) — build executable hanya diperlukan untuk deployment produksi.
+1. menulis `.update_lock` di folder bin hasil publish,
+2. menghentikan hanya proses `awlab-ai-worker` (bridge tetap hidup),
+3. mengganti kedua binary,
+4. menghapus `.update_lock`.
+
+Setiap bridge yang aktif kemudian menyalakan worker baru dan melanjutkan lalu lintas — IDE hanya melihat jeda singkat, **tanpa** `context canceled`. Ini juga berlaku untuk banyak IDE sekaligus (setiap IDE mendapat bridge → worker sendiri, dikoordinasikan oleh satu lock bersama), dan nama entrypoint `awlab-ai-assistant` yang sama berarti **tidak ada perubahan konfigurasi IDE/hook**.
+
+> **Tips:** untuk pengembangan lokal, Anda bisa menjalankan server langsung dari source (`pip install -e .` + console script `AWLab-AI-Assistant`) — build executable hanya diperlukan untuk deployment produksi. Untuk hot-reload deployment yang sedang berjalan, jalankan ulang `python scripts/run.py publish --target=binary`.
 
 ---
 
@@ -406,7 +414,7 @@ python scripts/run.py publish --uninstall
 | Masalah                                                                                   | Solusi                                                                                                                                                                                                 |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pip install -e .` gagal                                                                  | Pastikan Python 3.10+ sudah terinstall dan Anda berada di dalam root project.                                                                                                                          |
-| Build gagal / `dist/bin` terkunci                                                         | MCP Server yang sedang berjalan mengunci executable. Hentikan dulu server `awlab-*` yang berjalan — lihat `scripts/stop-mcp-servers.ps1` (Windows PowerShell).                                         |
+| Build gagal / `dist/bin` terkunci                                                         | **Worker** yang sedang berjalan mengunci executable (bridge melakukan hot-swap dan harus tetap hidup). Hentikan dulu proses `awlab-ai-worker` — lihat `scripts/stop-mcp-servers.ps1` (Windows PowerShell).                                         |
 | Agent tidak melihat tool MCP                                                              | Daftarkan MCP server (`dist/bin/awlab-ai-assistant{.exe}`) di konfigurasi MCP agent Anda, lalu mulai ulang agent/chat.                                                                                 |
 | Kueri graph lambat saat pertama kali                                                      | Build pertama adalah ekstraksi penuh dan berjalan di latar belakang — baca ulang setelah selesai (`graph_rebuilding: true` artinya masih membangun).                                                   |
 | Penggunaan fitur paralel untuk membangun grafik menyebabkan aplikasi .exe tidak merespons | Komponen `ProcessPoolExecutor` mengalami masalah (hang) pada aplikasi hasil kompilasi tipe onefile. Pastikan fitur `GRAPH_PARALLEL` tidak diaktifkan pada versi rilis (production).                    |

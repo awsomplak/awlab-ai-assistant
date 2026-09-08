@@ -17,7 +17,11 @@
 
 ## 🏛️ Server Architecture
 
-One consolidated executable — the `REGISTRY` routes to all actions:
+The published deployment is a **bridge + worker** pair: `awlab-ai-assistant` is a thin stdio
+proxy (the *bridge*, the single entrypoint every IDE/hook config points at) that fronts
+`awlab-ai-worker`, the heavy server whose `REGISTRY` routes to all actions. The bridge keeps
+an IDE's JSON-RPC pipe alive so `publish --target=binary` hot-swaps the worker with no
+`context canceled`.
 
 ```mermaid
 graph LR

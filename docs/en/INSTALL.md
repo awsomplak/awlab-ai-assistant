@@ -107,15 +107,25 @@ python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all     # Specs for non-host OSes
 ```
 
-Built binary at `dist/bin/`:
+Built binary pair at `dist/bin/`:
 
-| Binary                   | Server               | Exposed Tools                             |
-| ------------------------ | -------------------- | ----------------------------------------- |
-| `awlab-ai-assistant` | `AWLab-AI-Assistant` | `action_call` (dispatcher), `action_help` |
+| Binary                    | Role                                     | Exposed Tools                             |
+| ------------------------- | ---------------------------------------- | ----------------------------------------- |
+| `awlab-ai-assistant`      | **Bridge** — thin stdio proxy that keeps an IDE's JSON-RPC pipe alive across updates. The single entrypoint every IDE/hook config points at. ONE-FILE (8 MB). | `action_call` (dispatcher), `action_help` |
+| `awlab-ai-worker`         | **Worker** — the heavy MCP server; spawned & managed by the bridge; hot-swapped on publish. ONEDIR. | *(same 2 tools, served through the bridge)* |
 
-One consolidated executable — the `action_call` dispatcher routes to all operations (plan, task, memory, graph, context, util, workflow). Binaries are fully standalone — no Python or source files needed.
+Why the split? Updating a single binary requires killing the running MCP process, which tears down the IDE's JSON-RPC pipe and surfaces `context canceled`. With the **bridge + worker** pair, a publish:
 
-> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `AWLab-AI-Assistant`) — the executable build is only required for production deployment.
+1. writes `.update_lock` in the published bin dir,
+2. stops only `awlab-ai-worker` processes (bridges stay up),
+3. swaps both binaries,
+4. releases the lock.
+
+Every live bridge then respawns the fresh worker and resumes traffic — the IDE sees a brief pause, **no** `context canceled`. This also works across multiple IDEs at once (each IDE gets its own bridge → worker, all coordinated by the single shared lock), and the same-name `awlab-ai-assistant` entrypoint means **no IDE/hook config changes**.
+
+The `action_call` dispatcher routes to all operations (plan, task, memory, graph, context, util, workflow). Binaries are fully standalone — no Python or source files needed.
+
+> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `AWLab-AI-Assistant`) — the executable build is only required for production deployment. To hot-reload a live deploy, just re-run `python scripts/run.py publish --target=binary`.
 
 ---
 
@@ -388,7 +398,7 @@ python scripts/run.py publish --uninstall
 | Symptom                               | Fix                                                                                                                                                |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pip install -e .` fails              | Confirm Python 3.10+ and that you're in the project root.                                                                                          |
-| Build fails / `dist/bin` is locked    | A running server locks the executable. Stop running `awlab-*` servers first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell).             |
+| Build fails / `dist/bin` is locked    | A running **worker** locks the executable (the bridge hot-swaps and must stay up). Stop running `awlab-ai-worker` processes first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell).             |
 | Agent doesn't see MCP tools           | Register the server (`dist/bin/awlab-ai-assistant` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
 | Graph queries are slow on first run   | First build is a full extraction and runs in a background thread — re-read after it finishes (`graph_rebuilding: true` means it's still building). |
 | Parallel graph build hangs in the exe | `ProcessPoolExecutor` hangs in frozen onefile builds — keep `GRAPH_PARALLEL` off in production.                                                    |

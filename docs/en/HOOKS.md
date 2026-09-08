@@ -3,9 +3,10 @@
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Hook Registration**
 
 Hooks are an **optional** zero-LLM automation layer on top of the MCP server. They let the
-host fire the built exe (`dist/bin/awlab-ai-assistant`) on lifecycle events (tool use,
-prompt, session, stop) so user-pattern observations are captured automatically — with no
-agent involvement and no LLM cost.
+host fire the built **bridge** executable (`dist/bin/awlab-ai-assistant`) on lifecycle events
+(tool use, prompt, session, stop) so user-pattern observations are captured automatically —
+with no agent involvement and no LLM cost. For `hook` mode the bridge `exec`s the worker
+(`awlab-ai-worker`) with the same argv, so each fire is a single short-lived process.
 
 **Short answer: installing the MCP without hooks is fully supported and works fine.** Hooks
 only add automatic capture. Read the [pros/cons](#pros--cons-of-enabling-hooks) below and
@@ -30,17 +31,19 @@ MCP-only and add hooks later without any migration.
 | | Description |
 |---|---|
 | ✅ **Pros** | **Zero-LLM capture** — commands the user runs (e.g. `pnpm install`) are recorded as observations without spending a token. **Always-on** — capture happens even when the agent forgets to `mem_observe`. **Turn-end baking** — the `Stop` event runs the bake automatically. **Context injection** — prompt events can inject stack-scoped baked patterns into the host's context (READ path). **Self-loop safe** — anti-loop design: prompt events only inject, tool events only capture. |
-| ⚠️ **Cons** | **Per-host setup** — one-time registration per agent (see below). **Per-event subprocess** — each hook fire spawns the exe once (small PyInstaller startup cost on every tool call). **Selective capture** — only command-carrying tool events write observations; file-read tools and prompt events don't (by design). **Path dependency** — configs point at a fixed exe path; moving/renaming the exe silently no-ops until you re-register. **Project resolution** — hosts whose payload lacks project context need `--project <path>` (or `CLAUDE_PROJECT_DIR`). |
+| ⚠️ **Cons** | **Per-host setup** — one-time registration per agent (see below). **Per-event subprocess** — each hook fire boots the onefile bridge once, then `exec`s the worker (small PyInstaller startup cost on every tool call). **Selective capture** — only command-carrying tool events write observations; file-read tools and prompt events don't (by design). **Path dependency** — configs point at a fixed exe path; moving/renaming the exe silently no-ops until you re-register. **Project resolution** — hosts whose payload lacks project context need `--project <path>` (or `CLAUDE_PROJECT_DIR`). |
 
 ---
 
 ## 📌 Prerequisites
 
-1. A built executable: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant`.
+1. A built executable pair: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant` (bridge) + `dist/bin/awlab-ai-worker` (worker).
 2. Ready-made registration configs (written by every build) in `dist/profiles/hooks/`:
    `claude.hooks.json`, `hermes.hooks.yaml`, `copilot.hooks.txt`, `cline.hooks.txt`.
 
-> The hook command is the same single exe as the MCP server — no second install.
+> Hooks call the same `awlab-ai-assistant` bridge that serves MCP. For `hook` mode the bridge
+> waits out any in-flight `.update_lock` (so a hook never runs against a half-written binary
+> during a publish), then `exec`s the worker with the same argv. No second install.
 
 ---
 

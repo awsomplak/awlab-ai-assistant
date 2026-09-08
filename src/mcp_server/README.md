@@ -1,6 +1,6 @@
 # AWLab-AI-Assistant MCP Server
 
-**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
+**Deterministic MCP server — published as a `bridge + worker` pair exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation. The `awlab-ai-assistant` executable is a thin stdio proxy (the *bridge*) that fronts `awlab-ai-worker`, this heavy server: the bridge keeps an IDE's JSON-RPC pipe alive, so `publish --target=binary` hot-swaps the worker underneath it with no `context canceled`.**
 
 Part of the [awlab-ai-assistant](../../README.md) system.
 
@@ -11,6 +11,13 @@ Part of the [awlab-ai-assistant](../../README.md) system.
 ---
 
 ## Architecture
+
+> **Production deployment is a bridge + worker pair.** `awlab-ai-assistant` (this package
+> frozen as a thin, always-on stdio proxy) is the single entrypoint every IDE/hook config
+> points at; it spawns and manages `awlab-ai-worker` (this package's real MCP server) and
+> hot-swaps it on `publish --target=binary`, so updating a binary never tears down an IDE's
+> JSON-RPC pipe (`context canceled`). The diagrams below describe this server package — the
+> worker.
 
 ```mermaid
 graph TB
@@ -43,7 +50,7 @@ graph TB
   HELPERS -->|"import"| AG
   HELPERS -->|"library import"| CG
 
-  style SERVER fill:#3572A5,color:#fff
+  style SERVER fill:#2d2d2d,color:#fff
   style CLIENTS fill:#2d2d2d,color:#fff
   style EXTERNAL fill:#4caf50,color:#fff
 ```
@@ -97,7 +104,17 @@ python scripts/run.py build --target-os=all
 python scripts/run.py build --target-os=linux
 ```
 
-Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awlab-ai-assistant` (Linux/macOS) — a single binary for all platforms.
+Built executable pair at `dist/bin/`:
+
+| Binary                    | Role                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `awlab-ai-assistant`      | **Bridge** — thin stdio proxy (ONE-FILE). The single entrypoint every IDE/hook config points at. |
+| `awlab-ai-worker`         | **Worker** — this heavy MCP server (ONEDIR); spawned by the bridge, hot-swapped on publish.      |
+
+Point your agent at `dist/bin/awlab-ai-assistant` (the bridge) — unchanged name, so no IDE/hook
+config changes. To hot-reload a live deployment, just re-run `python scripts/run.py publish
+--target=binary`: bridges stay up, workers are swapped, and the IDE sees a brief pause — never
+a `context canceled`.
 
 ### Configure in Cline
 
@@ -220,7 +237,8 @@ mcp_server/
 ├── __init__.py
 ├── _version.py             # Version string (v3.0.5+build.105)
 ├── server.py               # Dev console entry (AWLab-AI-Assistant)
-├── __main__.py             # PyInstaller entry — single executable
+├── __main__.py             # Worker PyInstaller entry (awlab-ai-worker)
+├── bridge.py               # Bridge entry (awlab-ai-assistant, onefile) — stdio proxy
 ├── registry.py             # REGISTRY — 23 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file

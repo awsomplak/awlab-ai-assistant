@@ -2,7 +2,7 @@
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Registrasi Hook**
 
-Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa Token* (zero-LLM) sebagai bagian dari fitur MCP server. Dengan hook, host agent atau IDE bisa menjalankan exe / binary hasil build (`dist/bin/awlab-ai-assistant{.exe}`) pada event lifecycle dari host agent atau IDE (penggunaan tool, saat user melakukan prompt, saat sesi berjalan, saat sesi berhenti atau selesai) sehingga observasi pola pengguna (user pattern) tertangkap otomatis — tanpa keterlibatan agent dan tanpa biaya LLM tambahan.
+Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa Token* (zero-LLM) sebagai bagian dari fitur MCP server. Dengan hook, host agent atau IDE bisa menjalankan exe / binary **bridge** hasil build (`dist/bin/awlab-ai-assistant{.exe}`) pada event lifecycle dari host agent atau IDE (penggunaan tool, saat user melakukan prompt, saat sesi berjalan, saat sesi berhenti atau selesai) sehingga observasi pola pengguna (user pattern) tertangkap otomatis — tanpa keterlibatan agent dan tanpa biaya LLM tambahan. Untuk mode `hook`, bridge akan `exec` worker (`awlab-ai-worker`) dengan argv yang sama, jadi setiap pemicuan hanya berjalan dalam satu proses singkat.
 
 **Singkatnya: memasang MCP tanpa hook tetap berfungsi normal.** Hook hanya menambahkan penangkapan otomatis. Baca [pro/kontra](#pro--kontra-mengaktifkan-hook) di bawah ini untuk lebih detail.
 
@@ -24,17 +24,20 @@ Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa To
 | | Deskripsi |
 |---|---|
 | ✅ **Pro** | **Perekaman pola kebiasaan yang Tanpa Token (zero-LLM Capture)** — perintah yang dijalankan pengguna (contoh: `pnpm install`) dicatat langsung sebagai observasi tanpa menghabiskan token LLM. <br> **Otomatis & Selalu Aktif (Always-on)** — Proses perekaman tetap berjalan meskipun agent lupa memanggil fungsi `mem_observe`. <br> **Pemrosesan Otomatis di Akhir Sesi (Turn-end Baking)** — event `Stop` akan otomatis memproses / mengolah (***bake***) data yang terkumpul. <br> **Injeksi Konteks (Context Injection)** — saat prompt dapat menyuntikkan pola data yang sudah diproses (*baked patterns*) sesuai scope ke dalam konteks. <br> **Aman dari Perulangan Tak Terbatas (Self-loop Safe)** — desain anti-loop: saat prompt hanya bertugas menyuntikkan data (injection), sedangkan tool hanya bertugas untuk mencatat hasilnya saja. |
-| ⚠️ **Kontra** | **Konfigurasi per-host agent atau IDE** — perlu melakukan pengaturan hook sekali namun berlaku untuk setiap agent atau IDE (lihat di bawah). **Subproses per event** — Setiap kali hook aktif, sistem akan menjalankan file .exe atau binary (tergantung OS) satu kali (ada sedikit overhead durasi pemanggilan awal yang disebabkan oleh PyInstaller pada setiap tool call). **Perekaman selektif** — hanya event dari tool yang membawa perintah saja yang dicatat sebagai observasi. Tool yang membaca file dan prompt tidak dicatat. **Pembacaan projct path** — host agent atau IDE yang payload-nya tidak memiliki konteks project path memerlukan parameter `--project <path>` atau variable environment khusus (contoh: variable environment `CLAUDE_PROJECT_DIR` pada claude code). |
+| ⚠️ **Kontra** | **Konfigurasi per-host agent atau IDE** — perlu melakukan pengaturan hook sekali namun berlaku untuk setiap agent atau IDE (lihat di bawah). **Subproses per event** — Setiap kali hook aktif, sistem memuat bridge (onefile) satu kali lalu `exec` worker (ada sedikit overhead durasi pemanggilan awal yang disebabkan oleh PyInstaller pada setiap tool call). **Perekaman selektif** — hanya event dari tool yang membawa perintah saja yang dicatat sebagai observasi. Tool yang membaca file dan prompt tidak dicatat. **Pembacaan projct path** — host agent atau IDE yang payload-nya tidak memiliki konteks project path memerlukan parameter `--project <path>` atau variable environment khusus (contoh: variable environment `CLAUDE_PROJECT_DIR` pada claude code). |
 
 ---
 
 ## 📌 Prasyarat
 
-1. Executable hasil build: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant{.exe}`.
+1. Pasangan executable hasil build: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant{.exe}` (bridge) + `dist/bin/awlab-ai-worker` (worker).
 2. Konfigurasi registrasi siap pakai (setiap build) di `dist/profiles/hooks/`:
    `claude.hooks.json`, `hermes.hooks.yaml`, `copilot.hooks.txt`, `cline.hooks.txt`.
 
-> Perintah hook memakai exe atau binary yang sama dengan server MCP — tidak perlu instalasi lainnya.
+> Hook memanggil bridge `awlab-ai-assistant` yang sama dengan server MCP. Untuk mode `hook`,
+> bridge menunggu hingga `.update_lock` yang sedang berjalan selesai (agar hook tidak pernah
+> berjalan terhadap binary yang setengah jadi saat publish), lalu `exec` worker dengan argv
+> yang sama. Tidak perlu instalasi lainnya.
 
 ---
 
