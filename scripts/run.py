@@ -100,13 +100,18 @@ PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"{B
     "\\", "/"
 )
 
-# Use native python for hooks if running from virtualenv to completely bypass PyInstaller extraction overhead.
-# Hook hosts call the BRIDGE path (`<bridge> hook ...`); the bridge os.execv's the
-# worker with the same argv (see src/mcp_server/bridge.py), so HOOK_CMD stays put.
-if sys.prefix != sys.base_prefix:
-    HOOK_CMD = f'"{sys.executable}" -m mcp_server hook'
-else:
-    HOOK_CMD = f'"{PUBLISH_BIN_PATH}" hook'
+# Hook hosts MUST call the production PUBLISHED binary (`<bridge> hook ...`) — never
+# the build machine's venv/source path (`python -m mcp_server hook`). Generated hook
+# configs (hermes __init__.py, hooks/*.json, claude settings, ...) are published to
+# machines where the source checkout does not exist, so a baked source path breaks the
+# host (Hermes plugin/hook can't run). The bridge os.execv's the worker with the same
+# argv (see src/mcp_server/bridge.py), so HOOK_CMD stays put across publishes.
+# Local dev can point AWLAB_HOOK_BIN at a specific binary path to override.
+# NOTE: HOOK_CMD is the bare command (no surrounding quotes) — each consumer wraps it
+# in its own quotes (`command="..."`), so quoting the path here would produce invalid
+# output (e.g. a Python plugin `command=""..."" `). Paths with spaces are an
+# acceptable trade-off to keep every generated artifact syntactically valid.
+HOOK_CMD = f'{os.environ.get("AWLAB_HOOK_BIN") or PUBLISH_BIN_PATH} hook'
 
 PUBLISH_MAP = {
     "binary": (
