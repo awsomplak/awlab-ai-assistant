@@ -1,0 +1,17 @@
+# Core Noise Directories
+.git/
+.venv/
+venv/
+vendor/
+node_modules/
+dist/
+build/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ai/
+.temp/
+logs/
+.eggs/
+*.egg-info/
