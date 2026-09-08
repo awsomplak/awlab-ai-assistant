@@ -2,7 +2,7 @@
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Project Families**
 
-> **TL;DR:** To share memory and code-graphs across related projects (e.g. backend + frontend), create a `~/.awlab-id/project-families.json` file on your machine grouping their paths. The AI will automatically detect it.
+> **TL;DR:** To share memory and code-graphs across related projects (e.g. backend + frontend), create a `~/.awlab-id/agent-memory/project-families.json` file on your machine grouping their paths. The AI will automatically detect it.
 
 A **Project Family** allows you to logically group multiple correlated projects (such as a frontend repository and a separate backend repository). By configuring a project family, the MCP system will enable:
 
@@ -26,8 +26,8 @@ The best practice for configuring a project family is to manually create a JSON 
 
 The configuration file is named `project-families.json` and must be placed in your global config directory:
 
-- **Windows:** `C:\Users\<username>\.awlab-id\project-families.json`
-- **Mac/Linux:** `~/.awlab-id/project-families.json`
+- **Windows:** `C:\Users\<username>\.awlab-id\agent-memory\project-families.json`
+- **Mac/Linux:** `~/.awlab-id/agent-memory/project-families.json`
 
 ### 🔖 2. 📝 Define the JSON Structure (v2 format)
 

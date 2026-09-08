@@ -2,7 +2,7 @@
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumentasi](../../README_ID.md#dokumentasi) · **Tool MCP yang Tersedia**
 
-> MCP server memiliki **2 tool**: `action_call` (dispatcher) dan `action_help` (bantuan), yang menangani **23 action**.
+> MCP server memiliki **2 tool**: `action_call` (dispatcher) dan `action_help` (bantuan), yang menangani **26 action**.
 
 **Di halaman ini:**
 
@@ -251,4 +251,4 @@ Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda
 }
 ```
 
-Jika `project-id` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/project-id` dari project, maka akan lebih diutamakan menggunakan `project-id` dari project tersebut daripada `project-id` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **code-graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`.
+Jika `project-id` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/project-id` dari project, maka akan lebih diutamakan menggunakan `project-id` dari project tersebut daripada `project-id` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **code-graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`. Setiap project anggota memiliki penanda `.ai/family-id` (kunci family **utama**, meniru `.ai/project-id`), dan `ctx_info`/`family_info` melaporkannya beserta semua family yang dimiliki project tersebut. `family_info` (hanya-baca) mendaftar dan me-resolve family; `family_config` memungkinkan agent membuat/mengubah/menghapus family beserta anggotanya — pengguna hanya memantau filenya.

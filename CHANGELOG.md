@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.7] - 2026-09-08
+
+### 🚀 Highlights
+
+- **Project-family zero-discovery & agent-managed config** — family memory is no longer
+  hidden from agents: a per-project `.ai/family-id` marker (mirrors `.ai/project-id`)
+  records the PRIMARY family, and `ctx_info`/`family_info` surface every family a project
+  belongs to (multi-family safe). New `family_info` (read-only) + `family_config`
+  (create/update/remove) actions let the agent read and generate
+  `project-families.json` — the user only monitors the result.
+- **context.md never goes stale** — `.ai/memory-bank/context.md` auto-refreshes after
+  every mutating action and on any `ctx_info` call, and now exposes a real
+  `## Current Work & Handoff` section matching the session-start protocol docs.
+- **Graph-first navigation is now discoverable** — rules, the distributed SKILL, the
+  `action_call` tool description, and the MCP-level session-start protocol all direct
+  agents to call `graph_query` (then `graph_explain`/`graph_path`) BEFORE reading source
+  files, so the code graph is actually used.
+
+### ✨ New Features
+
+- **`family_info` action** — list all declared families, resolve this workspace's PRIMARY
+  family (from `.ai/family-id`) and every family it belongs to; no raw config reads.
+- **`family_config` action** — agent-managed `project-families.json` (`op=create |
+  update | add_member | remove_member | remove | sync`), atomic v2 writes with validation
+  (slug format, absolute paths, unique `project_id`).
+- **Per-project `.ai/family-id` marker** — scalar PRIMARY-family key, recompute-on-read so
+  it never goes stale; seeded by `ctx_info`/`family_info` and re-seeded by `family_config`.
+- **`action_help` family discoverability** — every `store`/`family` action ends with a
+  `## See Also` + `## Family Memory` block (config path, slug discovery, when to use).
+- **context.md auto-sync** — dispatcher refreshes `context.md` after every successful
+  mutating action (read-only; never consumes tell-once pattern candidates); `ctx_info
+  mode="snapshot"` refreshes too.
+
+### 🛠️ Enhancements & Changes
+
+- **Code-graph normalization** — TS type aliases/interfaces/PropTypes/const objects are no
+  longer typed as callable `class`; module nodes are uniformly `file` with full-relative-path
+  labels; `_rationale_*` comment nodes are purged (with their edges); destructured binding
+  labels are cleaned; `graph_status` counts now reconcile with the node-producing corpus.
+- **Distributed `SKILL.md` regenerated** from `REGISTRY` (pre-existing param drift fixed)
+  with a codebase-navigation section + cross-cutting family section; rules, protocol docs,
+  and generated tool descriptions all surface the graph-first directive.
+- **Hermes plugin/hook fixed to use the published binary** — generated hook commands
+  (Hermes plugin `__init__.py`, `hooks/*.json`, Claude settings) now exec the production
+  published binary (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant hook ...`) instead of
+  the build machine's venv/source path (`python -m mcp_server hook`), which broke Hermes on
+  hosts without the source checkout. Also fixed the nested-quote escaping that produced
+  invalid Python (`command=""...""`) in the Hermes plugin. `AWLAB_HOOK_BIN` env override is
+  available for local dev.
+- **Docs synced** — correct `project-families.json` config path in `PROJECT_FAMILIES.md`
+  (`en`/`id`), family sections in `AVAILABLE_TOOLS.md`, and action counts (26) across
+  READMEs and INSTALL/REGISTRY_SCHEMA docs.
+
 ## [3.0.6] - 2026-09-07
 
 ### 🚀 Highlights

@@ -2,7 +2,7 @@
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Available MCP Tools**
 
-> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help), routing **23 actions**.
+> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help), routing **26 actions**.
 
 **In this page:**
 
@@ -293,8 +293,14 @@ Registration is per-host; the exe derives the project per event (see `docs/en/IN
 ## 👨‍👩‍👧‍👦 Project families
 
 Correlated projects at different paths share a merged code graph and a dedicated
-`family_<slug>` memory store. `project-families.json` (v2) declares members as
-`[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
+`family_<slug>` memory store. The family declaration lives in
+`~/.awlab-id/agent-memory/project-families.json` (v2), which maps each family slug
+to `{name, members: [{path, project_id}]}`. `project-families.json` declares members
+as `[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
 the declared id (reconciled automatically on family build), fresh members are
 seeded, and `graph_build` with `family=<slug>` produces the merged graph with
-`<project_id>::`-tagged nodes. For full setup instructions, see [Project Families Configuration](PROJECT_FAMILIES.md).
+`<project_id>::`-tagged nodes. Every member project carries a `.ai/family-id` marker
+(its PRIMARY family key, mirroring `.ai/project-id`), and `ctx_info`/`family_info`
+report it plus every family the project belongs to. `family_info` (read-only) lists and
+resolves families; `family_config` lets the agent create/update/remove families and
+members — the user only monitors the file. For full setup instructions, see [Project Families Configuration](PROJECT_FAMILIES.md).
