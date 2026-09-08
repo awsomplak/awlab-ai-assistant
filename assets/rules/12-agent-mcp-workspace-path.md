@@ -1,9 +1,10 @@
 <!-- → authority: 00-meta.md -->
+
 # Agent-MCP Workspace Path Rule
 
 ## Purpose
 
-The `awlab-ai-assistant` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
+The `AWLab-AI-Assistant` actions that operate on files require an explicit `workspace_path` parameter. The server performs **no automatic workspace detection**. The AI Agent must always pass the correct workspace root.
 
 ## Rules
 
@@ -14,7 +15,7 @@ When calling actions that operate on files (plans, registry, memory bank, scanni
 ```
 action_call(action="task_read", params={
   "plan_uuid": "hulqlotc",
-  "workspace_path": "d:\\Project\\IDE\\cline-ai-assisted-dev"
+  "workspace_path": "d:\\Project\\IDE\\awlab-ai-assistant"
 })
 ```
 
@@ -34,7 +35,7 @@ The `get_project_id` tool has been **removed**. To get the project ID, read `.ai
 action_call(action="ctx_info", params={
   "mode": "memory_bank",
   "filename": "project-id",
-  "workspace_path": "d:\\Project\\IDE\\cline-ai-assisted-dev"
+  "workspace_path": "d:\\Project\\IDE\\awlab-ai-assistant"
 })
 ```
 

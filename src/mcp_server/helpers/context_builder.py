@@ -288,9 +288,9 @@ def materialize_context(
 
 
 AWLAB_PROTOCOL_MD = """\
-# AWLab-ID Protocol — read this first (session start)
+# AWLab-AI-Assistant Protocol — read this first (session start)
 
-This project uses **AWLab-ID** — an AI-Assisted Development System.
+This project uses **AWLab-AI-Assistant** — an AI-Assisted Development System.
 
 ## ⚠️ Session-start protocol (mandatory — prevents hallucination)
 
@@ -307,6 +307,7 @@ At the start of **every** session, before touching any code:
    `action_call(action="mem_search", params={"entity_type": "pattern"})` and apply them to your workflow.
 5. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what
    to work on — do not guess, do not fabricate a task, do not "continue" something you cannot see.
+6. **Token Burn Protection:** NEVER call `plan_doc` with `mode="read"` just to read the plan for context. It dumps the entire raw file and burns tokens. ALWAYS rely on `ctx_info` for plan context. Only use `plan_doc(mode="read")` when explicitly migrating or rewriting the plan document.
 """
 
 

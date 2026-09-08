@@ -22,8 +22,6 @@ if str(_src) not in sys.path:
 
 from mcp_server.daemon import run_daemon  # noqa: E402
 from mcp_server.hooks.cli import run_hook  # noqa: E402
-from mcp_server.modules import registration  # noqa: E402, F401 — triggers @mcp.tool() decorators at import time
-from mcp_server.modules.lifecycle import main  # noqa: E402
 
 if __name__ == "__main__":
     # Hook mode: `awlab-ai-assistant.exe hook --agent <host> --event <event>` runs the
@@ -34,5 +32,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "daemon":
         run_daemon()
         sys.exit(0)
+
+    # Unconditional imports of the entire MCP framework ONLY happen in stdio/standalone mode
+    from mcp_server.modules import registration  # noqa: E402, F401 — triggers @mcp.tool() decorators at import time
+    from mcp_server.modules.lifecycle import main  # noqa: E402
 
     main()

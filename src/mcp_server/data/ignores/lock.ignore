@@ -1,0 +1,22 @@
+# Dependency Lock Files
+package-lock.json
+npm-shrinkwrap.json
+yarn.lock
+pnpm-lock.yaml
+bun.lock
+bun.lockb
+deno.lock
+poetry.lock
+Pipfile.lock
+uv.lock
+pdm.lock
+composer.lock
+go.sum
+Gopkg.lock
+Cargo.lock
+Gemfile.lock
+packages.lock.json
+paket.lock
+gradle.lockfile
+mix.lock
+flake.lock

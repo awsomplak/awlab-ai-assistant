@@ -268,7 +268,7 @@ class Logger:
         # 2: System temp (last resort)
         import tempfile
 
-        return Path(tempfile.gettempdir()) / "awlab-id" / "logs"
+        return Path(tempfile.gettempdir()) / "AWLab-AI-Assistant" / "logs"
 
     def _prune_old_logs(self, max_days: int = 30) -> None:
         """Remove log files older than ``max_days``."""

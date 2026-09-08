@@ -1,14 +1,14 @@
-# Registrasi Hook (otomasi opsional)
+# 📖 Registrasi Hook (otomasi opsional)
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Registrasi Hook**
 
-Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa Token* (zero-LLM) sebagai bagian dari fitur MCP server. Dengan hook, host agent atau IDE bisa menjalankan exe / binary hasil build (`dist/bin/awlab-ai-assistant{.exe}`) pada event lifecycle dari host agent atau IDE (penggunaan tool, saat user melakukan prompt, saat sesi berjalan, saat sesi berhenti atau selesai) sehingga observasi pola pengguna (user pattern) tertangkap otomatis — tanpa keterlibatan agent dan tanpa biaya LLM tambahan.
+Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa Token* (zero-LLM) sebagai bagian dari fitur MCP server. Dengan hook, host agent atau IDE bisa menjalankan exe / binary **bridge** hasil build (`dist/bin/awlab-ai-assistant{.exe}`) pada event lifecycle dari host agent atau IDE (penggunaan tool, saat user melakukan prompt, saat sesi berjalan, saat sesi berhenti atau selesai) sehingga observasi pola pengguna (user pattern) tertangkap otomatis — tanpa keterlibatan agent dan tanpa biaya LLM tambahan. Untuk mode `hook`, bridge akan `exec` worker (`awlab-ai-worker`) dengan argv yang sama, jadi setiap pemicuan hanya berjalan dalam satu proses singkat.
 
 **Singkatnya: memasang MCP tanpa hook tetap berfungsi normal.** Hook hanya menambahkan penangkapan otomatis. Baca [pro/kontra](#pro--kontra-mengaktifkan-hook) di bawah ini untuk lebih detail.
 
 ---
 
-## Apakah hook wajib? (Tidak)
+## 📌 Apakah hook wajib? (Tidak)
 
 | Mode | Pengambilan pola kebiasaan pengguna | Proses pengolahan tetap berjalan? |
 |------|-------------------------------------|-----------------------------------|
@@ -19,26 +19,29 @@ Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa To
 
 ---
 
-## Pro & Kontra mengaktifkan hook
+## 📌 Pro & Kontra mengaktifkan hook
 
 | | Deskripsi |
 |---|---|
 | ✅ **Pro** | **Perekaman pola kebiasaan yang Tanpa Token (zero-LLM Capture)** — perintah yang dijalankan pengguna (contoh: `pnpm install`) dicatat langsung sebagai observasi tanpa menghabiskan token LLM. <br> **Otomatis & Selalu Aktif (Always-on)** — Proses perekaman tetap berjalan meskipun agent lupa memanggil fungsi `mem_observe`. <br> **Pemrosesan Otomatis di Akhir Sesi (Turn-end Baking)** — event `Stop` akan otomatis memproses / mengolah (***bake***) data yang terkumpul. <br> **Injeksi Konteks (Context Injection)** — saat prompt dapat menyuntikkan pola data yang sudah diproses (*baked patterns*) sesuai scope ke dalam konteks. <br> **Aman dari Perulangan Tak Terbatas (Self-loop Safe)** — desain anti-loop: saat prompt hanya bertugas menyuntikkan data (injection), sedangkan tool hanya bertugas untuk mencatat hasilnya saja. |
-| ⚠️ **Kontra** | **Konfigurasi per-host agent atau IDE** — perlu melakukan pengaturan hook sekali namun berlaku untuk setiap agent atau IDE (lihat di bawah). **Subproses per event** — Setiap kali hook aktif, sistem akan menjalankan file .exe atau binary (tergantung OS) satu kali (ada sedikit overhead durasi pemanggilan awal yang disebabkan oleh PyInstaller pada setiap tool call). **Perekaman selektif** — hanya event dari tool yang membawa perintah saja yang dicatat sebagai observasi. Tool yang membaca file dan prompt tidak dicatat. **Pembacaan projct path** — host agent atau IDE yang payload-nya tidak memiliki konteks project path memerlukan parameter `--project <path>` atau variable environment khusus (contoh: variable environment `CLAUDE_PROJECT_DIR` pada claude code). |
+| ⚠️ **Kontra** | **Konfigurasi per-host agent atau IDE** — perlu melakukan pengaturan hook sekali namun berlaku untuk setiap agent atau IDE (lihat di bawah). **Subproses per event** — Setiap kali hook aktif, sistem memuat bridge (onefile) satu kali lalu `exec` worker (ada sedikit overhead durasi pemanggilan awal yang disebabkan oleh PyInstaller pada setiap tool call). **Perekaman selektif** — hanya event dari tool yang membawa perintah saja yang dicatat sebagai observasi. Tool yang membaca file dan prompt tidak dicatat. **Pembacaan projct path** — host agent atau IDE yang payload-nya tidak memiliki konteks project path memerlukan parameter `--project <path>` atau variable environment khusus (contoh: variable environment `CLAUDE_PROJECT_DIR` pada claude code). |
 
 ---
 
-## Prasyarat
+## 📌 Prasyarat
 
-1. Executable hasil build: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant{.exe}`.
+1. Pasangan executable hasil build: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant{.exe}` (bridge) + `dist/bin/awlab-ai-worker` (worker).
 2. Konfigurasi registrasi siap pakai (setiap build) di `dist/profiles/hooks/`:
    `claude.hooks.json`, `hermes.hooks.yaml`, `copilot.hooks.txt`, `cline.hooks.txt`.
 
-> Perintah hook memakai exe atau binary yang sama dengan server MCP — tidak perlu instalasi lainnya.
+> Hook memanggil bridge `awlab-ai-assistant` yang sama dengan server MCP. Untuk mode `hook`,
+> bridge menunggu hingga `.update_lock` yang sedang berjalan selesai (agar hook tidak pernah
+> berjalan terhadap binary yang setengah jadi saat publish), lalu `exec` worker dengan argv
+> yang sama. Tidak perlu instalasi lainnya.
 
 ---
 
-## Fungsi tiap event
+## 📌 Fungsi tiap event
 
 Event dibedakan berdasarkan `jenis` yang menentukan perilakunya:
 
@@ -54,32 +57,32 @@ Proses perekaman data pola kebiasaan atau pattern bersifat **selektif** contoh: 
 
 ---
 
-## Registrasi per-Agent
+## 📌 Registrasi per-Agent
 
-### 1) Claude Code
+### 🔖 1) Claude Code
 
-Gabungkan blok `hooks` dari `dist/profiles/hooks/claude.hooks.json` ke `~/.claude/settings.json` (buat jika belum ada). Ganti `awlab-ai-assistant.exe` dengan path (lokasi) file exe atau binary hasil build Anda:
+Gabungkan blok `hooks` dari `dist/profiles/hooks/claude.hooks.json` ke `~/.claude/settings.json` (buat jika belum ada). Ganti `awlab-ai-assistant` dengan path (lokasi) file exe atau binary hasil build Anda:
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event UserPromptSubmit" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event UserPromptSubmit" }] }
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event PostToolUse" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event PostToolUse" }] }
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event PreToolUse" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event PreToolUse" }] }
     ],
     "SubagentStop": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event SubagentStop" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event SubagentStop" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event Stop" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event Stop" }] }
     ],
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant.exe hook --agent claude --event SessionStart" }] }
+      { "hooks": [{ "type": "command", "command": "D:\\path\\to\\awlab-ai-assistant hook --agent claude --event SessionStart" }] }
     ]
   }
 }
@@ -87,63 +90,63 @@ Gabungkan blok `hooks` dari `dist/profiles/hooks/claude.hooks.json` ke `~/.claud
 
 Claude Code menentukan project dari payload (`cwd`) atau environment `$CLAUDE_PROJECT_DIR`.
 
-### 2) Hermes
+### 🔖 2) Hermes
 
 Gabungkan blok `hooks:` dari `dist/profiles/hooks/hermes.hooks.yaml` ke konfigurasi Hermes:
 
 ```yaml
 hooks:
   pre_llm_call:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event pre_llm_call"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event pre_llm_call"
   post_tool_call:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event post_tool_call"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event post_tool_call"
   pre_tool_call:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event pre_tool_call"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event pre_tool_call"
   subagent_stop:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event subagent_stop"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event subagent_stop"
   on_session_start:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event on_session_start"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event on_session_start"
   on_session_end:
-    - command: "D:\\path\\to\\awlab-ai-assistant.exe hook --agent hermes --event on_session_end"
+    - command: "D:\\path\\to\\awlab-ai-assistant hook --agent hermes --event on_session_end"
 ```
 
-### 3) Cline
+### 🔖 3) Cline
 
 Hook Cline didaftarkan di UI pengaturan (pengaturan MCP/hook). Tambahkan perintah dari `dist/profiles/hooks/cline.hooks.txt`:
 
 ```
-awlab-ai-assistant.exe hook --agent cline --event NewTask
-awlab-ai-assistant.exe hook --agent cline --event PostToolUse
-awlab-ai-assistant.exe hook --agent cline --event Stop
+awlab-ai-assistant hook --agent cline --event NewTask
+awlab-ai-assistant hook --agent cline --event PostToolUse
+awlab-ai-assistant hook --agent cline --event Stop
 ```
 
-### 4) VSCode Copilot
+### 🔖 4) VSCode Copilot
 
 Copilot tidak membaca file konfigurasi hook melainkan registrasinya melalui pengaturan/UI VSCode itu sendiri. Gunakan perintah dari `dist/profiles/hooks/copilot.hooks.txt`:
 
 ```
-awlab-ai-assistant.exe hook --agent copilot --event user-prompt-submit
-awlab-ai-assistant.exe hook --agent copilot --event post-tool-use
-awlab-ai-assistant.exe hook --agent copilot --event session-start
-awlab-ai-assistant.exe hook --agent copilot --event session-end
-awlab-ai-assistant.exe hook --agent copilot --event subagent-stop
-awlab-ai-assistant.exe hook --agent copilot --event stop
+awlab-ai-assistant hook --agent copilot --event user-prompt-submit
+awlab-ai-assistant hook --agent copilot --event post-tool-use
+awlab-ai-assistant hook --agent copilot --event session-start
+awlab-ai-assistant hook --agent copilot --event session-end
+awlab-ai-assistant hook --agent copilot --event subagent-stop
+awlab-ai-assistant hook --agent copilot --event stop
 ```
 
-### 5) Google Antigravity & Antigravity IDE
+### 🔖 5) Google Antigravity & Antigravity IDE
 
-Gabungkan blok `awlab-ai-assistant` dari `dist/profiles/hooks/antigravity.hooks.json` ke `~/.gemini/config/hooks.json` (atau `.agents/hooks.json`). Ganti `awlab-ai-assistant.exe` dengan path absolut executable Anda:
+Gabungkan blok `AWLab-AI-Assistant` dari `dist/profiles/hooks/antigravity.hooks.json` ke `~/.gemini/config/hooks.json` (atau `.agents/hooks.json`). Ganti `awlab-ai-assistant` dengan path absolut executable Anda:
 
 ```json
 {
-  "awlab-ai-assistant": {
+  "AWLab-AI-Assistant": {
     "PreToolUse": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "awlab-ai-assistant.exe hook --agent antigravity --event PreToolUse"
+            "command": "awlab-ai-assistant hook --agent antigravity --event PreToolUse"
           }
         ]
       }
@@ -154,7 +157,7 @@ Gabungkan blok `awlab-ai-assistant` dari `dist/profiles/hooks/antigravity.hooks.
         "hooks": [
           {
             "type": "command",
-            "command": "awlab-ai-assistant.exe hook --agent antigravity --event PostToolUse"
+            "command": "awlab-ai-assistant hook --agent antigravity --event PostToolUse"
           }
         ]
       }
@@ -162,13 +165,13 @@ Gabungkan blok `awlab-ai-assistant` dari `dist/profiles/hooks/antigravity.hooks.
     "PreInvocation": [
       {
         "type": "command",
-        "command": "awlab-ai-assistant.exe hook --agent antigravity --event PreInvocation"
+        "command": "awlab-ai-assistant hook --agent antigravity --event PreInvocation"
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "awlab-ai-assistant.exe hook --agent antigravity --event Stop"
+        "command": "awlab-ai-assistant hook --agent antigravity --event Stop"
       }
     ]
   }
@@ -177,21 +180,21 @@ Gabungkan blok `awlab-ai-assistant` dari `dist/profiles/hooks/antigravity.hooks.
 
 ---
 
-## Verifikasi hook berfungsi
+## 📌 Verifikasi hook berfungsi
 
 **Manual** (di Linux/macOS gunakan `printf`, di Windows gunakan `cmd /c "echo ... | exe hook ..."` atau
 skrip kustom — catatan: `|` PowerShell bisa tidak andal untuk stdin native):
 
 ```bash
-# capture path (tool event with a command)
+# 📖 capture path (tool event with a command)
 echo '{"tool_name":"Bash","tool_input":{"command":"pnpm install"}}' | \
-  awlab-ai-assistant.exe hook --agent claude --event PostToolUse --project /path/to/project
+  awlab-ai-assistant hook --agent claude --event PostToolUse --project /path/to/project
 # → writes /path/to/project/.ai/memory-bank/observations.jsonl
 # → stdout: {}
 
-# prompt path (READ)
+# 📖 prompt path (READ)
 echo '{"prompt":"please run the tests"}' | \
-  awlab-ai-assistant.exe hook --agent claude --event UserPromptSubmit --project /path/to/project
+  awlab-ai-assistant hook --agent claude --event UserPromptSubmit --project /path/to/project
 # → stdout: {"decision":"allow"}
 ```
 
@@ -199,7 +202,7 @@ echo '{"prompt":"please run the tests"}' | \
 
 ---
 
-## Pemecahan masalah
+## 📌 Pemecahan masalah
 
 | Masalah | Penyebab / solusi |
 |---------|-------------|

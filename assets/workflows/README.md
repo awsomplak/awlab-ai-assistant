@@ -1,12 +1,12 @@
 # Workflows (shared source)
 
-This directory is the **single source of truth** for AWLab-ID workflows. `run.py build`
+This directory is the **single source of truth** for AWLab-AI-Assistant workflows. `run.py build`
 copies these `.md` files into `dist/workflows/`, and `run.py publish` distributes them:
 
-| Agent | Destination |
-| --- | --- |
-| **Cline** | `~/Documents/Cline/Workflows/` **and** `~/.awlab-id/agent-memory/work-flows/` |
-| **Copilot / Claude / Hermes** (non-Cline) | `~/.awlab-id/agent-memory/work-flows/` |
+| Agent                                     | Destination                                                                   |
+| ----------------------------------------- | ----------------------------------------------------------------------------- |
+| **Cline**                                 | `~/Documents/Cline/Workflows/` **and** `~/.awlab-id/agent-memory/work-flows/` |
+| **Copilot / Claude / Hermes** (non-Cline) | `~/.awlab-id/agent-memory/work-flows/`                                        |
 
 ## Runtime
 
@@ -24,10 +24,12 @@ Workflow files are Markdown with YAML-ish frontmatter and `##` step sections:
 description: One-line summary
 
 ## Step 1: Setup
+
 - `log` Describe what happens here
 - `agent_task` Ask the user a question
 
 ## Step 2: Execute
+
 - `mcp_tool` Call tool_name: my_tool
 - `file_op` Read path: "src/app.py"
 ```

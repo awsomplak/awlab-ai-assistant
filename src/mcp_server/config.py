@@ -1,5 +1,5 @@
 """
-Central configuration for the awlab-id MCP server.
+Central configuration for the AWLab-AI-Assistant MCP server.
 
 Provides a singleton ``settings`` object with lazy-loaded paths relative
 to a resolved project root (workspace_path).  All ``.ai/`` directory paths
@@ -121,6 +121,28 @@ class _Settings:
     def is_production(self) -> bool:
         """True when running as standalone PyInstaller exe or AWLAB_ENV=production."""
         return _is_production()
+
+    # ── LLM Settings ────────────────────────────────────────────────────────
+
+    @cached_property
+    def llm_api_key(self) -> str | None:
+        """Optional LLM API Key."""
+        return os.environ.get("LLM_API_KEY")
+
+    @cached_property
+    def llm_base_url(self) -> str | None:
+        """Optional LLM Base URL."""
+        return os.environ.get("LLM_BASE_URL")
+
+    @cached_property
+    def llm_model(self) -> str | None:
+        """Optional LLM Model Name."""
+        return os.environ.get("LLM_MODEL")
+
+    @cached_property
+    def llm_enabled(self) -> bool:
+        """True if LLM model and either API key or Base URL are configured."""
+        return bool(self.llm_model and (self.llm_api_key or self.llm_base_url))
 
     # ── Paths ───────────────────────────────────────────────────────────────
 
@@ -272,6 +294,9 @@ class _Settings:
         path = self._resolve_workspace(workspace_path=workspace_path) / ".ai"
         if not self.is_production:
             path.mkdir(parents=True, exist_ok=True)
+            # Fully bootstrap the .ai directory structure when it's accessed
+            for subdir in ["codegraph", "lancedb", "temp", "artifacts", "memory-bank"]:
+                (path / subdir).mkdir(exist_ok=True)
         return path
 
     def get_artifacts_dir(self, workspace_path: str | Path = "") -> Path:

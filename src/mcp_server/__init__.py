@@ -1,5 +1,5 @@
 """
-mcp_server — Project-isolated MCP server for cline-ai-assisted-dev.
+mcp_server — Project-isolated MCP server for awlab-ai-assistant.
 
 Provides tools for:
 - Plan & Task Management

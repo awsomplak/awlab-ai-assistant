@@ -30,22 +30,24 @@ from . import helpers
 from .config import settings
 from .helpers.context_builder import materialize_context
 from .helpers.file_utils import read_file_safe, write_file_safe
-from .helpers.graphify_bridge import (
+from .helpers.llm_extractor import extract_memory
+from .helpers.observation_store import append_observations
+from .modules.graphify import (
     ensure_fresh as _graph_ensure_fresh,
 )
-from .helpers.graphify_bridge import (
+from .modules.graphify import (
     explain_node as _graph_explain,
 )
-from .helpers.graphify_bridge import (
+from .modules.graphify import (
     graph_build_action as _graph_build,
 )
-from .helpers.graphify_bridge import (
+from .modules.graphify import (
     graph_status as _graph_status,
 )
-from .helpers.graphify_bridge import (
+from .modules.graphify import (
     path_query as _graph_path,
 )
-from .helpers.graphify_bridge import (
+from .modules.graphify import (
     query_graph as _graph_query,
 )
 from .tools import context_tools, file_tools, memory_tools, plan_tools, utils_tools
@@ -70,6 +72,7 @@ from .tools.plan_tools.io import (
 # ══════════════════════════════════════════════════════════════════════════
 
 VALID_GROUPS = {"task", "plan", "memory", "context", "util", "workflow", "graph"}
+_SAFE_ERRORS = (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError)
 _PARAM_TYPES = {"string", "integer", "boolean", "array", "object"}
 _SPEC_KEYS = {
     "group",
@@ -363,6 +366,7 @@ async def _mem_observe(
     workspace_path: str,
     project_id: str | None = None,
     observations: list[dict[str, Any]] | None = None,
+    raw_text: str | None = None,
     stack: str = "any",
 ) -> dict[str, Any]:
     """Record user-pattern evidence into the observation store (baking input).
@@ -372,10 +376,12 @@ async def _mem_observe(
     later keys → counts → measures consistency → computes confidence. Dedup/
     delta-guarded (fingerprint), so re-recording the same signal is a no-op.
     """
-    from .helpers.observation_store import append_observations
+    if raw_text and settings.llm_enabled:
+        extracted = extract_memory(raw_text)
+        observations = (observations or []) + extracted.get("observations", [])
 
     if not observations:
-        return helpers.fail_obj(error="mem_observe: observations required")
+        return helpers.fail_obj(error="mem_observe: observations or raw_text required")
 
     records = []
     for o in observations:
@@ -490,7 +496,7 @@ async def _context_composite(
     """
     try:
         plan = await _plan_status(workspace_path=workspace_path, project_id=project_id, format="minimal")
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):  # — degrade gracefully
+    except _SAFE_ERRORS:  # — degrade gracefully
         plan = {"success": False, "error": "plan status unavailable"}
 
     # Active plan UUID (from plan_status registry) for plan.md/notes.md.
@@ -500,7 +506,7 @@ async def _context_composite(
         active = (registry or {}).get("active") if isinstance(registry, dict) else None
         if isinstance(active, list) and active:
             active_uuid = (active[0] or {}).get("uuid", "")
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+    except _SAFE_ERRORS:
         active_uuid = ""
 
     plan_doc: dict[str, Any] = {"success": False, "error": "no plan.md"}
@@ -511,19 +517,19 @@ async def _context_composite(
             raw_plan = helpers.read_plan_md(workspace_path=workspace_path, uuid=active_uuid)
             if raw_plan.get("content"):
                 plan_doc = helpers.parse_plan_md(raw_plan["content"])
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             plan_doc = {"success": False, "error": "plan.md unreadable"}
         try:
             raw_notes = helpers.read_notes_md(workspace_path=workspace_path, uuid=active_uuid)
             if raw_notes.get("content"):
                 notes_doc = helpers.parse_notes_md(raw_notes["content"])
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             notes_doc = {"success": False, "error": "notes.md unreadable"}
         try:
             raw_walkthrough = helpers.read_walkthrough_md(workspace_path=workspace_path, uuid=active_uuid)
             if raw_walkthrough.get("content"):
                 walkthrough_doc = helpers.parse_walkthrough_md(raw_walkthrough["content"])
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             walkthrough_doc = {"success": False, "error": "walkthrough.md unreadable"}
 
     code: dict[str, Any] = {"success": True, "results": [], "related_memory": []}
@@ -534,13 +540,13 @@ async def _context_composite(
             code = await _maybe_await(
                 _graph_query, workspace_path=workspace_path, query=query, limit=5, project_id=project_id
             )
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             code = {"success": False, "error": "graph query unavailable"}
         try:
             mem = await memory_tools.search_memory(
                 workspace_path=workspace_path, project_id=project_id, query=query, limit=5
             )
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             mem = {"success": False, "error": "memory search unavailable"}
     else:
         # No query → the agent can't know what's stored yet. Return an INVENTORY
@@ -550,7 +556,7 @@ async def _context_composite(
             status = _graph_status(workspace_path=workspace_path)
             if isinstance(status, dict) and status.get("exists"):
                 code = {"success": True, "mode": "graph_status", **status}
-        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, RuntimeError):
+        except _SAFE_ERRORS:
             pass
 
     # Pattern delivery (Phase 5): inject stack-scoped baked patterns + tell-once
@@ -576,12 +582,12 @@ async def _context_composite(
 
     return {
         "success": True,
-        "plan": plan if isinstance(plan, dict) else plan,
+        "plan": plan,
         "plan_doc": plan_doc,
         "notes_doc": notes_doc,
         "walkthrough_doc": walkthrough_doc,
-        "code": code if isinstance(code, dict) else code,
-        "memory": mem if isinstance(mem, dict) else mem,
+        "code": code,
+        "memory": mem,
         "patterns": baked_patterns,
         "pattern_candidates": pattern_candidates,
         "query": query,
@@ -652,6 +658,7 @@ async def _mem_write(
     entities: list[dict[str, Any]] | None = None,
     observations: list[dict[str, Any]] | None = None,
     relations: list[dict[str, Any]] | None = None,
+    raw_text: str | None = None,
     store: str = "project",
 ) -> dict[str, Any]:
     """Merge mem_create_entities / mem_tag_entity / mem_relate / mem_store.
@@ -662,6 +669,16 @@ async def _mem_write(
     auto-create used to hardcode ``entityType: "concept"`` and ``create_entities``
     matches on ``(name, type)``, which created ``X :: concept`` beside ``X :: feature``).
     """
+    if raw_text and settings.llm_enabled:
+        extracted = extract_memory(raw_text)
+        entities = (entities or []) + extracted.get("entities", [])
+        observations = (observations or []) + extracted.get("observations", [])
+
+    if not (entities or observations or relations):
+        return helpers.fail_obj(
+            error="mem_write: must provide at least one of entities, observations, relations, or raw_text"
+        )
+
     patterns, family = helpers.store_target(store)
     result: dict[str, Any] = {
         "success": True,
@@ -989,7 +1006,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
     "plan_create": {
         "group": "plan",
         "summary": "Create a new plan: auto-generates UUID, scaffolds files, updates registry.",
-        "doc": "Creates a new plan deterministically on the server side. It generates an 8-character UUID, creates `.ai/artifacts/{uuid}/`, scaffolds `plan.md` and `tasks.md`, and safely inserts the new plan into the active table of `registry.md`. Use this instead of manually creating plan files.",
+        "doc": "Creates a new plan deterministically on the server side. It generates an 8-character "
+        "UUID, creates `.ai/artifacts/{uuid}/`, scaffolds `plan.md` and `tasks.md`, and safely inserts "
+        "the new plan into the active table of `registry.md`. Use this instead of manually creating plan files.",
         "handler": plan_tools.create_plan_action,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
@@ -1232,6 +1251,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "items": {"type": "object"},
                 "desc": "[{signature, value, source?, stack?, context?}] — raw pattern evidence",
             },
+            "raw_text": {"type": "string", "desc": "Raw text to pipe through LLM extraction if enabled"},
             "stack": {"type": "string", "default": "any", "desc": "Default stack tag when an observation omits stack"},
         },
         "returns": "{success, store, appended, skipped_duplicates, skipped_invalid}",
@@ -1292,6 +1312,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "entities": {"type": "array", "items": {"type": "object"}, "desc": "[{name, entityType, observations}]"},
             "observations": {"type": "array", "items": {"type": "object"}, "desc": "[{entityName, contents}]"},
             "relations": {"type": "array", "items": {"type": "object"}, "desc": "[{from, to, relationType}]"},
+            "raw_text": {"type": "string", "desc": "Raw text to pipe through LLM extraction if enabled"},
             "store": {
                 "type": "string",
                 "pattern": r"^(project|patterns|family_[a-z0-9_-]+)$",
@@ -1489,8 +1510,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "default": True,
                 "desc": (
                     "Non-blocking trigger (default): start the background worker and "
-                    "return immediately; poll graph_status for progress. Set false "
-                    "to process one chunk synchronously."
+                    "return immediately; poll graph_status for progress. "
+                    "CRITICAL FOR AGENTS: NEVER set background=False on initial builds "
+                    "for large projects! It will only process a single chunk and stop, "
+                    "leaving the graph incomplete. Always rely on the default (True)."
                 ),
             },
             "force": {
@@ -1567,6 +1590,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "query": {"type": "string", "required": True, "desc": "Search term"},
             "limit": {"type": "integer", "default": 10, "desc": "Max results"},
+            "kind": {"type": "string", "desc": "Filter results by node kind/type (e.g. 'function', 'class', 'file')"},
+            "group_by_file": {
+                "type": "boolean",
+                "default": False,
+                "desc": "Only return the best scoring node per source file",
+            },
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — query the merged family graph (member:: tagged nodes)"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
@@ -1593,8 +1622,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "handler": _graph_path,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
-            "a": {"type": "string", "required": True, "desc": "From node label"},
-            "b": {"type": "string", "required": True, "desc": "To node label"},
+            "a": {"type": "string", "desc": "From node label (alias for from_node)"},
+            "b": {"type": "string", "desc": "To node label (alias for to_node)"},
+            "from_node": {"type": "string", "desc": "From node label"},
+            "to_node": {"type": "string", "desc": "To node label"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — path over the merged family graph"},
         },
@@ -1619,6 +1650,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "node": {"type": "string", "required": True, "desc": "Node label"},
             "limit": {"type": "integer", "default": 30, "desc": "Max neighbours"},
+            "depth": {
+                "type": "integer",
+                "default": 1,
+                "desc": "Neighbourhood BFS traversal depth (useful for cross-file class relationships)",
+            },
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — explain a node in the merged family graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
@@ -1854,7 +1890,7 @@ def validate_params(spec: dict[str, Any], params: dict[str, Any] | None) -> tupl
         # Enum / pattern
         if pspec.get("enum") and value not in pspec["enum"]:
             errors.append({"param": name, "reason": f"must be one of {pspec['enum']}"})
-        if pspec.get("pattern") and isinstance(value, str) and not __import__("re").match(pspec["pattern"], value):
+        if pspec.get("pattern") and isinstance(value, str) and not re.match(pspec["pattern"], value):
             errors.append({"param": name, "reason": f"must match {pspec['pattern']}"})
         validated[name] = value
     return validated, errors
@@ -1977,13 +2013,13 @@ def build_skill_md() -> str:
     """
     out = [
         "---",
-        "name: awlab-ai-assistant",
+        "name: AWLab-AI-Assistant",
         "description: Dispatch consolidated MCP actions via action_call(action=...). "
         "Two tools only: action_call + action_help. Always pass workspace_path; "
         "params is a single nested JSON object — never flatten at the top level.",
         "---",
         "",
-        "# awlab-ai-assistant — Action Reference",
+        "# AWLab-AI-Assistant — Action Reference",
         "",
         "## ⚠️ Read this first (most first-contact failures happen here)",
         "",

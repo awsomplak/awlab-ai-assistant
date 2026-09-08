@@ -20,7 +20,7 @@
 
 ### Context Retrieval
 
-- `awlab-ai-assistant` memory actions inject relevant memories on demand. Do not load memory files manually.
+- `AWLab-AI-Assistant` memory actions inject relevant memories on demand. Do not load memory files manually.
 - Use `action_call(action="mem_search", ...)` before starting tasks to retrieve context.
 - The only files that may be read are `./.ai/memory-bank/environment.md` (shell detection) and `./.ai/memory-bank/context.md` (read via `ctx_info mode="context"`).
 
@@ -72,3 +72,4 @@ To prevent small local models (1.5B–3B parameters) from suffering context wind
 - ❌ Reading entire plan files when only the task list is needed
 - ❌ Mixing artifacts between different projects
 - ❌ Re-reading the registry multiple times in one session when the active plan hasn’t changed
+- ❌ Calling `plan_doc(mode="read")` to gather general plan context (it dumps the massive raw file and burns tokens). ALWAYS use `ctx_info` instead unless explicitly rewriting the plan.

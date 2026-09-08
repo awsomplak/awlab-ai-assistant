@@ -1,16 +1,23 @@
-# AWLab-ID MCP Server
+# AWLab-AI-Assistant MCP Server
 
-**Deterministic MCP server — a single executable exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation.**
+**Deterministic MCP server — published as a `bridge + worker` pair exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation. The `awlab-ai-assistant` executable is a thin stdio proxy (the *bridge*) that fronts `awlab-ai-worker`, this heavy server: the bridge keeps an IDE's JSON-RPC pipe alive, so `publish --target=binary` hot-swaps the worker underneath it with no `context canceled`.**
 
-Part of the [cline-ai-assisted-dev](../) system.
+Part of the [awlab-ai-assistant](../../README.md) system.
 
-| Server | MCP tools | Actions (via `action_call`) | Entry Point |
-|--------|-----------|------------------------------|-------------|
-| `awlab-ai-assistant` | `action_call` + `action_help` | 23 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
+| Server               | MCP tools                     | Actions (via `action_call`)                                                   | Entry Point                 |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------- | --------------------------- |
+| `AWLab-AI-Assistant` | `action_call` + `action_help` | 23 (`task_*`, `plan_*`, `mem_*`, `graph_*`, `ctx_*`, `util_*`, `wf`, `reg_*`) | `server.py` / `__main__.py` |
 
 ---
 
 ## Architecture
+
+> **Production deployment is a bridge + worker pair.** `awlab-ai-assistant` (this package
+> frozen as a thin, always-on stdio proxy) is the single entrypoint every IDE/hook config
+> points at; it spawns and manages `awlab-ai-worker` (this package's real MCP server) and
+> hot-swaps it on `publish --target=binary`, so updating a binary never tears down an IDE's
+> JSON-RPC pipe (`context canceled`). The diagrams below describe this server package — the
+> worker.
 
 ```mermaid
 graph TB
@@ -20,7 +27,7 @@ graph TB
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
     REG["registry.py<br/>REGISTRY — 23 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
-    HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
+    HELPERS["helpers/<br/>agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
 
   subgraph CLIENTS["MCP Consumers"]
@@ -43,7 +50,7 @@ graph TB
   HELPERS -->|"import"| AG
   HELPERS -->|"library import"| CG
 
-  style SERVER fill:#3572A5,color:#fff
+  style SERVER fill:#2d2d2d,color:#fff
   style CLIENTS fill:#2d2d2d,color:#fff
   style EXTERNAL fill:#4caf50,color:#fff
 ```
@@ -67,6 +74,7 @@ flowchart LR
 ```
 
 **Key design decisions:**
+
 - **No workspace auto-detection.** The server never inspects env vars, process trees, or CWD to resolve the project root.
 - **`workspace_path` is required** for all tools that operate on disk (plans, registry, memory bank, scanning).
 - **Env vars are optional** — the server runs with sensible defaults. See [Configuration](#configuration) below.
@@ -83,7 +91,7 @@ flowchart LR
 ```bash
 # From project root
 pip install -e .
-# Now `awlab-ai-assistant` is available as a CLI command
+# Now `AWLab-AI-Assistant` is available as a CLI command
 ```
 
 ### Build standalone executables
@@ -96,14 +104,24 @@ python scripts/run.py build --target-os=all
 python scripts/run.py build --target-os=linux
 ```
 
-Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awlab-ai-assistant` (Linux/macOS) — a single binary for all platforms.
+Built executable pair at `dist/bin/`:
+
+| Binary                    | Role                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `awlab-ai-assistant`      | **Bridge** — thin stdio proxy (ONE-FILE). The single entrypoint every IDE/hook config points at. |
+| `awlab-ai-worker`         | **Worker** — this heavy MCP server (ONEDIR); spawned by the bridge, hot-swapped on publish.      |
+
+Point your agent at `dist/bin/awlab-ai-assistant` (the bridge) — unchanged name, so no IDE/hook
+config changes. To hot-reload a live deployment, just re-run `python scripts/run.py publish
+--target=binary`: bridges stay up, workers are swapped, and the IDE sees a brief pause — never
+a `context canceled`.
 
 ### Configure in Cline
 
 ```json
 {
   "mcpServers": {
-    "awlab-ai-assistant": {
+    "AWLab-AI-Assistant": {
       "type": "stdio",
       "command": "path_to/dist/awlab-ai-assistant.exe",
       "env": {
@@ -117,11 +135,11 @@ Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awla
 
 **Alternative entry points** (use any one):
 
-| Server | Entry Point | `command` | `args` |
-|--------|-------------|-----------|--------|
-| `awlab-ai-assistant` | Installed CLI | `.venv\Scripts\awlab-ai-assistant.exe` | *(none)* |
-| `awlab-ai-assistant` | Python module | `.venv\Scripts\python.exe` | `["-m", "mcp_server"]` |
-| `awlab-ai-assistant` | Built executable | `dist/bin/awlab-ai-assistant.exe` | *(none)* |
+| Server               | Entry Point      | `command`                              | `args`                 |
+| -------------------- | ---------------- | -------------------------------------- | ---------------------- |
+| `AWLab-AI-Assistant` | Installed CLI    | `.venv\Scripts\awlab-ai-assistant.exe` | _(none)_               |
+| `AWLab-AI-Assistant` | Python module    | `.venv\Scripts\python.exe`             | `["-m", "mcp_server"]` |
+| `AWLab-AI-Assistant` | Built executable | `dist/bin/awlab-ai-assistant.exe`      | _(none)_               |
 
 ---
 
@@ -129,55 +147,55 @@ Built executable at `dist/bin/awlab-ai-assistant.exe` (Windows) / `dist/bin/awla
 
 Two MCP tools are exposed:
 
-| MCP tool | Description |
-|----------|-------------|
+| MCP tool                       | Description                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `action_call(action, params?)` | Route any REGISTRY action; runs preconditions (idempotent) + pipeline (ordered) then the handler; returns `{success, action, result, executed, skipped}` |
-| `action_help(action?)` | Per-action usage (params, defaults, example, errors, preconditions, pipeline) or grouped overview |
+| `action_help(action?)`         | Per-action usage (params, defaults, example, errors, preconditions, pipeline) or grouped overview                                                        |
 
 ### Actions by group
 
 **📋 Plan / Registry / Tasks**
 
-| Action | Description |
-|--------|-------------|
-| `task_read` | Parse `tasks.md` into structured/raw/minimal JSON |
-| `task_update` | Update task status (multi-level paths) with atomic rollback |
-| `plan_status` | Registry + next-eligible task + phase gate + completable check |
-| `plan_update` | Switch active plan / mark phase complete / resolve deferred tasks |
-| `plan_doc` | Read / create / update / delete a plan's `plan.md` or `notes.md` (pass full content) |
-| `reg_update` | Single registry.md CRUD: create (server UUID) / update status (active\|paused\|complete) / delete (requires approval) |
-| `wf` | List or execute named workflows |
+| Action        | Description                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `task_read`   | Parse `tasks.md` into structured/raw/minimal JSON                                                                     |
+| `task_update` | Update task status (multi-level paths) with atomic rollback                                                           |
+| `plan_status` | Registry + next-eligible task + phase gate + completable check                                                        |
+| `plan_update` | Switch active plan / mark phase complete / resolve deferred tasks                                                     |
+| `plan_doc`    | Read / create / update / delete a plan's `plan.md` or `notes.md` (pass full content)                                  |
+| `reg_update`  | Single registry.md CRUD: create (server UUID) / update status (active\|paused\|complete) / delete (requires approval) |
+| `wf`          | List or execute named workflows                                                                                       |
 
 **🧠 Memory**
 
-| Action | Description |
-|--------|-------------|
-| `mem_search` | Hybrid BM25+dense search (scope + project_id) |
-| `mem_write` | Create/tag/relate/store observations + entities |
-| `mem_read` | Node details or graph neighbourhood |
-| `mem_remove` | Archive entities / delete observations / delete relations |
-| `mem_list_entities` | Inventory all memory entities (name/type/obs count) for auditing |
-| `mem_dedupe` | Merge same-named entities (keep data-bearing, archive dupes) |
-| `mem_replay` | Replay the offline cache (`pending.jsonl`) — re-apply queued mutations |
-| `mem_observe` | Record user-pattern evidence into `observations.jsonl` — pattern-baking input |
+| Action              | Description                                                                   |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `mem_search`        | Hybrid BM25+dense search (scope + project_id)                                 |
+| `mem_write`         | Create/tag/relate/store observations + entities                               |
+| `mem_read`          | Node details or graph neighbourhood                                           |
+| `mem_remove`        | Archive entities / delete observations / delete relations                     |
+| `mem_list_entities` | Inventory all memory entities (name/type/obs count) for auditing              |
+| `mem_dedupe`        | Merge same-named entities (keep data-bearing, archive dupes)                  |
+| `mem_replay`        | Replay the offline cache (`pending.jsonl`) — re-apply queued mutations        |
+| `mem_observe`       | Record user-pattern evidence into `observations.jsonl` — pattern-baking input |
 
 **🕸️ Code Knowledge Graph**
 
-| Action | Description |
-|--------|-------------|
-| `graph_build` | Build the code graph into `<root>/.ai/codegraph/` (AST-only, no LLM) |
-| `graph_status` | Freshness check {fresh, last_built, changed_files} |
-| `graph_query` | Search graph nodes by label/source/type |
-| `graph_path` | Shortest path (BFS) between two nodes |
-| `graph_explain` | Node details + direct neighbours with relations |
+| Action          | Description                                                          |
+| --------------- | -------------------------------------------------------------------- |
+| `graph_build`   | Build the code graph into `<root>/.ai/codegraph/` (AST-only, no LLM) |
+| `graph_status`  | Freshness check {fresh, last_built, changed_files}                   |
+| `graph_query`   | Search graph nodes by label/source/type                              |
+| `graph_path`    | Shortest path (BFS) between two nodes                                |
+| `graph_explain` | Node details + direct neighbours with relations                      |
 
 **⚙️ Context / Util**
 
-| Action | Description |
-|--------|-------------|
-| `ctx_info` | Active plan + **stack-scoped baked patterns + pattern_candidates (tell-once)** + project ID snapshot |
-| `project_id` | Check the project-id; auto-create it if missing (idempotent) — call on first response |
-| `util_info` | OS, shell, server version, build metadata |
+| Action       | Description                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| `ctx_info`   | Active plan + **stack-scoped baked patterns + pattern_candidates (tell-once)** + project ID snapshot |
+| `project_id` | Check the project-id; auto-create it if missing (idempotent) — call on first response                |
+| `util_info`  | OS, shell, server version, build metadata                                                            |
 
 ### 🧁 Pattern baking & hook mode
 
@@ -192,13 +210,13 @@ share one store → identical candidates. See `docs/en/PATTERN_BAKING_PROTOCOL.m
 
 ## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AWLAB_ENV` | Force `production`/`development` mode (else auto-detected from PyInstaller exe) | auto |
-| `LOG_ENABLED` | Enable/disable file logging (`true`/`1`/`yes`) | `true` |
-| `LOG_LEVEL` | Logging verbosity (`info`, `debug`) | `info` |
-| `DB_PATH` | Override agent-recall database directory | *(workspace_path/.ai/memory/)* |
-| `GRAPH_PARALLEL` | Opt-in parallel graph extraction (see docs/en/INSTALL.md) | `false` |
+| Variable         | Description                                                                     | Default                        |
+| ---------------- | ------------------------------------------------------------------------------- | ------------------------------ |
+| `AWLAB_ENV`      | Force `production`/`development` mode (else auto-detected from PyInstaller exe) | auto                           |
+| `LOG_ENABLED`    | Enable/disable file logging (`true`/`1`/`yes`)                                  | `true`                         |
+| `LOG_LEVEL`      | Logging verbosity (`info`, `debug`)                                             | `info`                         |
+| `DB_PATH`        | Override agent-recall database directory                                        | _(workspace_path/.ai/memory/)_ |
+| `GRAPH_PARALLEL` | Opt-in parallel graph extraction (see docs/en/INSTALL.md)                       | `false`                        |
 
 Copy `.env` (or `config.json`) in the production config home `~/.awlab-id/agent-memory/` or project root to customize:
 
@@ -218,8 +236,9 @@ GRAPH_PARALLEL=false        # Sequential extraction (default, recommended)
 mcp_server/
 ├── __init__.py
 ├── _version.py             # Version string (v3.0.5+build.105)
-├── server.py               # Dev console entry (awlab-ai-assistant)
-├── __main__.py             # PyInstaller entry — single executable
+├── server.py               # Dev console entry (AWLab-AI-Assistant)
+├── __main__.py             # Worker PyInstaller entry (awlab-ai-worker)
+├── bridge.py               # Bridge entry (awlab-ai-assistant, onefile) — stdio proxy
 ├── registry.py             # REGISTRY — 23 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
@@ -240,7 +259,7 @@ mcp_server/
 ├── helpers/
 │   ├── __init__.py         # Re-exports all helpers
 │   ├── agent_recall.py     # agent-recall bridge (library import)
-│   ├── graphify_bridge.py  # Code knowledge graph (graphifyy, AST-only)
+│   ├── ...
 │   ├── file_utils.py       # File I/O and markdown parsing
 │   ├── registry_utils.py   # Registry.md parsing and updating
 │   ├── embeddings.py       # FastEmbed integration
@@ -274,4 +293,3 @@ Log output goes to **stderr** (not stdout), preventing interference with the MCP
 - `mcp>=1.0.0`, `pydantic>=2.0`, `python-dotenv>=1.0`
 - `httpx>=0.28` (for agent-recall subprocess)
 - Optional: `fastembed>=0.5.0` (for BM25+dense hybrid search)
-

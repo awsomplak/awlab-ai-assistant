@@ -26,9 +26,9 @@ except ImportError:
 # still do ``if lock_fd is None: <failed>``.
 _WINDOWS_LOCK_SENTINEL = object()
 
-from ..config import settings
-from .logger import logger
-from .response import fail_obj, ok_obj, resp_obj
+from ..config import settings  # noqa: E402
+from .logger import logger  # noqa: E402
+from .response import fail_obj, ok_obj, resp_obj  # noqa: E402
 
 
 def read_file_safe(path: Path | str) -> str | None:
@@ -141,6 +141,33 @@ def _release_lock(lock_path: Path, fd: object | None = None) -> None:
         lock_path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+class AcquireLock:
+    """Context manager for cross-process advisory file locking."""
+
+    def __init__(self, lock_path: Path | str, timeout: float = 30.0):
+        self.lock_path = Path(lock_path)
+        self.timeout = timeout
+        self.lock_fd = None
+
+    def acquire(self, timeout: float | None = None) -> bool:
+        t = timeout if timeout is not None else self.timeout
+        self.lock_fd = _acquire_lock(self.lock_path, timeout=t)
+        return self.lock_fd is not None
+
+    def release(self) -> None:
+        if self.lock_fd is not None:
+            _release_lock(self.lock_path, fd=self.lock_fd)
+            self.lock_fd = None
+
+    def __enter__(self):
+        if not self.acquire():
+            raise TimeoutError(f"Could not acquire cross-process lock for {self.lock_path}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
 
 
 def write_file_safe(path: Path | str, content: str) -> bool:

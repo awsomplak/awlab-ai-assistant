@@ -7,6 +7,7 @@ All tool handlers should use ``ok_obj`` / ``fail_obj`` for dict returns or
 
 import datetime
 import json
+import pathlib
 from typing import Any
 
 from .logger import logger
@@ -82,5 +83,7 @@ def _json_converter(obj):
         return obj.isoformat()  # Converts datetime to "2026-06-28T11:43:47..."
     if isinstance(obj, set):
         return list(obj)  # Converts sets to arrays
+    if isinstance(obj, pathlib.Path):
+        return str(obj)
     # return str(obj)             # Fallback string representation
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
