@@ -20,7 +20,7 @@ graph TB
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
     REG["registry.py<br/>REGISTRY — 23 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
-    HELPERS["helpers/<br/>graphify_bridge · agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
+    HELPERS["helpers/<br/>agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
 
   subgraph CLIENTS["MCP Consumers"]
@@ -241,7 +241,7 @@ mcp_server/
 ├── helpers/
 │   ├── __init__.py         # Re-exports all helpers
 │   ├── agent_recall.py     # agent-recall bridge (library import)
-│   ├── graphify_bridge.py  # Code knowledge graph (graphify, AST-only)
+│   ├── ...
 │   ├── file_utils.py       # File I/O and markdown parsing
 │   ├── registry_utils.py   # Registry.md parsing and updating
 │   ├── embeddings.py       # FastEmbed integration
