@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🚀 Highlights
 
+- **Zero-Downtime MCP Bridge + Worker**: the single executable is now a thin stdlib-only **bridge** (`awlab-ai-assistant`, 8.4 MB onefile) + a heavy **worker** (`awlab-ai-worker`, onedir). The bridge keeps every IDE's JSON-RPC pipe alive across binary publishes, so `publish --target=binary` hot-swaps the worker with zero context-canceled.
 - **First-class Google Antigravity & IDE Support**: Fully modular compilation profiles and advanced lifecycle hooks adapter for deep Antigravity integration.
 - **LanceDB Semantic Search**: Dedicated LanceDB vector engine strictly for Code Knowledge Graph precision.
 - **Experimental CRDT Sync**: Cloud sync support for `memory.db` via `cr-sqlite` for seamless multi-device persistence without merge conflicts.
@@ -31,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Optional LLM Memory Extraction** — added support for passing `raw_text` to `mem_observe` and `mem_write`. When configured with an `LLM_API_KEY`, the server intelligently uses an LLM (via `instructor`) to extract structured observations and entities from the text automatically before inserting them into the SQLite Memory Bank.
 
 - **Project Families Documentation** — added `PROJECT_FAMILIES.md` documentation to `docs/en` and `docs/id` to guide multi-repository unified graph configurations.
+- **Zero-Downtime MCP Bridge + Worker** — split the single executable into a thin stdlib-only **bridge** (`awlab-ai-assistant`, ONE-FILE, 8.4 MB) and a heavy **worker** (`awlab-ai-worker`, ONEDIR, full FastMCP server). The bridge is a persistent stdio proxy that keeps an IDE's JSON-RPC pipe alive across binary updates; publishing hot-swaps only the worker underneath the live bridge.
+- **MCP handshake replay on hot-reload** — the bridge parses newline-delimited MCP lines, captures the `initialize` + `notifications/initialized` handshake, and replays it to every respawned worker (swallowing the worker's init response). Fresh workers otherwise reject all calls with `-32602 Invalid request parameters`.
+- **EmbeddingService TTL-based model unload** — the fastembed model now auto-unloads after 5 minutes of inactivity via a daemon `threading.Timer` (thread-safe under a lock, `gc.collect()` on unload) to prevent memory leaks across long sessions; embedding threads pinned to 2 to reduce CPU pressure.
 
 ### 🛠️ Enhancements & Changes
 
@@ -40,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Token Protection Protocols** — injected strict context-burn protections (`plan_doc(mode="read")` hazard) natively into the `awlab-protocol.md` bootstrapper (`context_builder.py`) and `AGENTS.md`, and promoted the feature in READMEs.
 - **Cross-Platform Naming** — dropped the `.exe` extension from all documentation (`docs/en/`, `docs/id/`, READMEs) to accurately reflect Linux/macOS and modern Windows terminals.
 - **Test Badges** — synchronized README test badges to correctly reflect the pruned core suite count (55 passing tests).
+- **Graph inconsistency cleanup pass** — added `_clean_inconsistencies` post-processing in `graphify/enrichment.py` to fix structural inconsistencies in extracted graphs (slug-normalized node matching, orphan cleanup), wired into the graph build pipeline.
+- **Graphify extraction stdout → stderr** — graph extraction output is now redirected to stderr so it never pollutes MCP stdio with non-protocol noise.
+- **Docs updated for bridge+worker architecture** — `INSTALL.md`, `HOOKS.md`, `AVAILABLE_TOOLS.md` (en + id), READMEs, and `src/mcp_server/README.md` now document the executable pair, the "why the split?" rationale, and the hot-reload publish flow.
 
 ### 🐛 Bug Fixes
 
@@ -47,12 +54,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`graph_status` Background Rebuild Deadlock** — fixed a critical deadlock in `src/mcp_server/helpers/graphify_bridge.py` where spawning the `_background_rebuild` thread recursively attempted to acquire `_BUILD_LOCKS_GUARD` while already holding it, hanging the event loop. The inner lock acquisition was removed, restoring concurrent `graph_status` polling during heavy background graph rebuilds.
 - **Mac binary extension bug** — patched `scripts/run.py publish` which was hardcoding the `"dist/bin/awlab-ai-assistant.exe"` path in `mcp_config.json`, causing MCP initialization failures on macOS/Linux. The binary extension is now dynamically stripped outside of Windows.
 - **Stale published `SKILL.md`** — regenerated the static `assets/skills/awlab-ai-assistant/SKILL.md` via `registry.build_skill_md()` before publishing, ensuring `plan_create` and the new `plan_doc` walkthrough parameters are correctly documented in the live configuration.
+- **PyInstaller resolver path truthiness** — a bare `Path` in an `or` chain is always truthy, so a non-existent Windows `.venv/Scripts/pyinstaller.exe` shadowed the real POSIX `.venv/bin/pyinstaller` on macOS → silent "PyInstaller not found" → source-copy fallback. The resolver now checks `Path(c).exists()` before accepting a candidate.
+- **MCP `-32602 Invalid request parameters` after hot-reload** — a respawned worker has no MCP `initialize` session and rejects every `tools/call`; the bridge now captures and replays the handshake to each new worker (see New Features).
 
 ### 📦 Migration / Upgrading
 
 - The compiled binary is now deployed centrally to `~/.awlab-id/agent-memory/bin/`. Ensure any host configurations point to this new centralized binary location.
 - **Strict Token Burn Protections** have been enabled by default across all profiles (`plan_doc(mode="read")` hazard prevention).
 - Use `python scripts/run.py publish --target=antigravity` to scaffold your Antigravity environment natively.
+- **Executable is now a bridge + worker pair** — `awlab-ai-assistant` (bridge) is the stable host-facing entrypoint every IDE/hook config already references; it is **never** killed during publish. Only `awlab-ai-worker` is stopped and swapped. No host-config churn required.
+- **Hot-reload publish** — `python scripts/run.py publish --target=binary` writes `.update_lock` → stops only workers → swaps both binaries → releases the lock. Live bridges wait on the lock before spawning a worker, so nothing ever runs a half-written binary.
 
 ## [3.0.5] - 2026-08-25
 
