@@ -32,7 +32,7 @@ from .config import (
     _resolve_root,
     _use_parallel,
 )
-from .enrichment import _enrich_laravel, _enrich_php_implements, _enrich_vue
+from .enrichment import _clean_inconsistencies, _enrich_laravel, _enrich_php_implements, _enrich_vue
 from .exclusions import (
     _GLOBAL_EXCLUSIONS,
     _changed_files,
@@ -677,44 +677,49 @@ def _build_graph_impl(
             )
 
         # Extraction: incremental (chunked or not) when a prior graph exists,
-        # full when first building. A chunked incremental merge carries ONLY the
-        # processed chunk — pending files keep their old nodes so the graph stays
-        # readable while catch-up proceeds.
-        if prev_graph is not None and changed:
-            assert prev_graph is not None
-            if chunked:
-                fresh = g["extract"](
-                    to_extract,
-                    root=scan_root,
-                    cache_root=cache_root,
-                    parallel=_use_parallel(),
-                    resolution_context_nodes=prev_graph["nodes"],
-                    resolution_context_edges=prev_graph["edges"],
-                )
-                extraction = _merge_extractions(prev_graph, fresh, sorted(processed_rel))
-                incremental = True
-            elif len(changed) < len(rel_files):
-                # Original non-chunked incremental: re-extract all changed files.
-                fresh = g["extract"](
-                    to_extract,
-                    root=scan_root,
-                    cache_root=cache_root,
-                    parallel=_use_parallel(),
-                    resolution_context_nodes=prev_graph["nodes"],
-                    resolution_context_edges=prev_graph["edges"],
-                )
-                extraction = _merge_extractions(prev_graph, fresh, changed)
-                incremental = True
+        import contextlib
+        import sys
+
+        with contextlib.redirect_stdout(sys.stderr):
+            # full when first building. A chunked incremental merge carries ONLY the
+            # processed chunk — pending files keep their old nodes so the graph stays
+            # readable while catch-up proceeds.
+            if prev_graph is not None and changed:
+                assert prev_graph is not None
+                if chunked:
+                    fresh = g["extract"](
+                        to_extract,
+                        root=scan_root,
+                        cache_root=cache_root,
+                        parallel=_use_parallel(),
+                        resolution_context_nodes=prev_graph["nodes"],
+                        resolution_context_edges=prev_graph["edges"],
+                    )
+                    extraction = _merge_extractions(prev_graph, fresh, sorted(processed_rel))
+                    incremental = True
+                elif len(changed) < len(rel_files):
+                    # Original non-chunked incremental: re-extract all changed files.
+                    fresh = g["extract"](
+                        to_extract,
+                        root=scan_root,
+                        cache_root=cache_root,
+                        parallel=_use_parallel(),
+                        resolution_context_nodes=prev_graph["nodes"],
+                        resolution_context_edges=prev_graph["edges"],
+                    )
+                    extraction = _merge_extractions(prev_graph, fresh, changed)
+                    incremental = True
+                else:
+                    # Full rebuild (first time, or nearly everything changed).
+                    extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
+                    incremental = False
             else:
-                # Full rebuild (first time, or nearly everything changed).
+                # First build (the nothing-changed case was handled by fresh-skip).
                 extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
                 incremental = False
-        else:
-            # First build (the nothing-changed case was handled by fresh-skip).
-            extraction = g["extract"](files, root=scan_root, cache_root=cache_root, parallel=_use_parallel())
-            incremental = False
 
         graph = g["build_from_json"](extraction, root=scan_root, directed=directed)
+        _clean_inconsistencies(graph)
         communities = g["cluster"](graph)
 
         # Vite/JS path-alias augmentation: graphifyy cannot resolve
@@ -857,6 +862,7 @@ def _build_graph_impl(
         _write_feedback(workspace_path, scan_root, prev_manifest, manifest, project_id)
 
         import gc
+
         gc.collect()
 
         return ok_obj(
