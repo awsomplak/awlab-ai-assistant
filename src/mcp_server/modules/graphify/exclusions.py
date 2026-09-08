@@ -156,6 +156,8 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
         for name in filenames:
             if name.endswith((".pyc", ".pyo")):
                 continue
+            if name in (".gitignore", ".graphignore", ".gitattributes", ".gitmodules"):
+                continue
             path = Path(dirpath) / name
             if active_ex.excludes_file(parent, name):
                 continue
