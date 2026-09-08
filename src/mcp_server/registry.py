@@ -30,26 +30,26 @@ from . import helpers
 from .config import settings
 from .helpers.context_builder import materialize_context
 from .helpers.file_utils import read_file_safe, write_file_safe
-from .helpers.graphify_bridge import (
-    ensure_fresh as _graph_ensure_fresh,
-)
-from .helpers.graphify_bridge import (
-    explain_node as _graph_explain,
-)
-from .helpers.graphify_bridge import (
-    graph_build_action as _graph_build,
-)
-from .helpers.graphify_bridge import (
-    graph_status as _graph_status,
-)
-from .helpers.graphify_bridge import (
-    path_query as _graph_path,
-)
-from .helpers.graphify_bridge import (
-    query_graph as _graph_query,
-)
 from .helpers.llm_extractor import extract_memory
 from .helpers.observation_store import append_observations
+from .modules.graphify import (
+    ensure_fresh as _graph_ensure_fresh,
+)
+from .modules.graphify import (
+    explain_node as _graph_explain,
+)
+from .modules.graphify import (
+    graph_build_action as _graph_build,
+)
+from .modules.graphify import (
+    graph_status as _graph_status,
+)
+from .modules.graphify import (
+    path_query as _graph_path,
+)
+from .modules.graphify import (
+    query_graph as _graph_query,
+)
 from .tools import context_tools, file_tools, memory_tools, plan_tools, utils_tools
 from .tools.plan_tools.io import (
     append_pending as _pending_append,
@@ -1590,6 +1590,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "query": {"type": "string", "required": True, "desc": "Search term"},
             "limit": {"type": "integer", "default": 10, "desc": "Max results"},
+            "kind": {"type": "string", "desc": "Filter results by node kind/type (e.g. 'function', 'class', 'file')"},
+            "group_by_file": {
+                "type": "boolean",
+                "default": False,
+                "desc": "Only return the best scoring node per source file",
+            },
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — query the merged family graph (member:: tagged nodes)"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},
@@ -1616,8 +1622,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "handler": _graph_path,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
-            "a": {"type": "string", "required": True, "desc": "From node label"},
-            "b": {"type": "string", "required": True, "desc": "To node label"},
+            "a": {"type": "string", "desc": "From node label (alias for from_node)"},
+            "b": {"type": "string", "desc": "To node label (alias for to_node)"},
+            "from_node": {"type": "string", "desc": "From node label"},
+            "to_node": {"type": "string", "desc": "To node label"},
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — path over the merged family graph"},
         },
@@ -1642,6 +1650,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "node": {"type": "string", "required": True, "desc": "Node label"},
             "limit": {"type": "integer", "default": 30, "desc": "Max neighbours"},
+            "depth": {
+                "type": "integer",
+                "default": 1,
+                "desc": "Neighbourhood BFS traversal depth (useful for cross-file class relationships)",
+            },
             "root": {"type": "string", "desc": "Scan root (defaults to workspace_path)"},
             "family": {"type": "string", "desc": "Family slug — explain a node in the merged family graph"},
             "project_id": {"type": "string", "desc": "Optional project ID for related-memory scoping"},

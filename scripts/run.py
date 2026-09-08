@@ -81,13 +81,18 @@ BIN_EXT = ".exe" if sys.platform.startswith("win") else ""
 PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"awlab-ai-assistant{BIN_EXT}").replace(
     "\\", "/"
 )
-HOOK_CMD = f'"{PUBLISH_BIN_PATH}" hook'
+
+# Use native python for hooks if running from virtualenv to completely bypass PyInstaller extraction overhead
+if sys.prefix != sys.base_prefix:
+    HOOK_CMD = f'"{sys.executable}" -m mcp_server hook'
+else:
+    HOOK_CMD = f'"{PUBLISH_BIN_PATH}" hook'
 
 PUBLISH_MAP = {
     "binary": (
         "Core Binary",
         [
-            (f"bin/awlab-ai-assistant{BIN_EXT}", f"{{home}}/.awlab-id/agent-memory/bin/awlab-ai-assistant{BIN_EXT}"),
+            ("bin/awlab-ai-assistant", "{home}/.awlab-id/agent-memory/bin/"),
         ],
     ),
     "cline": (
@@ -948,7 +953,7 @@ def _stop_awlab_processes() -> None:
                 subprocess.run(["pkill", "-x", name[:15]], capture_output=True)
 
 
-def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "auto") -> None:
+def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "auto", verbose: bool = False) -> None:
     _header("Build")
 
     # ── Resolve target OS ──────────────────────────────────────────────────
@@ -1110,7 +1115,7 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                 exe_name = _exe_name(bin_name, target)
                 cmd = [
                     str(pe),
-                    "--onefile",
+                    "--onedir",
                     "--distpath",
                     str(py_dist),
                     "--name",
@@ -1124,25 +1129,25 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                     cmd.extend(["--hidden-import", hi])
                 cmd.append(str(PYTHON_SRC / entry_module))
 
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=str(ROOT),
-                )
+                if verbose:
+                    print(f"  {Style.DIM}(PyInstaller logs will stream below...){Style.RESET}")
+                    result = subprocess.run(cmd, cwd=str(ROOT))
+                else:
+                    print(f"  {Style.DIM}(PyInstaller running silently...){Style.RESET}")
+                    result = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+                    if result.returncode != 0:
+                        print(f"\n{Style.BRIGHT_RED}PyInstaller Output:{Style.RESET}\n{result.stdout}\n{result.stderr}")
 
-                # Clean PyInstaller per-binary artifacts
+                # Clean PyInstaller .spec file (leave 'build' so subsequent builds take 20s instead of 8m)
                 spec_name = f"{bin_name}.spec"
-                for p in [ROOT / "build", ROOT / spec_name]:
-                    if p.is_dir():
-                        shutil.rmtree(p)
-                    elif p.exists():
-                        p.unlink()
+                spec_path = ROOT / spec_name
+                if spec_path.exists():
+                    spec_path.unlink()
 
                 if result.returncode == 0:
                     _ok(f"Executable: {py_dist / exe_name}")
                 else:
-                    _warn(f"PyInstaller ({bin_name}/{target}): {result.stderr[-300:]}")
+                    _warn(f"PyInstaller ({bin_name}/{target}) failed with code {result.returncode}")
 
     # Clean up generated .spec files after build
     for spec_file in ROOT.glob("awlab-ai-assistant-*.spec"):
@@ -1244,7 +1249,7 @@ def cmd_publish(
         return
 
     # Check build prerequisites selectively based on target(s)
-    bin_file = DIST / f"bin/awlab-ai-assistant{BIN_EXT}"
+    bin_file = DIST / "bin" / "awlab-ai-assistant"
     profiles_dir = DIST / "profiles"
 
     if not DIST.exists():
@@ -1306,7 +1311,10 @@ def cmd_publish(
                 copied = False
                 for attempt in range(5):
                     try:
-                        shutil.copy2(src, dest)
+                        if src.is_dir():
+                            shutil.copytree(src, dest, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(src, dest)
                         copied = True
                         break
                     except PermissionError as pe:
@@ -1538,7 +1546,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command")
 
     for name, opts, desc in [
-        ("build", ["--no-bin", "--no-rules", "--target-os"], "Build everything to /dist"),
+        ("build", ["--no-bin", "--no-rules", "--target-os", "--verbose"], "Build everything to /dist"),
         (
             "publish",
             ["--target", "--skip-build", "--force", "--uninstall", "--no-bin"],
@@ -1569,6 +1577,8 @@ def build_parser() -> argparse.ArgumentParser:
                 sp.add_argument("--no-bin", action="store_true")
             elif o == "--no-rules":
                 sp.add_argument("--no-rules", action="store_true")
+            elif o == "--verbose":
+                sp.add_argument("--verbose", action="store_true")
             elif o == "--target-os":
                 sp.add_argument(
                     "--target-os",
@@ -1615,7 +1625,12 @@ def main() -> None:
         case None:
             cmd_help()
         case "build":
-            cmd_build(no_bin=args.no_bin, no_rules=args.no_rules, target_os=args.target_os)
+            cmd_build(
+                no_bin=args.no_bin,
+                no_rules=args.no_rules,
+                target_os=args.target_os,
+                verbose=getattr(args, "verbose", False),
+            )
         case "publish":
             cmd_publish(
                 target=args.target,

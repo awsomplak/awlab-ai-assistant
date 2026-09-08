@@ -31,6 +31,7 @@ _TE: Any = None
 
 try:
     from fastembed import TextEmbedding as _TE  # type: ignore[import-untyped]  # noqa: F401
+
     _HAS_FASTEMBED = True
 except ImportError:
     _HAS_FASTEMBED = False
@@ -39,6 +40,7 @@ except ImportError:
 try:
     import lancedb
     import pyarrow as pa
+
     _HAS_LANCEDB = True
 except ImportError:
     _HAS_LANCEDB = False
@@ -460,7 +462,10 @@ def _get_table_names(db) -> list[str]:
     res = db.list_tables()
     return res.tables if hasattr(res, "tables") else list(res)
 
-def add_to_index(table_name: str, documents: list[str], document_ids: list[str], workspace_path: Path | None = None) -> None:
+
+def add_to_index(
+    table_name: str, documents: list[str], document_ids: list[str], workspace_path: Path | None = None
+) -> None:
     """Embed documents and add them to a persistent LanceDB table."""
     if not _HAS_LANCEDB:
         log.warning("lancedb not installed. Run: pip install lancedb")
@@ -476,24 +481,34 @@ def add_to_index(table_name: str, documents: list[str], document_ids: list[str],
         log.warning(f"Embedding failed: {e}")
         return
 
-    db = lancedb.connect(str(_lancedb_dir(workspace_path)))
-    data = [{"id": str(idx), "text": txt, "vector": vec} for idx, txt, vec in zip(document_ids, documents, vecs)]
+    from .file_utils import AcquireLock
 
-    if table_name in _get_table_names(db):
-        table = db.open_table(table_name)
-        id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
-        if id_list:
-            table.delete(f"id IN ({id_list})")
-        table.add(data)
-    else:
-        try:
-            db.create_table(table_name, data=data, mode="overwrite")
-        except Exception:
-            table = db.open_table(table_name)
-            id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
-            if id_list:
-                table.delete(f"id IN ({id_list})")
-            table.add(data)
+    db_dir = _lancedb_dir(workspace_path)
+
+    try:
+        with AcquireLock(db_dir / "lancedb.lock", timeout=15.0):
+            db = lancedb.connect(str(db_dir))
+            data = [
+                {"id": str(idx), "text": txt, "vector": vec} for idx, txt, vec in zip(document_ids, documents, vecs)
+            ]
+
+            if table_name in _get_table_names(db):
+                table = db.open_table(table_name)
+                id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
+                if id_list:
+                    table.delete(f"id IN ({id_list})")
+                table.add(data)
+            else:
+                try:
+                    db.create_table(table_name, data=data, mode="overwrite")
+                except Exception:
+                    table = db.open_table(table_name)
+                    id_list = ", ".join(f"'{str(i)}'" for i in document_ids)
+                    if id_list:
+                        table.delete(f"id IN ({id_list})")
+                    table.add(data)
+    except Exception as e:
+        log.warning(f"Failed to write to lancedb: {e}")
 
 
 def search_index(table_name: str, query: str, limit: int = 10, workspace_path: Path | None = None) -> list[dict]:
