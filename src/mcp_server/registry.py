@@ -86,6 +86,7 @@ _SPEC_KEYS = {
     "pipeline",
     "mutates",
     "aliases",
+    "see_also",
 }
 
 
@@ -106,6 +107,51 @@ def _validate_spec(name: str, spec: dict[str, Any]) -> None:
             raise ValueError(f"REGISTRY[{name}].params[{pname}]: bad type")
     if spec.get("aliases") is not None and not isinstance(spec["aliases"], list):
         raise ValueError(f"REGISTRY[{name}]: aliases must be a list")
+    if spec.get("see_also") is not None and (
+        not isinstance(spec["see_also"], list) or not all(isinstance(x, str) and x for x in spec["see_also"])
+    ):
+        raise ValueError(f"REGISTRY[{name}]: see_also must be a list of non-empty strings")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ── Shared content blocks (rendered into help / tool description / SKILL.md)
+# ══════════════════════════════════════════════════════════════════════════
+
+# Project-family memory + graph guidance. Auto-appended by build_help to every
+# action that exposes `store="family_<slug>"` or a `family="<slug>"` param, so an
+# agent that lands on any family-aware action gets the full picture in one call —
+# no external research, no guessing the slug or the config path.
+FAMILY_HELP = """\
+Project families group correlated repos (backend + frontend, etc.) so they share one
+merged code graph and one shared family memory store.
+
+- MEMORY (`store`): `store="family_<slug>"` targets the SHARED family memory, isolated
+  per family. Default `store="project"` stays in this project's own store;
+  `store="patterns"` targets the cross-project user-patterns store. Only one at a time.
+- GRAPH (`family`): pass `family="<slug>"` to the graph_* actions to operate on the
+  MERGED cross-project graph — nodes are tagged `project_id::` so you can tell members apart.
+- The slug MUST match a key in the family config: `~/.awlab-id/agent-memory/project-families.json`
+  (v2 shape: {slug: {name, members: [{path, project_id}]}}). It is never invented.
+  If this workspace belongs to a family, `ctx_info` reports the resolved slug; otherwise
+  read that config file directly (or ask the user which family to use).
+- Example: `action_call(action="mem_search", params={"workspace_path": "...", "store":
+  "family_my_app", "query": "login flow"})`.
+- Full setup guide: docs/en/PROJECT_FAMILIES.md (Indonesian: docs/id/PROJECT_FAMILIES.md)."""
+
+
+def _spec_targets_family(spec: dict[str, Any]) -> bool:
+    """True if an action spec is family-aware (store `family_<slug>` or a `family` param).
+
+    Driven purely by param metadata so discoverability never drifts from the registry.
+    """
+    for pname, pspec in spec.get("params", {}).items():
+        if pname == "family" and pspec.get("type") == "string":
+            return True
+        if pname == "store":
+            pattern = pspec.get("pattern") or ""
+            if "family_" in pattern:
+                return True
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -310,6 +356,111 @@ async def _project_id_check(
     }
 
 
+async def _family_info(
+    workspace_path: str,
+    slug: str | None = None,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Read-only discovery of project families (global project-families.json).
+
+    Without ``slug``: returns the full family list plus this workspace's PRIMARY
+    family (from the auto-synced ``.ai/family-id`` marker) and EVERY family that
+    contains it (``workspace_families`` — a project can belong to several).
+    With ``slug``: returns only that family (error if undeclared). The agent uses
+    this instead of reading the raw config file; ``family_config`` is the mutating
+    counterpart.
+    """
+    try:
+        result = helpers.resolve_family_info(workspace_path=workspace_path, slug=slug)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
+        return helpers.fail_obj(error=f"family_info: {e}")
+    if not result.get("success"):
+        return helpers.fail_obj(error=result.get("error", "family_info failed"))
+    payload: dict[str, Any] = {
+        "success": True,
+        "slug": slug,
+        "families": result.get("families", []),
+        "family_count": len(result.get("families", [])),
+        "config_path": str(helpers.project_families_path()),
+        "note": (
+            "Primary family is stored per-project in .ai/family-id. Family memory uses "
+            "store='family_<slug>'; the merged graph uses family='<slug>' on graph_* "
+            "actions. A project can belong to several families — workspace_families "
+            "lists them all, workspace_family is the primary."
+        ),
+    }
+    if slug:
+        payload["family"] = result.get("family")
+    else:
+        payload["family_id"] = result.get("family_id")
+        payload["workspace_family"] = result.get("workspace_family")
+        payload["workspace_families"] = result.get("workspace_families", [])
+    return payload
+
+
+async def _family_config(
+    workspace_path: str,
+    op: str = "create",
+    slug: str = "",
+    name: str | None = None,
+    members: list[dict[str, Any]] | None = None,
+    path: str = "",
+    project_id: str | None = None,
+    replace_members: bool = False,
+) -> dict[str, Any]:
+    """Create / update / remove entries in the global project-families.json.
+
+    ``op`` controls the mutation:
+    - create      → new family ``slug`` (+ optional name/members); errors if it exists
+    - update      → change name and/or upsert members (replace_members=True replaces the list)
+    - add_member  → add or update one member ``{path, project_id}`` by path
+    - remove_member → remove one member by path
+    - remove      → delete the whole family
+    - sync        → reconcile declared project_ids against each member's .ai/project-id
+    All writes are atomic and always emit the v2 shape. Validation: lowercase slug,
+    absolute member paths, no duplicate paths or project_ids within a family.
+    """
+    err = helpers.validate_family_slug(slug)
+    if op in ("create", "update", "add_member", "remove_member", "remove", "sync") and err:
+        return helpers.fail_obj(error=f"family_config: {err}")
+    try:
+        if op == "create":
+            if slug in helpers.family_slugs():
+                return helpers.fail_obj(
+                    error=f"family_config: family '{slug}' already exists — use op=update to modify"
+                )
+            result = helpers.upsert_family(slug, name=name, members=members)
+        elif op == "update":
+            if slug not in helpers.family_slugs():
+                return helpers.fail_obj(error=f"family_config: family '{slug}' not found — use op=create first")
+            result = helpers.upsert_family(slug, name=name, members=members, replace_members=replace_members)
+        elif op == "add_member":
+            if slug not in helpers.family_slugs():
+                return helpers.fail_obj(error=f"family_config: family '{slug}' not found")
+            result = helpers.upsert_family(slug, members=[{"path": path, "project_id": project_id or ""}])
+        elif op == "remove_member":
+            result = helpers.remove_family_member(slug, path)
+        elif op == "remove":
+            result = helpers.remove_family(slug)
+        elif op == "sync":
+            result = helpers.sync_family_project_ids(slug)
+        else:
+            return helpers.fail_obj(error=f"family_config: unknown op {op!r}")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as e:
+        return helpers.fail_obj(error=f"family_config: {e}")
+
+    # Re-seed the acting workspace's .ai/family-id so the marker reflects the new
+    # config immediately (other projects refresh on their next discovery read).
+    if result.get("success") and workspace_path:
+        try:
+            sync = helpers.sync_family_id(workspace_path)
+            result["family_id"] = sync.get("family_id")
+            result["family_id_path"] = sync.get("path")
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            pass
+    return result
+
+
 async def _plan_doc(
     workspace_path: str,
     plan_uuid: str = "",
@@ -436,7 +587,14 @@ async def _ctx_info(
         )
     if mode == "context":
         return await _context_composite(workspace_path, project_id=project_id, query=query)
-    return await context_tools.get_context_snapshot(workspace_path=workspace_path)
+    snapshot = await context_tools.get_context_snapshot(workspace_path=workspace_path)
+    if mode == "snapshot":
+        # Keep .ai/memory-bank/context.md current even on a light read (auto-sync).
+        try:
+            snapshot["context_md"] = await refresh_context_md(workspace_path)
+        except _SAFE_ERRORS:
+            pass
+    return snapshot
 
 
 async def _memory_inventory(
@@ -487,12 +645,18 @@ async def _context_composite(
     workspace_path: str,
     project_id: str | None = None,
     query: str = "",
+    deliver: bool = True,
 ) -> dict[str, Any]:
     """Assemble the orchestration context: plan + plan.md + notes + task + code + memory.
 
     Server-owned composite: the agent never assembles it piecemeal. plan.md +
     notes.md are parsed structurally (not raw), so approach, preferences,
     decisions, constraints and risks reach the agent in one call.
+
+    ``deliver=True`` (interactive ``ctx_info mode="context"``) consumes tell-once
+    pattern candidates. ``deliver=False`` (auto-refresh via
+    :func:`refresh_context_md`) assembles the SAME payload but does NOT consume
+    candidates — auto-refreshing context.md must never burn the "told once" gate.
     """
     try:
         plan = await _plan_status(workspace_path=workspace_path, project_id=project_id, format="minimal")
@@ -559,8 +723,9 @@ async def _context_composite(
         except _SAFE_ERRORS:
             pass
 
-    # Pattern delivery (Phase 5): inject stack-scoped baked patterns + tell-once
-    # candidates (marking them delivered in the same read).
+    # Pattern delivery: inject stack-scoped baked patterns. Tell-once candidates
+    # are delivered ONLY on the interactive path (deliver=True); the read-only
+    # auto-refresh path must not consume them.
     baked_patterns: list[dict[str, Any]] = []
     pattern_candidates: list[dict[str, Any]] = []
     try:
@@ -569,7 +734,8 @@ async def _context_composite(
         baked_patterns = scope_candidates(
             read_baked(workspace_path).get("candidates") or [], detect_stack(workspace_path)
         )
-        pattern_candidates = deliver_candidates(workspace_path).get("pattern_candidates") or []
+        if deliver:
+            pattern_candidates = deliver_candidates(workspace_path).get("pattern_candidates") or []
     except (
         OSError,
         ValueError,
@@ -580,6 +746,35 @@ async def _context_composite(
     ):  # — delivery must never break the composite
         pass
 
+    # Project-family discovery (multi-family safe): primary family + every family
+    # this workspace belongs to + the declared family summary. Feeds both the
+    # returned composite and the context.md "Project Family" section.
+    family_payload: dict[str, Any] = {
+        "family_id": None,
+        "workspace_family": None,
+        "workspace_families": [],
+        "families": [],
+    }
+    try:
+        finfo = helpers.resolve_family_info(workspace_path=workspace_path)
+        if finfo.get("success"):
+            family_payload = {
+                "family_id": finfo.get("family_id"),
+                "workspace_family": finfo.get("workspace_family"),
+                "workspace_families": finfo.get("workspace_families", []),
+                "families": [
+                    {
+                        "slug": f["slug"],
+                        "name": f.get("name", ""),
+                        "store": f.get("store", ""),
+                        "member_count": len(f.get("members", [])),
+                    }
+                    for f in finfo.get("families", [])
+                ],
+            }
+    except _SAFE_ERRORS:
+        pass
+
     return {
         "success": True,
         "plan": plan,
@@ -588,6 +783,7 @@ async def _context_composite(
         "walkthrough_doc": walkthrough_doc,
         "code": code,
         "memory": mem,
+        "family": family_payload,
         "patterns": baked_patterns,
         "pattern_candidates": pattern_candidates,
         "query": query,
@@ -600,9 +796,32 @@ async def _context_composite(
             plan_doc=plan_doc,
             notes_doc=notes_doc,
             walkthrough_doc=walkthrough_doc,
+            family=family_payload,
             patterns=baked_patterns,
             pattern_candidates=pattern_candidates,
         ),
+    }
+
+
+async def refresh_context_md(workspace_path: str) -> dict:
+    """Auto-refresh .ai/memory-bank/context.md (READ-ONLY — never consumes tell-once candidates).
+
+    Called by the dispatcher after every successful mutating action and by
+    ``ctx_info mode="snapshot"``, so context.md always reflects the live
+    plan/task/memory/family state without the agent remembering to call
+    ``ctx_info mode="context"``. Returns ``{success, path, changed, bytes}`` and
+    never raises (errors degrade to ``{success: False}``).
+    """
+    try:
+        composite = await _context_composite(workspace_path, deliver=False)
+    except _SAFE_ERRORS as e:
+        return {"success": False, "error": str(e)}
+    cm = composite.get("context_md") or {}
+    return {
+        "success": bool(cm.get("success")),
+        "path": cm.get("path"),
+        "changed": bool(cm.get("changed")),
+        "bytes": cm.get("bytes", 0),
     }
 
 
@@ -1170,10 +1389,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
     "ctx_info": {
         "group": "context",
         "summary": "Read project context: snapshot, memory-bank, scan, suggestions, or orchestration context.",
-        "doc": "mode=snapshot (default) → active plan + patterns + project id. mode=memory_bank → "
-        "read .ai/memory-bank/environment.md. mode=scan → framework scan. mode=suggest → "
-        "suggest files for a task. mode=context → full orchestration composite: "
-        "{plan, next task, relevant code nodes, relevant memory} in one server-owned call "
+        "doc": "mode=snapshot (default) → active plan + patterns + project id + family "
+        "discovery (primary family from .ai/family-id + every family this workspace "
+        "belongs to). mode=memory_bank → read .ai/memory-bank/environment.md. mode=scan → "
+        "framework scan. mode=suggest → suggest files for a task. mode=context → full "
+        "orchestration composite: {plan, next task, relevant code nodes, relevant memory, "
+        "family} in one server-owned call, and atomically rewrites context.md "
         "(optional query scopes code/memory relevance).",
         "handler": _ctx_info,
         "params": {
@@ -1190,8 +1411,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "query": {"type": "string", "desc": "Optional term (context mode) to scope code + memory relevance"},
         },
         "returns": (
-            "{success, plan, code, memory, query, context_md} for mode=context; "
-            "snapshot/memory_bank/scan/suggest results otherwise"
+            "{success, plan, code, memory, family, query, context_md} for mode=context "
+            "(family = {family_id, workspace_family, workspace_families, families}); "
+            "snapshot returns {active_plan, patterns, project_id, family}; "
+            "memory_bank/scan/suggest results otherwise"
         ),
         "example": 'action_call(action="ctx_info")',
         "aliases": ["ctx_get_snapshot", "ctx_read_memory_bank", "ctx_scan_project", "ctx_suggest_files"],
@@ -1215,6 +1438,96 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "example": 'action_call(action="project_id", params={"workspace_path": "..."})',
         "preconditions": ["workspace_valid"],
         "mutates": True,
+    },
+    # ── Project families (config discovery + management) ────────────────
+    "family_info": {
+        "group": "context",
+        "summary": "Read-only project-family discovery (global project-families.json).",
+        "doc": "Lists every declared project family. When this workspace is part of any, "
+        "reports its PRIMARY family (from the auto-synced .ai/family-id marker) plus "
+        "workspace_families (EVERY family containing this workspace — a project can "
+        "belong to several). Pass slug=<name> to inspect just one family (error if "
+        "undeclared). Use this INSTEAD of reading the raw config file — it returns the "
+        "resolved, ready-to-use view (each family carries its store name 'family_<slug>' "
+        "and members with project_id). Mutations go through family_config.",
+        "handler": _family_info,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "slug": {"type": "string", "desc": "Optional family slug — return only that family"},
+            "project_id": {"type": "string", "desc": "Optional project ID (informational)"},
+        },
+        "returns": (
+            "{success, slug, families: [{slug, name, store, members}], family_count, "
+            "config_path, note} plus — without slug: family_id (content of the "
+            ".ai/family-id marker), workspace_family (PRIMARY family or null), "
+            "workspace_families (EVERY family containing this workspace); "
+            "with slug: family (that single family)"
+        ),
+        "example": ('action_call(action="family_info", params={"workspace_path": "D:/Project/Foo"})'),
+        "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Create / update / remove families and members: `family_config`",
+            "Full setup guide: docs/en/PROJECT_FAMILIES.md",
+        ],
+    },
+    "family_config": {
+        "group": "context",
+        "summary": "Create / update / remove project-family entries in project-families.json.",
+        "doc": "Agent-managed project-family configuration. op=create adds a new family "
+        "(errors if the slug exists); op=update changes name and/or upserts members "
+        "(replace_members=true replaces the member list); op=add_member / remove_member "
+        "add/remove one member by path; op=remove deletes the whole family; op=sync "
+        "reconciles declared project_ids against each member's own .ai/project-id. "
+        "Members are [{path, project_id?}] with ABSOLUTE paths (forward slashes). All "
+        "writes are atomic, emit the v2 shape, and are validated (lowercase slug, no "
+        "duplicate member paths, unique project_id within a family). The user only "
+        "monitors the resulting file — the agent proposes and applies config changes.",
+        "handler": _family_config,
+        "params": {
+            "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
+            "op": {
+                "type": "string",
+                "enum": ["create", "update", "add_member", "remove_member", "remove", "sync"],
+                "default": "create",
+                "desc": "Operation to perform",
+            },
+            "slug": {
+                "type": "string",
+                "pattern": r"^[a-z0-9][a-z0-9_-]*$",
+                "desc": "Family slug (lowercase letters/digits/_/-, start with letter/digit)",
+            },
+            "name": {"type": "string", "desc": "Human-readable family name (create/update)"},
+            "members": {
+                "type": "array",
+                "items": {"type": "object"},
+                "desc": "[{path, project_id?}] — member projects with ABSOLUTE paths (create/update)",
+            },
+            "path": {"type": "string", "desc": "Single member path (add_member/remove_member)"},
+            "project_id": {
+                "type": "string",
+                "desc": "Declared project id for the single member (add_member)",
+            },
+            "replace_members": {
+                "type": "boolean",
+                "default": False,
+                "desc": "update: replace the member list instead of merging by path",
+            },
+        },
+        "returns": (
+            "{success, action: created|updated|removed, slug, name, members, changed, "
+            "path, removed, remaining, conflicts, errors}"
+        ),
+        "example": (
+            'action_call(action="family_config", params={"op": "create", "slug": "my_app", '
+            '"name": "My App", "members": [{"path": "D:/Project/frontend", "project_id": '
+            '"frontend"}, {"path": "D:/Project/backend", "project_id": "backend"}]})'
+        ),
+        "preconditions": ["workspace_valid"],
+        "mutates": True,
+        "see_also": [
+            "Read-only discovery + resolve this workspace's family: `family_info`",
+            "Full setup guide: docs/en/PROJECT_FAMILIES.md",
+        ],
     },
     # ── Utility ───────────────────────────────────────────────────────────
     "util_info": {
@@ -1297,6 +1610,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "returns": "{success, data:[...], filtered_by?, store, scope}",
         "example": 'action_call(action="mem_search", params={"query": "registry schema"})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Inventory what is stored (esp. a family store) first: `mem_list_entities` with the same `store`",
+            "Read full node details: `mem_read` with the same `store`",
+            "Add shared family knowledge: `mem_write` with the same `store`",
+        ],
         "aliases": ["mem_list_patterns"],
     },
     "mem_write": {
@@ -1323,6 +1641,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "returns": "{success, store, created, observations, relations}",
         "example": 'action_call(action="mem_write", params={"observations": [{"entityName": "A", "contents": ["x"]}]})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Recall what was saved: `mem_search` / `mem_read` with the same `store`",
+            'Family knowledge must use `store="family_<slug>"` to be shared across members',
+        ],
         "mutates": True,
         "aliases": ["mem_create_entities", "mem_tag_entity", "mem_relate", "mem_store"],
     },
@@ -1346,6 +1668,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "returns": "{success, node|graph}",
         "example": 'action_call(action="mem_read", params={"node": "MCPBridge"})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Search instead of guessing node names: `mem_search` with the same `store`",
+            "Write/update knowledge: `mem_write` with the same `store`",
+        ],
         "aliases": ["mem_fetch_node_details", "mem_read_graph"],
     },
     "mem_remove": {
@@ -1382,6 +1708,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "returns": "{success, store, archived, deleted_observations, deleted_relations}",
         "example": ('action_call(action="mem_remove", params={"entities": [{"name": "X", "entityType": "concept"}]})'),
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Audit before removing: `mem_list_entities` with the same `store`",
+        ],
         "mutates": True,
         "aliases": ["mem_archive_entities", "mem_delete_observations", "mem_delete_relations"],
     },
@@ -1410,6 +1739,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
         ),
         "example": 'action_call(action="mem_list_entities", params={"limit": 200})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Query a specific store after inventorying it: `mem_search` with the same `store`",
+            "Read details of an entity: `mem_read` with the same `store`",
+        ],
     },
     "mem_dedupe": {
         "group": "memory",
@@ -1434,6 +1767,9 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "returns": "{success, store, dry_run, groups:[{name, keeper, duplicates}], moved_observations, archived}",
         "example": 'action_call(action="mem_dedupe", params={"name": "Bus Service"})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Find duplicates to merge: `mem_list_entities` with the same `store`",
+        ],
         "mutates": True,
     },
     "mem_replay": {
@@ -1543,6 +1879,11 @@ REGISTRY: dict[str, dict[str, Any]] = {
         ),
         "example": 'action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid", "graph_dir_ready"],
+        "see_also": [
+            "Poll freshness after a background build: `graph_status`",
+            "Query the built graph: `graph_query`",
+            'Merged cross-project graph: pass `family="<slug>"` (see Family Memory below)',
+        ],
         "pipeline": ["scan_source", "extract", "build_graph", "cluster", "export_html", "write_state"],
         "mutates": True,
     },
@@ -1571,13 +1912,18 @@ REGISTRY: dict[str, dict[str, Any]] = {
         ),
         "example": 'action_call(action="graph_status", params={"workspace_path": "D:/Project/Foo"})',
         "preconditions": ["workspace_valid"],
+        "see_also": [
+            "Build or refresh the graph when stale: `graph_build`",
+        ],
     },
     "graph_query": {
         "group": "graph",
         "summary": "Search the code graph (labels / source files / types). Auto-freshens first.",
         "doc": (
-            "Search graph nodes by label / source file / type (case-insensitive, ranked). "
-            "The graph is AST-only and indexes file/function/component labels; when no node "
+            "GRAPH-FIRST NAVIGATION: locate a symbol/method/class/caller BEFORE reading "
+            "source files. Searches graph nodes by label / source file / type "
+            "(case-insensitive, ranked). The graph is AST-only and indexes "
+            "file/function/component labels; when no node "
             "matches, this falls back to a whole-word source scan and returns file-level "
             "identifier hits (mode='identifier') so variable queries never dead-end. "
             "The graph_fresh precondition rebuilds the graph first if source files changed. "
@@ -1609,12 +1955,19 @@ REGISTRY: dict[str, dict[str, Any]] = {
             'action_call(action="graph_query", params={"workspace_path": "D:/Project/Foo", "query": "registry"})'
         ),
         "preconditions": ["workspace_valid", "graph_fresh"],
+        "see_also": [
+            "Detail a hit + its neighbours/callers: `graph_explain`",
+            "Shortest path between two symbols: `graph_path`",
+            "Confirm the graph is fresh: `graph_status`",
+        ],
     },
     "graph_path": {
         "group": "graph",
         "summary": "Shortest path between two graph nodes. Auto-freshens first.",
         "doc": (
-            "Shortest path (BFS) between two nodes by label. "
+            "GRAPH-FIRST NAVIGATION: shortest dependency path (BFS) between two located "
+            "symbols by label — use after graph_query to trace how code connects before "
+            "reading the files. "
             "The graph_fresh precondition rebuilds the graph first if source files changed. "
             "Result includes freshness metadata: graph_fresh / graph_exists / "
             "graph_rebuilding / graph_built_at."
@@ -1635,12 +1988,18 @@ REGISTRY: dict[str, dict[str, Any]] = {
             'params={"workspace_path": "D:/Project/Foo", "a": "action_call", "b": "registry"})'
         ),
         "preconditions": ["workspace_valid", "graph_fresh"],
+        "see_also": [
+            "Locate the endpoints first: `graph_query`",
+            "Detail + neighbours of a node: `graph_explain`",
+        ],
     },
     "graph_explain": {
         "group": "graph",
         "summary": "Explain a graph node (details + direct neighbours). Auto-freshens first.",
         "doc": (
-            "Explain a node: its details + direct neighbours with relation types. "
+            "GRAPH-FIRST NAVIGATION: detail a located symbol — its declaration plus "
+            "direct neighbours/callers with relation types — BEFORE opening the file, so "
+            "you only read the 1-3 files that actually matter. "
             "The graph_fresh precondition rebuilds the graph first if source files changed. "
             "Result includes freshness metadata: graph_fresh / graph_exists / "
             "graph_rebuilding / graph_built_at."
@@ -1668,6 +2027,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
             'action_call(action="graph_explain", params={"workspace_path": "D:/Project/Foo", "node": "registry"})'
         ),
         "preconditions": ["workspace_valid", "graph_fresh"],
+        "see_also": [
+            "Find nodes to explain: `graph_query`",
+            "Trace a dependency chain: `graph_path`",
+        ],
     },
 }
 
@@ -1935,6 +2298,16 @@ def build_tool_description() -> str:
     for group in sorted({s["group"] for s in REGISTRY.values()}):
         names = sorted(a for a, s in REGISTRY.items() if s["group"] == group)
         lines.append(f"- {group}: {', '.join(names)}")
+    lines.append(
+        "Family memory: store='family_<slug>' shares memory across correlated repos; "
+        "graph family='<slug>' queries the merged cross-project graph. Any family-aware "
+        "action's action_help output explains the slug + config — read it before first use."
+    )
+    lines.append(
+        "Codebase navigation is GRAPH-FIRST: call graph_query before reading files to "
+        "locate a symbol/method/class (then graph_explain/path for neighbours & callers); "
+        "grep only for exact literal text or when a query dead-ends."
+    )
     lines.append("For per-action params/examples, call the action_help tool (NOT action_call).")
     return "\n".join(lines)
 
@@ -2000,6 +2373,10 @@ def build_help(action: str | None = None) -> str:
     if spec.get("pipeline"):
         lines += ["", "## Pipeline (ordered)", *(f"- `{p}`" for p in spec["pipeline"])]
     lines += ["", "## Returns", spec["returns"]]
+    if spec.get("see_also"):
+        lines += ["", "## See Also", *(f"- {s}" for s in spec["see_also"])]
+    if _spec_targets_family(spec):
+        lines += ["", "## Family Memory", FAMILY_HELP]
     return "\n".join(lines)
 
 
@@ -2067,4 +2444,25 @@ def build_skill_md() -> str:
             out.append(f"  - Params: {', '.join(spec['params'].keys())}")
             out.append(f"  - Example: `{spec['example']}`")
         out.append("")
-    return "\n".join(out)
+    out.append("## Codebase navigation — graph first (call BEFORE reading source files)")
+    out.append("")
+    out.append("To locate a symbol / method / class / caller or trace how code connects, use the ")
+    out.append("code knowledge graph (AST-accurate, auto-freshens):")
+    out.append("- `graph_query` — find node(s) by symbol name; a missing graph is auto-built ")
+    out.append("  (returns freshness metadata).")
+    out.append("- `graph_explain` — a hit's declaration + direct neighbours/callers.")
+    out.append("- `graph_path` — shortest dependency path between two symbols.")
+    out.append("- Only then read the 1-3 most relevant files (bounded by the 5-file turn budget).")
+    out.append("- Fall back to grep/source scan ONLY for exact literal text (strings/comments/")
+    out.append("  config values) or when a graph query dead-ends.")
+    out.append("")
+    out.append("## Cross-cutting: Project Family Memory (shared stores + merged graph)")
+    out.append("")
+    out.append(FAMILY_HELP)
+    out.append("")
+    out.append(
+        "Actions whose help output ends with a `## Family Memory` section are "
+        "family-aware (store=`family_<slug>` or family=`<slug>`); call action_help on them "
+        "for the exact syntax."
+    )
+    return "\n".join(out).rstrip() + "\n"

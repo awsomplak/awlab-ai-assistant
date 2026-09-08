@@ -46,6 +46,12 @@ Server guarantees preconditions/pipeline run automatically; responses include
 - **ctx_info** — Read project context: snapshot, memory-bank, scan, suggestions, or orchestration context.
   - Params: workspace_path, mode, filename, task_description, force_refresh, project_id, query
   - Example: `action_call(action="ctx_info")`
+- **family_config** — Create / update / remove project-family entries in project-families.json.
+  - Params: workspace_path, op, slug, name, members, path, project_id, replace_members
+  - Example: `action_call(action="family_config", params={"op": "create", "slug": "my_app", "name": "My App", "members": [{"path": "D:/Project/frontend", "project_id": "frontend"}, {"path": "D:/Project/backend", "project_id": "backend"}]})`
+- **family_info** — Read-only project-family discovery (global project-families.json).
+  - Params: workspace_path, slug, project_id
+  - Example: `action_call(action="family_info", params={"workspace_path": "D:/Project/Foo"})`
 - **project_id** — Check the project-id; auto-create it if missing (idempotent).
   - Params: workspace_path, project_id, force_regenerate
   - Example: `action_call(action="project_id", params={"workspace_path": "..."})`
@@ -55,13 +61,13 @@ Server guarantees preconditions/pipeline run automatically; responses include
   - Params: workspace_path, root, family, include_html, node_limit, max_files, chunk_size, background, force, directed, project_id
   - Example: `action_call(action="graph_build", params={"workspace_path": "D:/Project/Foo"})`
 - **graph_explain** — Explain a graph node (details + direct neighbours). Auto-freshens first.
-  - Params: workspace_path, node, limit, root, family, project_id
+  - Params: workspace_path, node, limit, depth, root, family, project_id
   - Example: `action_call(action="graph_explain", params={"workspace_path": "D:/Project/Foo", "node": "registry"})`
 - **graph_path** — Shortest path between two graph nodes. Auto-freshens first.
-  - Params: workspace_path, a, b, root, family
+  - Params: workspace_path, a, b, from_node, to_node, root, family
   - Example: `action_call(action="graph_path", params={"workspace_path": "D:/Project/Foo", "a": "action_call", "b": "registry"})`
 - **graph_query** — Search the code graph (labels / source files / types). Auto-freshens first.
-  - Params: workspace_path, query, limit, root, family, project_id
+  - Params: workspace_path, query, limit, kind, group_by_file, root, family, project_id
   - Example: `action_call(action="graph_query", params={"workspace_path": "D:/Project/Foo", "query": "registry"})`
 - **graph_status** — Report code-graph freshness (exists? stale? changed files).
   - Params: workspace_path, root, family
@@ -75,7 +81,7 @@ Server guarantees preconditions/pipeline run automatically; responses include
   - Params: workspace_path, project_id, limit, store
   - Example: `action_call(action="mem_list_entities", params={"limit": 200})`
 - **mem_observe** — Record user-pattern evidence into the observation store (baking input).
-  - Params: workspace_path, project_id, observations, stack
+  - Params: workspace_path, project_id, observations, raw_text, stack
   - Example: `action_call(action="mem_observe", params={"observations": [{"signature": "cmd_pnpm_install", "value": "pnpm install", "source": "behavioral", "stack": "nodejs"}]})`
 - **mem_read** — Read node details or the graph neighbourhood.
   - Params: workspace_path, project_id, node, limit, store
@@ -90,7 +96,7 @@ Server guarantees preconditions/pipeline run automatically; responses include
   - Params: workspace_path, query, project_id, limit, use_dense, entity_type, scope, context, store
   - Example: `action_call(action="mem_search", params={"query": "registry schema"})`
 - **mem_write** — Create/tag entities, add observations, or relate entities.
-  - Params: workspace_path, project_id, entities, observations, relations, store
+  - Params: workspace_path, project_id, entities, observations, relations, raw_text, store
   - Example: `action_call(action="mem_write", params={"observations": [{"entityName": "A", "contents": ["x"]}]})`
 
 ### plan
@@ -127,3 +133,35 @@ Server guarantees preconditions/pipeline run automatically; responses include
 - **wf** — List or execute a workflow.
   - Params: workspace_path, action, workflow_name, params, workflows_dir
   - Example: `action_call(action="wf", params={"action": "execute", "workflow_name": "scan-project"})`
+
+## Codebase navigation — graph first (call BEFORE reading source files)
+
+To locate a symbol / method / class / caller or trace how code connects, use the 
+code knowledge graph (AST-accurate, auto-freshens):
+- `graph_query` — find node(s) by symbol name; a missing graph is auto-built 
+  (returns freshness metadata).
+- `graph_explain` — a hit's declaration + direct neighbours/callers.
+- `graph_path` — shortest dependency path between two symbols.
+- Only then read the 1-3 most relevant files (bounded by the 5-file turn budget).
+- Fall back to grep/source scan ONLY for exact literal text (strings/comments/
+  config values) or when a graph query dead-ends.
+
+## Cross-cutting: Project Family Memory (shared stores + merged graph)
+
+Project families group correlated repos (backend + frontend, etc.) so they share one
+merged code graph and one shared family memory store.
+
+- MEMORY (`store`): `store="family_<slug>"` targets the SHARED family memory, isolated
+  per family. Default `store="project"` stays in this project's own store;
+  `store="patterns"` targets the cross-project user-patterns store. Only one at a time.
+- GRAPH (`family`): pass `family="<slug>"` to the graph_* actions to operate on the
+  MERGED cross-project graph — nodes are tagged `project_id::` so you can tell members apart.
+- The slug MUST match a key in the family config: `~/.awlab-id/agent-memory/project-families.json`
+  (v2 shape: {slug: {name, members: [{path, project_id}]}}). It is never invented.
+  If this workspace belongs to a family, `ctx_info` reports the resolved slug; otherwise
+  read that config file directly (or ask the user which family to use).
+- Example: `action_call(action="mem_search", params={"workspace_path": "...", "store":
+  "family_my_app", "query": "login flow"})`.
+- Full setup guide: docs/en/PROJECT_FAMILIES.md (Indonesian: docs/id/PROJECT_FAMILIES.md).
+
+Actions whose help output ends with a `## Family Memory` section are family-aware (store=`family_<slug>` or family=`<slug>`); call action_help on them for the exact syntax.
