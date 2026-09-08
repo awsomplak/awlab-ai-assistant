@@ -55,7 +55,12 @@ Otherwise, retrieve file structures and key details from your conversation conte
     2. Identify and rank the top **1 to 3 most relevant files**.
     3. Read only those top 1-3 files in the current turn.
     4. Only read additional files in subsequent turns if absolutely necessary after analyzing the initial set.
-  - **High-Fidelity Search First**: Prioritize using `grep_search` and `mem_search` to find specific patterns or lines directly rather than executing broad `view_file` calls.
+  - **Graph-First, High-Fidelity Search**: To locate a SYMBOL / method / class / caller,
+    call the code graph FIRST (`graph_query`, then `graph_explain`/`graph_path` via
+    `action_call`) — it is AST-accurate, auto-freshens, and answers "where is X" in one
+    call. Use `grep_search`/`mem_search` only for EXACT literal text, comments, config
+    values, or when the graph is missing and a query dead-ends. Never grep/read whole
+    files to discover a symbol the graph can find by name.
 
 ### Compact Rules & Minimal Action Profile (Small Local Models)
 To prevent small local models (1.5B–3B parameters) from suffering context window failures, slow outputs, or tool-timeout loops:
