@@ -10,9 +10,10 @@ Provides:
 
 from __future__ import annotations
 
+import gc
 import math
-import os
 import re
+import threading
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,8 @@ class EmbeddingService:
     def __init__(self) -> None:
         self._model: Any = None
         self._loaded = False
+        self._ttl_timer: threading.Timer | None = None
+        self._lock = threading.Lock()
 
     # ── Singleton ──────────────────────────────────────────────────────────
 
@@ -163,28 +166,47 @@ class EmbeddingService:
 
     # ── Model loading ──────────────────────────────────────────────────────
 
+    def _schedule_unload(self) -> None:
+        with self._lock:
+            if self._ttl_timer is not None:
+                self._ttl_timer.cancel()
+            self._ttl_timer = threading.Timer(300.0, self._unload_model)
+            self._ttl_timer.daemon = True
+            self._ttl_timer.start()
+
+    def _unload_model(self) -> None:
+        with self._lock:
+            if self._model is not None:
+                log.info(f"Unloading model {_MODEL_NAME} due to inactivity (TTL)...")
+                del self._model
+                self._model = None
+                self._loaded = False
+                self._ttl_timer = None
+                gc.collect()
+
     def _load_model(self) -> None:
         """Download (if needed) and load the embedding model."""
-        if self._loaded:
-            return
-        self._loaded = True
+        with self._lock:
+            if self._loaded:
+                return
+            self._loaded = True
 
-        if not has_fastembed():
-            log.info("fastembed not installed — embedding disabled, BM25-only mode")
-            return
+            if not has_fastembed():
+                log.info("fastembed not installed — embedding disabled, BM25-only mode")
+                return
 
-        cache_dir = str(_models_dir())
-        try:
-            log.info(f"Loading model {_MODEL_NAME} (cache: {cache_dir})…")
-            self._model = _TE(
-                model_name=_MODEL_NAME,
-                cache_dir=cache_dir,
-                threads=min(os.cpu_count() or 4, 8),
-            )
-            log.info("Model loaded successfully")
-        except Exception as exc:
-            log.error(f"Failed to load model: {exc}")
-            self._model = None
+            cache_dir = str(_models_dir())
+            try:
+                log.info(f"Loading model {_MODEL_NAME} (cache: {cache_dir})…")
+                self._model = _TE(
+                    model_name=_MODEL_NAME,
+                    cache_dir=cache_dir,
+                    threads=2,
+                )
+                log.info("Model loaded successfully")
+            except Exception as exc:
+                log.error(f"Failed to load model: {exc}")
+                self._model = None
 
     @property
     def available(self) -> bool:
@@ -204,6 +226,8 @@ class EmbeddingService:
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
 
+        self._schedule_unload()
+
         # TextEmbedder returns a generator of numpy arrays
         vec = list(self._model.embed([text]))[0]
         return vec.tolist() if hasattr(vec, "tolist") else list(vec)
@@ -215,6 +239,8 @@ class EmbeddingService:
         self._load_model()
         if not self.available:
             raise RuntimeError("Embedding model failed to load")
+
+        self._schedule_unload()
 
         vecs = list(self._model.embed(texts))
         return [v.tolist() if hasattr(v, "tolist") else list(v) for v in vecs]
