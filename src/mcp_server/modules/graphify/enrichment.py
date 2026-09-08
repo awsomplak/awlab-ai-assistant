@@ -74,12 +74,27 @@ def _enrich_php_implements(graph: Any, workspace_path: Path) -> None:
                         graph.add_edge(node_id, target_id, type="php_implements")
 
 
+_TYPE_ALIAS_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*(Type)$")  # e.g. LoginStateType
+_INTERFACE_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*(Props|State|Values|Params)$")  # e.g. RatingSectionProps
+_CONST_OBJECT_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*(Status|Enum|Map|List|Config|Options)$")  # e.g. UserStatus
+
+
 def _clean_inconsistencies(graph: Any) -> None:
-    """Post-processing pass to fix structural inconsistencies in the extracted graph."""
+    """Post-processing pass to fix structural inconsistencies in the extracted graph.
+
+    Runs right after ``build_from_json`` — at that point graphify has populated
+    ``_callable`` but usually leaves ``type`` unset (base ``type`` values like
+    ``class``/``function`` are backfilled by the semantic-type pass that follows).
+    So alias/interface detection MUST key on ``_callable`` + the node label, NOT
+    on ``type == "class"`` (which is not present yet — the historical bug that let
+    TS ``type`` aliases / interfaces / PropTypes stay typed as callable classes).
+    """
     nodes_to_remove = []
 
     def _slug(p: str) -> str:
-        p = re.sub(r"\.(ts|tsx|js|jsx|mjs)$", "", p)
+        p = str(p).replace("\\", "/")
+        p = re.sub(r"^\./", "", p)
+        p = re.sub(r"\.(ts|tsx|js|jsx|mjs|vue|php|py)$", "", p)
         return re.sub(r"[^A-Za-z0-9]", "_", p).lower()
 
     for node_id, data in list(graph.nodes(data=True)):
@@ -88,29 +103,46 @@ def _clean_inconsistencies(graph: Any) -> None:
 
         src = data.get("source_file")
         if src:
-            # 1. & 5. Module-level nodes typed consistently and labeled by full relative path
-            if str(node_id) == _slug(src):
+            # 1. & 5. Module-level nodes typed consistently and labeled by full
+            # relative path (strip leading "./" / normalize separators first so
+            # the slug comparison survives loose source_file spellings).
+            src_norm = str(src).replace("\\", "/")
+            if str(node_id) == _slug(src_norm):
                 data["type"] = "file"
-                data["label"] = src
+                data["label"] = src_norm
 
-        # 3. Purge comment nodes
+        # 3. Purge comment/rationale nodes (remove_node drops incident edges too).
         if "_rationale_" in str(node_id):
             nodes_to_remove.append(node_id)
             continue
 
         label = data.get("label", "")
-        if isinstance(label, str):
-            # 2. TS type aliases/interfaces
-            if data.get("type") == "class" and data.get("_callable"):
-                if re.match(r"^[A-Z].*(Type|Props|State|Values|Params)$", label) or label == "PropTypes":
-                    data["type"] = "interface"
-                    data["_callable"] = False
+        if not isinstance(label, str) or not label:
+            continue
 
-            # 4. Clean raw destructured source text labels
-            if "{" in label and "}" in label:
-                cleaned = re.sub(r"[{}]", "", label).split(":")[-1].strip()
-                if cleaned:
-                    data["label"] = cleaned
+        is_callable = data.get("_callable") is True
+        if not label.endswith("()"):  # functions/methods stay function
+            if _TYPE_ALIAS_RE.match(label):
+                # TS `type X = ...` alias — a type, not a runtime class.
+                data["type"] = "type_alias"
+                data["_callable"] = False
+            elif label == "PropTypes" or _INTERFACE_RE.match(label):
+                # TS interface / PropTypes const — not a callable class.
+                data["type"] = "interface"
+                data["_callable"] = False
+            elif not is_callable and _CONST_OBJECT_RE.match(label):
+                # Const/enum-like object (e.g. UserStatus) — a symbol, not a class.
+                data["type"] = "symbol"
+                data["_callable"] = False
+
+        # 4. Clean raw destructured binding labels: "{ getDefaultConfig }" or
+        # "{ resolve: metroResolve }" → the bare identifier. Only rewrite when the
+        # whole label is a destructuring literal (never mangle other braces).
+        if label.startswith("{") and label.endswith("}"):
+            inner = label[1:-1].strip()
+            cleaned = inner.split(":")[-1].strip() if ":" in inner else inner
+            if cleaned:
+                data["label"] = cleaned
 
     for node_id in nodes_to_remove:
         graph.remove_node(node_id)

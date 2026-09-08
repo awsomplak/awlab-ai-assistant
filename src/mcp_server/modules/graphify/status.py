@@ -68,13 +68,19 @@ def graph_status(
         _manifest_update(out_dir, rebuilding=False)
         persisted_rebuilding = False
 
-    total = max(len(cur), int(state.get("total_files", 0) or 0))
+    # The node-producing corpus = the supported source files recorded at build
+    # time (state.total_files, from graphify detect). Report THAT count — NOT
+    # len(cur), the full freshness manifest, which also includes non-source
+    # files (git metadata, .json, .md, ...) that never become graph nodes. This
+    # keeps graph_status's total_files / supported_files reconciled with the
+    # graph.json it is describing (the historical 148-vs-144 mismatch).
+    total = int(state.get("total_files", 0) or 0) or len(cur)
     remaining = int(state.get("remaining_files", 0) or 0)
     processed_total = max(0, total - remaining)
 
     # Exclusion visibility: how much of the scanned corpus the project rules
     # (.gitignore + .graphignore + _NOISE_DIRS) actually exclude from the graph.
-    supported_files = len(cur)
+    supported_files = total
     scanned_files = _scanned_count(scan_root)
     excluded_files = max(0, scanned_files - supported_files)
 
