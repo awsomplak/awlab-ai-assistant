@@ -15,9 +15,11 @@ Supports two project isolation strategies:
 """
 
 import json
+import os
 import platform
 import re
 import sqlite3
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +31,7 @@ from .logger import logger
 from .workspace import resolve_db_path
 
 _SQLITE_PATCHED = False
+
 
 def _patch_sqlite_for_crsqlite() -> None:
     global _SQLITE_PATCHED
@@ -61,6 +64,7 @@ def _patch_sqlite_for_crsqlite() -> None:
         return conn
 
     sqlite3.connect = _cr_connect
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -318,22 +322,338 @@ def sync_family_project_ids(slug: str) -> dict:
         return {"updated": False, "changes": changes, "conflicts": conflicts}
 
 
-def family_for_workspace(workspace_path: str | Path | None) -> str | None:
-    """Return the family slug containing this workspace path, if any."""
+# ── Family config writes (agent-managed project-families.json) ──────────────
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _normalize_family_path(p: str) -> str:
+    """Normalize a member path to an absolute, forward-slash string."""
+    try:
+        return str(Path(p).expanduser().resolve()).replace("\\", "/")
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
+        return str(p).replace("\\", "/")
+
+
+def validate_family_slug(slug: str) -> str | None:
+    """Validate a family slug. Returns an error message, or None if valid.
+
+    Rules: non-empty, lowercase letters / digits / ``_`` / ``-``, starts with a
+    letter or digit. Matches the ``family_<slug>`` store pattern enforced by the
+    memory action params (``family_[a-z0-9_-]+``).
+    """
+    if not isinstance(slug, str) or not slug:
+        return "family slug is required (lowercase letters/digits/_/-)"
+    if not _SLUG_RE.match(slug):
+        return (
+            f"invalid family slug {slug!r}: use lowercase letters, digits, '_' or '-' (must start with a letter/digit)"  # noqa: E501
+        )
+    return None
+
+
+def _coerce_members(members: list | None) -> tuple[list[dict], list[str]]:
+    """Normalize + validate a member list → ``(members, errors)``.
+
+    Each member is ``{"path": str, "project_id": str}``. Rules enforced:
+    absolute path (normalized to forward slashes), non-empty slug-safe
+    ``project_id`` when given, no duplicate paths, no duplicate ``project_id``.
+    """
+    out: list[dict] = []
+    errors: list[str] = []
+    seen_paths: dict[str, str] = {}
+    seen_ids: dict[str, str] = {}
+    for i, m in enumerate(members or []):
+        if not isinstance(m, dict):
+            errors.append(f"member[{i}]: must be an object {{path, project_id?}}")
+            continue
+        raw_path = str(m.get("path") or "").strip()
+        if not raw_path:
+            errors.append(f"member[{i}]: 'path' is required")
+            continue
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            errors.append(f"member[{i}]: path must be absolute, got {raw_path!r}")
+            continue
+        norm = _normalize_family_path(raw_path)
+        pid = str(m.get("project_id") or "").strip()
+        if pid and not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", pid):
+            errors.append(f"member[{i}]: invalid project_id {pid!r} (letters/digits/_/- only)")
+            continue
+        if norm in seen_paths:
+            errors.append(f"member[{i}]: duplicate member path {norm!r}")
+            continue
+        if pid and pid in seen_ids:
+            errors.append(f"member[{i}]: duplicate project_id {pid!r} within this family")
+            continue
+        seen_paths[norm] = raw_path
+        if pid:
+            seen_ids[pid] = norm
+        out.append({"path": norm, "project_id": pid})
+    return out, errors
+
+
+def write_families_json(families: dict) -> dict:
+    """Atomically write the whole ``project-families.json`` (v2 shape).
+
+    Writes temp + ``os.replace`` so a crash never leaves a partial file.
+    Returns ``{success, path, error?}`` (never raises).
+    """
+    path = project_families_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".project-families.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(families, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+            os.replace(tmp, str(path))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return {"success": True, "path": str(path)}
+    except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as e:
+        return {"success": False, "path": str(path), "error": str(e)}
+
+
+def upsert_family(
+    slug: str,
+    name: str | None = None,
+    members: list | None = None,
+    replace_members: bool = False,
+) -> dict:
+    """Create or update a family entry in ``project-families.json``.
+
+    - ``name``: updates the human-readable name (keeps existing when omitted).
+    - ``members``: upserted by normalized path — a matching path updates its
+      ``project_id``, a new path is appended. When ``replace_members`` is True the
+      existing member list is replaced entirely (must still pass validation).
+    - Always writes the v2 shape. Returns ``{success, action, slug, name,
+      members, changed, errors}``.
+    """
+    slug_err = validate_family_slug(slug)
+    if slug_err:
+        return {"success": False, "error": slug_err, "action": "invalid", "slug": slug}
+    norm_members, m_errors = _coerce_members(members or [])
+    if m_errors:
+        return {"success": False, "error": "; ".join(m_errors[:5]), "action": "invalid", "slug": slug}
+
+    families = _load_families()  # normalizes v1→v2 on read
+    existed = slug in families
+    if not existed:
+        families[slug] = {"name": name or "", "members": []}
+    fam = families[slug]
+    if name is not None:
+        fam["name"] = name
+    if replace_members:
+        fam["members"] = []
+    # Merge by normalized path (upsert).
+    by_path = {_normalize_family_path(m["path"]): m for m in fam.get("members", [])}
+    changed: list[str] = []
+    for m in norm_members:
+        existing = by_path.get(m["path"])
+        if existing is None:
+            by_path[m["path"]] = dict(m)
+            changed.append(f"+ {m['path']}")
+        elif existing.get("project_id") != m.get("project_id"):
+            existing["project_id"] = m.get("project_id")
+            changed.append(f"~ {m['path']} project_id -> {m.get('project_id') or '(none)'}")
+    fam["members"] = list(by_path.values())
+
+    write = write_families_json(families)
+    if not write["success"]:
+        return {"success": False, "error": write.get("error", "write failed"), "action": "write", "slug": slug}
+    return {
+        "success": True,
+        "action": "updated" if existed else "created",
+        "slug": slug,
+        "name": fam.get("name", ""),
+        "members": fam["members"],
+        "changed": changed,
+        "errors": [],
+        "path": write["path"],
+    }
+
+
+def remove_family(slug: str) -> dict:
+    """Remove a whole family from ``project-families.json``. Returns ``{success, removed}``."""
+    if validate_family_slug(slug):
+        return {"success": False, "error": "invalid family slug", "removed": False}
+    families = _load_families()
+    if slug not in families:
+        return {"success": False, "error": f"family '{slug}' not found", "removed": False}
+    families.pop(slug)
+    write = write_families_json(families)
+    if not write["success"]:
+        return {"success": False, "error": write.get("error", "write failed"), "removed": False}
+    return {"success": True, "removed": True, "slug": slug, "path": write["path"]}
+
+
+def remove_family_member(slug: str, member_path: str) -> dict:
+    """Remove one member (by path) from a family. Returns ``{success, removed, remaining}``."""
+    if validate_family_slug(slug):
+        return {"success": False, "error": "invalid family slug", "removed": False}
+    if not member_path:
+        return {"success": False, "error": "member path is required", "removed": False}
+    target = _normalize_family_path(member_path)
+    families = _load_families()
+    fam = families.get(slug)
+    if not fam:
+        return {"success": False, "error": f"family '{slug}' not found", "removed": False}
+    members = fam.get("members", [])
+    kept = [m for m in members if _normalize_family_path(m.get("path", "")) != target]
+    if len(kept) == len(members):
+        return {"success": False, "error": f"member {target!r} not in family '{slug}'", "removed": False}
+    fam["members"] = kept
+    write = write_families_json(families)
+    if not write["success"]:
+        return {"success": False, "error": write.get("error", "write failed"), "removed": False}
+    return {
+        "success": True,
+        "removed": True,
+        "slug": slug,
+        "path": target,
+        "remaining": fam["members"],
+        "config_path": write["path"],
+    }
+
+
+def resolve_family_info(workspace_path: str | Path | None = None, slug: str | None = None) -> dict:
+    """Resolve a family (or all families) into a ready-to-consume info payload.
+
+    Used by the read-only ``family_info`` action. When ``slug`` is given returns
+    only that family (or an error if unknown). Otherwise returns every declared
+    family plus, when ``workspace_path`` is given:
+    - ``workspace_families`` — EVERY family containing this workspace (multi-family safe)
+    - ``workspace_family`` — the PRIMARY family (first declared match; == the
+      ``.ai/family-id`` marker content) or None
+    - ``family_id`` — the current ``.ai/family-id`` marker content (synced to the
+      primary family before returning, so it is never stale)
+
+    ``store`` is the memory-store name (``family_<slug>``) for each family.
+    """
+    families = _load_families()
+    all_families = [
+        {
+            "slug": s,
+            "name": f.get("name", ""),
+            "store": f"family_{s}",
+            "members": f.get("members", []),
+        }
+        for s, f in sorted(families.items())
+    ]
+    if slug is not None:
+        err = validate_family_slug(slug)
+        if err:
+            return {"success": False, "error": err}
+        match = next((f for f in all_families if f["slug"] == slug), None)
+        if match is None:
+            return {"success": False, "error": f"family '{slug}' is not declared in project-families.json"}
+        return {"success": True, "family": match, "families": all_families}
+
+    workspace_families: list[dict] = []
+    primary_slug: str | None = None
+    if workspace_path:
+        # Recomputed-on-read marker sync keeps .ai/family-id fresh (no cache).
+        primary_slug = sync_family_id(workspace_path).get("family_id")
+        by_slug = {f["slug"]: f for f in all_families}
+        workspace_families = [by_slug[s] for s in families_for_workspace(workspace_path) if s in by_slug]
+    return {
+        "success": True,
+        "family_id": primary_slug,
+        "workspace_family": next((f for f in workspace_families if f["slug"] == primary_slug), None)
+        if workspace_families
+        else None,
+        "workspace_families": workspace_families,
+        "families": all_families,
+    }
+
+
+def families_for_workspace(workspace_path: str | Path | None) -> list[str]:
+    """ALL family slugs whose members include this workspace path (multi-family safe).
+
+    A single project may belong to several families; this returns every match in
+    declaration order. ``family_for_workspace`` is the first of these (the PRIMARY).
+    """
     if not workspace_path:
-        return None
+        return []
     try:
         wp = str(Path(workspace_path).resolve())
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
-        return None
+        return []
+    slugs: list[str] = []
     for slug, fam in _load_families().items():
         for m in fam.get("members", []):
             try:
                 if str(Path(m["path"]).resolve()) == wp:
-                    return slug
+                    slugs.append(slug)
+                    break
             except (OSError, ValueError, TypeError, KeyError, sqlite3.Error):
                 continue
+    return slugs
+
+
+def family_for_workspace(workspace_path: str | Path | None) -> str | None:
+    """Return the PRIMARY family slug containing this workspace path, if any.
+
+    Primary = first declared family in ``project-families.json`` that lists this
+    path (deterministic). For ALL families use :func:`families_for_workspace`.
+    """
+    slugs = families_for_workspace(workspace_path)
+    return slugs[0] if slugs else None
+
+
+# ── Per-project family marker (.ai/family-id) — mirrors .ai/project-id ──────
+
+
+def family_id_path(workspace_path: str | Path) -> Path:
+    """Per-project marker file: ``<workspace>/.ai/family-id`` (single-line slug)."""
+    return Path(workspace_path).resolve() / ".ai" / "family-id"
+
+
+def read_family_id(workspace_path: str | Path) -> str | None:
+    """Read the raw ``.ai/family-id`` content (first non-empty line), or None."""
+    path = family_id_path(workspace_path)
+    if path.is_file():
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                return text.splitlines()[0].strip()
+        except OSError:
+            pass
     return None
+
+
+def sync_family_id(workspace_path: str | Path) -> dict:
+    """Recompute the PRIMARY family and reconcile ``.ai/family-id`` to it.
+
+    Recompute-on-read freshness model: every discovery call re-derives the primary
+    from the global config and rewrites the marker only when it changed (or is
+    missing). A stale marker is corrected; a project that left every family gets
+    its marker removed. Returns ``{success, family_id, changed, path}``.
+    """
+    path = family_id_path(workspace_path)
+    slug = family_for_workspace(workspace_path)
+    try:
+        if slug:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            changed = read_family_id(workspace_path) != slug
+            if changed:
+                path.write_text(slug + "\n", encoding="utf-8")
+            return {"success": True, "family_id": slug, "changed": changed, "path": str(path)}
+        if path.exists():
+            path.unlink()
+            return {"success": True, "family_id": None, "changed": True, "path": str(path)}
+        return {"success": True, "family_id": None, "changed": False, "path": str(path)}
+    except OSError:
+        return {"success": False, "family_id": slug, "changed": False, "path": str(path)}
+
+
+def seed_family_id(workspace_path: str | Path) -> dict:
+    """Alias for :func:`sync_family_id` (seed/refresh the primary family marker)."""
+    return sync_family_id(workspace_path)
 
 
 def family_root(slug: str) -> Path | None:
