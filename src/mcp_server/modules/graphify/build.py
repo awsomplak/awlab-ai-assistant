@@ -31,6 +31,7 @@ from .config import (
     _codegraph_dir,
     _resolve_root,
     _use_parallel,
+    shutdown_requested,
 )
 from .enrichment import _clean_inconsistencies, _enrich_laravel, _enrich_php_implements, _enrich_vue
 from .exclusions import (
@@ -85,8 +86,11 @@ def _background_rebuild(workspace_path: str | Path, root: Path, chunk_size: int 
                     # and advances the manifest; loop until the graph is complete.
                     # Safety: break if remaining_files stops decreasing, so a
                     # manifest/advance bug can never spin the worker forever.
+                    # Graceful shutdown: a request_shutdown() (signal / orphan
+                    # watchdog / EOF) stops the loop between chunks promptly
+                    # instead of draining the whole corpus during teardown.
                     last_remaining = None
-                    while True:
+                    while not shutdown_requested():
                         _mark_progress(key)
                         res = build_graph(workspace_path, root, chunk_size=chunk_size)
                         _mark_progress(key)

@@ -1,23 +1,39 @@
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
 from ...config import settings
 from ...helpers.file_utils import AcquireLock
-
+from ...helpers.logger import logger
 
 # graphify's ``extract(parallel=True)`` uses a ProcessPoolExecutor. Default OFF:
 # sequential is proven faster at realistic project scale (Windows spawn overhead
 # exceeds the small parallelizable portion), and the pool hangs in the frozen
-# onefile exe. Opt in for very large corpora via the central config
+# exe. Opt in for very large corpora via the central config
 # ``settings.graph_parallel`` (env ``GRAPH_PARALLEL=1`` or config.json).
+_PARALLEL_OVERRIDE_LOGGED = False
+
+
 def _use_parallel() -> bool:
     """Whether graphify extraction should use the ProcessPoolExecutor.
 
     Single source of truth: ``settings.graph_parallel`` (see ``config.py``) — so
     the toggle lives in one place alongside log-level and other env settings.
+
+    ALWAYS False in frozen builds: multiprocessing spawn re-executes the worker
+    binary as pool children (each an extra ``awlab-ai-worker`` process), which
+    hangs in the exe and can orphan child processes on a hard kill. Phase 5 of
+    the worker-leak fix forces sequential in the exe regardless of
+    ``GRAPH_PARALLEL`` and logs the override once.
     """
+    global _PARALLEL_OVERRIDE_LOGGED
+    if getattr(sys, "frozen", False):
+        if settings.graph_parallel and not _PARALLEL_OVERRIDE_LOGGED:
+            _PARALLEL_OVERRIDE_LOGGED = True
+            logger.warning("GRAPH_PARALLEL is ignored in frozen builds — extraction runs sequentially")
+        return False
     return settings.graph_parallel
 
 
@@ -26,6 +42,22 @@ def _use_parallel() -> bool:
 # graph.json stays readable thanks to graphify's atomic writes. Small incremental
 # rebuilds stay synchronous so a read right after an edit returns accurate data.
 _BACKGROUND_THRESHOLD = 20  # changed files at/above which rebuild runs in background
+
+
+# Process-wide graceful-shutdown flag. Set by the worker's signal handler and its
+# orphan watchdog so long-running background graph rebuilds stop between chunks
+# instead of grinding to completion while the worker is being torn down.
+_SHUTDOWN_EVENT = threading.Event()
+
+
+def request_shutdown() -> None:
+    """Ask in-flight background work to stop (idempotent)."""
+    _SHUTDOWN_EVENT.set()
+
+
+def shutdown_requested() -> bool:
+    """True when a graceful shutdown has been requested."""
+    return _SHUTDOWN_EVENT.is_set()
 
 
 _ENABLE_PHP_IMPLEMENTS_ENRICHMENT = True
