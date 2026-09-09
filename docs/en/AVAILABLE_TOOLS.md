@@ -23,6 +23,27 @@ proxy (the *bridge*, the single entrypoint every IDE/hook config points at) that
 an IDE's JSON-RPC pipe alive so `publish --target=binary` hot-swaps the worker with no
 `context canceled`.
 
+### 🛡️ Process lifecycle — no orphan workers
+
+The bridge + worker pair never leaves orphan processes behind (all OSes):
+
+- **Worker orphan watchdog** — the bridge passes its PID to the worker (`AWLAB_BRIDGE_PID`);
+  a stdlib/ctypes daemon watchdog polls the parent and the worker self-terminates —
+  cancelling any in-flight background rebuild first — the moment the bridge dies.
+- **Bridge parent watchdog** — `awlab-ai-assistant` is a PyInstaller ONEFILE, so the process a
+  host manages is its *bootloader* parent. The real bridge watches that parent and, on its
+  death, tears down the worker tree and exits.
+- **Tree teardown on every exit path** — Windows wraps the worker in a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (the OS reaps the worker + descendants even on a
+  force-kill) plus `taskkill /T`; POSIX sends `killpg` (SIGTERM → SIGKILL) to the worker's
+  process group. A stdin-EOF gives the worker a 5s grace, then force-kill.
+- **Cancellable background rebuilds** — a busy chunk-drain loop stops between chunks when the
+  worker is shutting down (signal / orphan watchdog / stdio EOF).
+- **Frozen builds never spawn pool children** — `GRAPH_PARALLEL` is ignored inside the
+  executable (multiprocessing spawn would re-exec `awlab-ai-worker` as pool children).
+- **Hook daemon self-cleans** — the background daemon idles out after 5 minutes without hook
+  traffic and never leaves a stale `daemon.port`.
+
 ```mermaid
 graph LR
   Agent["AI Agent"] -->|Tool Call| AM["AWLab-AI-Assistant<br/>(action_call)"]

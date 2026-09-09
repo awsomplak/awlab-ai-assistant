@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.7] - 2026-09-08
+## [3.0.7] - 2026-09-09
 
 ### 🚀 Highlights
 
+- **No more orphan processes (all OSes)** — fixing the reported leak where stopping the MCP
+  server / closing VS Code left `awlab-ai-worker` (and `awlab-ai-assistant`) processes running
+  forever at high CPU. The bridge + worker pair now tears itself down on every exit path.
 - **Project-family zero-discovery & agent-managed config** — family memory is no longer
   hidden from agents: a per-project `.ai/family-id` marker (mirrors `.ai/project-id`)
   records the PRIMARY family, and `ctx_info`/`family_info` surface every family a project
@@ -57,6 +60,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs synced** — correct `project-families.json` config path in `PROJECT_FAMILIES.md`
   (`en`/`id`), family sections in `AVAILABLE_TOOLS.md`, and action counts (26) across
   READMEs and INSTALL/REGISTRY_SCHEMA docs.
+
+### ✨ Fixed
+
+- **Worker orphan watchdog** — the bridge passes its PID (`AWLAB_BRIDGE_PID`) to the worker;
+  a stdlib/ctypes daemon poll self-terminates the worker (cancelling in-flight rebuilds first)
+  the moment its bridge parent dies (Windows `OpenProcess`/`WaitForSingleObject`, POSIX
+  `os.kill(pid, 0)`).
+- **Bridge parent watchdog** — the real bridge watches its PyInstaller ONEFILE bootloader
+  parent and, on its death, tears down the worker tree and exits.
+- **Process-tree teardown on every bridge exit path** — Windows Job Object
+  (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) so the OS reaps the worker tree even on a force-kill,
+  plus `taskkill /T`; POSIX `killpg` SIGTERM → SIGKILL on the worker's process group. stdin-EOF
+  now waits a bounded 5s grace, then force-kills a busy worker.
+- **Cancellable background rebuilds** — the chunk-drain loop stops between chunks on shutdown
+  (worker SIGINT/SIGTERM handlers, orphan watchdog, or stdio EOF).
+- **Guaranteed EOF exit** — the worker `os._exit(0)` after the stdio transport ends, so it never
+  lingers even if a library thread would keep it alive.
+- **Frozen builds never spawn pool children** — `GRAPH_PARALLEL` is ignored in the executable
+  (multiprocessing spawn re-execs `awlab-ai-worker` as pool children).
+- **Hook daemon self-cleans** — the background daemon idles out after 5 min without traffic and
+  never leaves a stale `daemon.port`; it also exits when superseded.
+- **task_update "Task not found" bug** — `[/]` (in-progress) / `[-]` (skipped) tasks were
+  invisible to the task parser (missing `/` and `-` in the marker character class), shifting
+  every later path in a phase and making whole-phase batches fail on the last task.
+
+### 🧪 Tests
+
+- New suites: `test_parent_watch`, `test_bridge_teardown`, `test_shutdown_cancel`,
+  `test_phase5_children`, `test_task_update_anomaly`. Pre-existing `test_bridge.py` failures
+  fixed (12/12): `.py` workers run under the interpreter, and handshake replay no longer uses
+  `select` on pipes (Windows). Full suite 101 passing.
 
 ## [3.0.6] - 2026-09-07
 

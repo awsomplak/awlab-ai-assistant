@@ -27,6 +27,29 @@
 > action. Bridge menjaga pipa JSON-RPC IDE tetap hidup, sehingga `publish --target=binary`
 > dapat mengganti (*hot-swap*) worker tanpa membuat IDE mengalami `context canceled`.
 
+### 🛡️ Proses Lifecycle — tidak ada worker yang menjadi orphan
+
+Pasangan bridge + worker tidak pernah meninggalkan proses *orphan* (di semua OS):
+
+- **Worker orphan watchdog** — bridge mengirim PID-nya ke worker (`AWLAB_BRIDGE_PID`);
+  *daemon watchdog* berbasis stdlib/ctypes memantau parent, dan worker akan menghentikan diri
+  — membatalkan background rebuild yang sedang berjalan lebih dulu — begitu parent (bridge)
+  mati.
+- **Bridge parent watchdog** — `awlab-ai-assistant` adalah PyInstaller ONEFILE, jadi proses
+  yang dikelola host adalah *bootloader parent*-nya. Bridge asli memantau parent tersebut dan,
+  saat mati, menutup pohon worker lalu keluar.
+- **Tree teardown di semua jalur keluar** — di Windows, worker dibungkus Job Object dengan
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (OS menutup worker + turunannya bahkan saat di-*force*
+  -kill) plus `taskkill /T`; di POSIX, `killpg` (SIGTERM → SIGKILL) dikirim ke *process group*
+  worker. Saat stdin-EOF, worker diberi waktu 5 detik, lalu di-*force*-kill.
+- **Background rebuild yang bisa dibatalkan** — loop chunk-drain berhenti di antara chunk saat
+  worker sedang shutdown (signal / orphan watchdog / stdio EOF).
+- **Build frozen tidak pernah membuat pool children** — `GRAPH_PARALLEL` diabaikan di dalam
+  executable (multiprocessing spawn akan menge-*re-exec* `awlab-ai-worker` sebagai pool
+  children).
+- **Hook daemon membersihkan diri** — daemon background berhenti sendiri setelah 5 menit tanpa
+  traffic hook dan tidak pernah meninggalkan `daemon.port` yang basi.
+
 ---
 
 ## 🛠️ Tool yang Tersedia
