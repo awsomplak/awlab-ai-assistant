@@ -111,7 +111,7 @@ PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"{B
 # in its own quotes (`command="..."`), so quoting the path here would produce invalid
 # output (e.g. a Python plugin `command=""..."" `). Paths with spaces are an
 # acceptable trade-off to keep every generated artifact syntactically valid.
-HOOK_CMD = f'{os.environ.get("AWLAB_HOOK_BIN") or PUBLISH_BIN_PATH} hook'
+HOOK_CMD = f"{os.environ.get('AWLAB_HOOK_BIN') or PUBLISH_BIN_PATH} hook"
 
 PUBLISH_MAP = {
     "binary": (
@@ -138,7 +138,7 @@ PUBLISH_MAP = {
     "copilot": (
         "Copilot",
         [
-            ("profiles/copilot", "{home}/.copilot/instructions"),
+            ("profiles/copilot/instructions", "{home}/.copilot/instructions"),
             ("profiles/copilot/agents", "{home}/.copilot/agents"),
             ("profiles/cline/skills", "{home}/.agents/skills"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
@@ -643,7 +643,7 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
 
 def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
     """Copilot: individual .instructions.md with YAML frontmatter, stripped comments, offset headings."""
-    copilot_dir = profiles_dir / "copilot"
+    copilot_dir = profiles_dir / "copilot" / "instructions"
     copilot_dir.mkdir(parents=True, exist_ok=True)
 
     descriptions = {
@@ -1383,7 +1383,7 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                     print(f"  {Style.DIM}(PyInstaller running silently...){Style.RESET}")
                     result = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
                     if result.returncode != 0:
-                        print(f"\n{Style.BRIGHT_RED}PyInstaller Output:{Style.RESET}\n{result.stdout}\n{result.stderr}")
+                        print(f"\n{Style.RED}PyInstaller Output:{Style.RESET}\n{result.stdout}\n{result.stderr}")
 
                 # Clean PyInstaller .spec file (leave 'build' so subsequent builds take 20s instead of 8m)
                 spec_path = ROOT / f"{bin_name}.spec"
