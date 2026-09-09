@@ -43,6 +43,7 @@ def _graphify_imports() -> dict[str, Any] | None:
         "to_html": to_html,
     }
 
+
 # Colour palette for the injected member-level views (mirrors graphify's
 # community colours closely enough for visual distinction).
 _VIZ_PALETTE = [
@@ -60,9 +61,11 @@ _VIZ_PALETTE = [
     "#D37295",
 ]
 
+
 def _viz_js_safe(obj: Any) -> str:
     """JSON-encode for embedding inside a <script> tag (no </script> breakout)."""
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
 
 def _community_labels(graph, communities: dict[int, list[str]], top_k: int = 3, max_len: int = 48) -> dict[int, str]:
     """Non-LLM heuristic community labels (for the HTML legend + drill-down).
@@ -92,6 +95,7 @@ def _community_labels(graph, communities: dict[int, list[str]], top_k: int = 3, 
             label = label[: max_len - 1] + "…"
         labels[int(cid)] = label or f"Community {cid}"
     return labels
+
 
 def _drilldown_data(
     graph,
@@ -128,6 +132,7 @@ def _drilldown_data(
             "members": rows,
         }
     return out
+
 
 def _full_member_view(
     graph,
@@ -182,6 +187,7 @@ def _full_member_view(
             }
         )
     return nodes, edges
+
 
 def _viz_injection_fragment(
     drilldown: dict,
@@ -474,6 +480,7 @@ def _viz_injection_fragment(
 }})();
 </script>"""
 
+
 def _inject_large_viz(html_path: Path, drilldown: dict, master: tuple | None = None) -> None:
     """Append the enhanced filter/drill-down layer to a generated graph.html.
 
@@ -496,6 +503,7 @@ def _inject_large_viz(html_path: Path, drilldown: dict, master: tuple | None = N
     else:
         text += frag
     html_path.write_text(text, encoding="utf-8")
+
 
 def _html_export(graph, communities: dict[int, list[str]], output_path: Path, node_limit: int) -> str:
     """graphify's ``to_html`` + our large-viz enhancement layer.
@@ -537,4 +545,3 @@ def _html_export(graph, communities: dict[int, list[str]], output_path: Path, no
         except Exception:  # pragma: no cover - non-fatal (base viz already written)
             pass
     return "aggregated" if aggregated else "full"
-

@@ -60,6 +60,7 @@ class _ProjectExclusions:
             return True
         return any(fnmatch.fnmatch(rel, g) for g in self.path_globs)
 
+
 def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> None:
     """Parse one exclusion file (.gitignore OR .graphignore) into the shared set.
 
@@ -119,6 +120,7 @@ def _parse_gitignore(ex: _ProjectExclusions, content: str, base_rel: str) -> Non
                     # Exact name → excludes a file OR a dir with that name.
                     ex.dir_names.add(line)
 
+
 def _load_global_exclusions() -> _ProjectExclusions:
     ex = _ProjectExclusions()
     ignores_dir = Path(__file__).resolve().parent.parent.parent / "data" / "ignores"
@@ -130,7 +132,9 @@ def _load_global_exclusions() -> _ProjectExclusions:
                 continue
     return ex
 
+
 _GLOBAL_EXCLUSIONS = _load_global_exclusions()
+
 
 def _is_noise_relpath(rel: str) -> bool:
     """True if a forward-slash relpath lives under a noise directory."""
@@ -143,6 +147,7 @@ def _is_noise_relpath(rel: str) -> bool:
         if _GLOBAL_EXCLUSIONS.excludes_dir(parent, p):
             return True
     return False
+
 
 def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -> dict[str, str]:
     manifest: dict[str, str] = {}
@@ -173,9 +178,11 @@ def _source_manifest(root: Path, exclusions: _ProjectExclusions | None = None) -
         return _source_manifest(root, None)
     return manifest
 
+
 _SCANNED_COUNT_CACHE: dict[str, tuple[float, int]] = {}
 
 _SCANNED_TTL = 10.0
+
 
 def _scanned_count(root: Path) -> int:
     key = str(Path(root).resolve())
@@ -186,6 +193,7 @@ def _scanned_count(root: Path) -> int:
     n = len(_source_manifest(root, None))
     _SCANNED_COUNT_CACHE[key] = (now, n)
     return n
+
 
 _EXCLUSION_CACHE: dict[
     str,
@@ -199,6 +207,7 @@ _EXCLUSION_TTL = 30.0  # seconds — re-walk after this so exclusion edits are p
 # exclude MORE — never re-include). ``.graphignore`` lets users exclude files/
 # dirs from the CODE GRAPH without touching their project .gitignore.
 _EXCLUSION_FILENAMES = (".gitignore", ".graphignore")
+
 
 def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
     """Load all project exclusion rules (.gitignore + .graphignore) under scan_root.
@@ -254,6 +263,7 @@ def _gitignore_exclusions(scan_root: Path) -> _ProjectExclusions:
     _EXCLUSION_CACHE[key] = (now, ex, visited_dirs, exclusion_files)
     return ex
 
+
 def _gitignored(scan_root: Path, path: Path, ex: _ProjectExclusions) -> bool:
     """True when a file path is excluded by project exclusion rules
     (.gitignore/.graphignore; dirs included)."""
@@ -270,6 +280,7 @@ def _gitignored(scan_root: Path, path: Path, ex: _ProjectExclusions) -> bool:
             return True
     return False
 
+
 def _changed_files(prev: dict[str, Any] | None, cur: dict[str, Any]) -> list[str]:
     """Diff two manifests → sorted list of changed/removed relpaths.
 
@@ -283,5 +294,6 @@ def _changed_files(prev: dict[str, Any] | None, cur: dict[str, Any]) -> list[str
     changed = [f for f in c if p.get(f) != c.get(f)]
     removed = [f for f in p if f not in c]
     return sorted(set(changed) | set(removed))
+
 
 # Export _is_noise_relpath for places that used to use _NOISE_DIRS

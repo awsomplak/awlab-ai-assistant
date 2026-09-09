@@ -72,4 +72,3 @@ def _identifier_scan(
         if len(hits) >= limit:
             break
     return hits
-

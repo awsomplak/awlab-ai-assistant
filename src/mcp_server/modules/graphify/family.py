@@ -157,6 +157,7 @@ def _build_family_graph(
 
 def _family_status(slug: str) -> dict[str, Any]:
     from .status import graph_status
+
     """Family graph status: exists + fresh (every member's per-project graph fresh)."""
     out_dir = _codegraph_dir(_family_codegraph_dir(slug))
     state_path = out_dir / ".build_state.json"

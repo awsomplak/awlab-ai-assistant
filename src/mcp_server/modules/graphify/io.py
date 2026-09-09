@@ -20,6 +20,7 @@ def _load_nx_graph(graph_path: Path):
     except TypeError:
         return _jg.node_link_graph(data)
 
+
 def _graph_from_json(out_dir: Path) -> dict[str, Any] | None:
     """Load the prior graph.json as ``{nodes, edges}`` (or None if absent).
 
@@ -34,6 +35,7 @@ def _graph_from_json(out_dir: Path) -> dict[str, Any] | None:
         return {"nodes": d.get("nodes", []), "edges": d.get("links", d.get("edges", []))}
     except (OSError, json.JSONDecodeError):
         return None
+
 
 def _load_graph(workspace_path: str | Path, root: str | Path | None = None) -> dict[str, Any] | None:
     """Load the built graph.json, or None if it doesn't exist.
@@ -54,4 +56,3 @@ def _load_graph(workspace_path: str | Path, root: str | Path | None = None) -> d
         return json.loads(graph_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-

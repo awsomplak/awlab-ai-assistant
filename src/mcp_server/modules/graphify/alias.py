@@ -26,6 +26,7 @@ _ALIAS_CONFIG_FILES = _VITE_CONFIG_FILES + _NUXT_CONFIG_FILES
 # (``'@/stores/auth'`` → ``stores/auth.js`` / ``stores/auth/index.ts`` ...).
 _ALIAS_RESOLVE_EXTS = (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro")
 
+
 def _resolve_alias_replacement(repl: str, base: Path) -> Path | None:
     """Turn a Vite alias replacement expression into an absolute path.
 
@@ -45,6 +46,7 @@ def _resolve_alias_replacement(repl: str, base: Path) -> Path | None:
     if not rel:
         return None
     return (base / rel).resolve()
+
 
 def _vite_alias_map(scan_root: Path) -> dict[str, Path]:
     """Discover path aliases (``'@': './src'`` etc.) from Vite/Nuxt config.
@@ -92,6 +94,7 @@ def _vite_alias_map(scan_root: Path) -> dict[str, Path]:
                 return aliases
     return {}
 
+
 # Import/export statement matcher: named/bare/dynamic forms, single or double
 # quotes, multi-line. Group ``spec`` = from-form specifier, ``bare``/``dyn`` =
 # side-effect / dynamic-import forms, ``clause`` = the imported-name clause.
@@ -102,6 +105,7 @@ _ALIAS_IMPORT_RE = re.compile(
     re.M | re.S,
 )
 _ALIAS_REQUIRE_RE = re.compile(r"""\brequire\s*\(\s*['"]([^"']+)['"]\s*\)""", re.M | re.S)
+
 
 def _imported_names(clause: str | None) -> list[str]:
     """Extract imported symbol names from an import clause.
@@ -129,6 +133,7 @@ def _imported_names(clause: str | None) -> list[str]:
     base = clause.split(" as ")[0].strip()
     return [base] if base else []
 
+
 def _alias_import_specifiers(text: str, aliases: dict[str, Path]):
     """Yield (specifier, imported_names, line) for alias imports in ``text``.
 
@@ -153,12 +158,14 @@ def _alias_import_specifiers(text: str, aliases: dict[str, Path]):
         line = text.count("\n", 0, m.start()) + 1
         yield spec, [], line
 
+
 def _resolve_alias_abs(spec: str, aliases: dict[str, Path]) -> Path | None:
     """Resolve an alias specifier to an absolute path, or None if not aliased."""
     for key in sorted(aliases, key=len, reverse=True):
         if spec == key or spec.startswith(key + "/"):
             return aliases[key] / spec[len(key) :].lstrip("/")
     return None
+
 
 def _match_module_abs(modules: dict[str, str], cand: Path) -> tuple[str, str] | None:
     """Find an existing module node for a resolved alias path.
@@ -185,6 +192,7 @@ def _match_module_abs(modules: dict[str, str], cand: Path) -> tuple[str, str] | 
             return hit, c
     return None
 
+
 def _mk_alias_link(source: str, target: str, relation: str, src: str, line: int) -> dict[str, Any]:
     """A graphify-style link for an alias-resolved import edge."""
     return {
@@ -198,6 +206,7 @@ def _mk_alias_link(source: str, target: str, relation: str, src: str, line: int)
         "weight": 1.0,
         "alias_resolved": True,
     }
+
 
 def _compute_alias_edges(
     node_items: list[tuple[str, str, str]],
@@ -246,6 +255,7 @@ def _compute_alias_edges(
                     links.append(_mk_alias_link(nid, sym_id, "imports", src, line))
     return links
 
+
 def _dedup_links(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop duplicate (source, target, relation) links."""
     seen: set[tuple[str, str, str]] = set()
@@ -257,6 +267,7 @@ def _dedup_links(links: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(e)
     return out
+
 
 def _augment_alias_import_edges(graph, scan_root: Path) -> int:
     """Add missing alias-import edges to the built networkx graph (in place).
@@ -280,6 +291,7 @@ def _augment_alias_import_edges(graph, scan_root: Path) -> int:
         graph.add_edge(src, tgt, **attrs)
         added += 1
     return added
+
 
 def _augment_alias_import_edges_json(graph_path: Path, scan_root: Path) -> int:
     """Self-heal a persisted graph.json with missing alias-import links.
@@ -308,4 +320,3 @@ def _augment_alias_import_edges_json(graph_path: Path, scan_root: Path) -> int:
     data.setdefault("links", []).extend(new)
     graph_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return len(new)
-

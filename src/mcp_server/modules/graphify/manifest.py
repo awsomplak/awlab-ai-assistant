@@ -39,12 +39,14 @@ def _manifest_update(out_dir: Path, **fields: Any) -> None:
         except OSError:
             pass
 
+
 def _bg_error(key: str, message: str) -> None:
     """Record a background worker error for a workspace (thread-safe)."""
     with _BUILD_LOCKS_GUARD:
         _BACKGROUND_ERRORS[key] = message
         # Persist so a restart can still surface why the worker died.
         _manifest_update(_codegraph_dir(Path(key)), rebuilding_error=message)
+
 
 def _mark_progress(key: str) -> None:
     """Stamp the latest per-chunk progress time for a workspace (thread-safe)."""
@@ -55,6 +57,7 @@ def _mark_progress(key: str) -> None:
             rebuilding_last_progress_at=datetime.now(timezone.utc).isoformat(),
         )
 
+
 def _load_manifest(out_dir: Path) -> dict[str, Any] | None:
     """Load the existing .build_state.json manifest, or None if absent/corrupt."""
     state_path = out_dir / ".build_state.json"
@@ -64,4 +67,3 @@ def _load_manifest(out_dir: Path) -> dict[str, Any] | None:
         return json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-

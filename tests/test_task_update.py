@@ -9,8 +9,6 @@ Covers the task_update guarantees:
 - executed / skipped / created trace on the batch response
 """
 
-from pathlib import Path
-
 import pytest
 
 from mcp_server.config import settings
