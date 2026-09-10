@@ -100,13 +100,18 @@ PUBLISH_BIN_PATH = str(Path.home() / ".awlab-id" / "agent-memory" / "bin" / f"{B
     "\\", "/"
 )
 
-# Use native python for hooks if running from virtualenv to completely bypass PyInstaller extraction overhead.
-# Hook hosts call the BRIDGE path (`<bridge> hook ...`); the bridge os.execv's the
-# worker with the same argv (see src/mcp_server/bridge.py), so HOOK_CMD stays put.
-if sys.prefix != sys.base_prefix:
-    HOOK_CMD = f'"{sys.executable}" -m mcp_server hook'
-else:
-    HOOK_CMD = f'"{PUBLISH_BIN_PATH}" hook'
+# Hook hosts MUST call the production PUBLISHED binary (`<bridge> hook ...`) — never
+# the build machine's venv/source path (`python -m mcp_server hook`). Generated hook
+# configs (hermes __init__.py, hooks/*.json, claude settings, ...) are published to
+# machines where the source checkout does not exist, so a baked source path breaks the
+# host (Hermes plugin/hook can't run). The bridge os.execv's the worker with the same
+# argv (see src/mcp_server/bridge.py), so HOOK_CMD stays put across publishes.
+# Local dev can point AWLAB_HOOK_BIN at a specific binary path to override.
+# NOTE: HOOK_CMD is the bare command (no surrounding quotes) — each consumer wraps it
+# in its own quotes (`command="..."`), so quoting the path here would produce invalid
+# output (e.g. a Python plugin `command=""..."" `). Paths with spaces are an
+# acceptable trade-off to keep every generated artifact syntactically valid.
+HOOK_CMD = f"{os.environ.get('AWLAB_HOOK_BIN') or PUBLISH_BIN_PATH} hook"
 
 PUBLISH_MAP = {
     "binary": (
@@ -133,7 +138,7 @@ PUBLISH_MAP = {
     "copilot": (
         "Copilot",
         [
-            ("profiles/copilot", "{home}/.copilot/instructions"),
+            ("profiles/copilot/instructions", "{home}/.copilot/instructions"),
             ("profiles/copilot/agents", "{home}/.copilot/agents"),
             ("profiles/cline/skills", "{home}/.agents/skills"),
             ("workflows", "{home}/.awlab-id/agent-memory/work-flows/"),
@@ -638,7 +643,7 @@ def _compile_cline(rules: list[dict], skills: list[dict], profiles_dir: Path) ->
 
 def _compile_copilot(rules: list[dict], skills: list[dict], profiles_dir: Path) -> None:
     """Copilot: individual .instructions.md with YAML frontmatter, stripped comments, offset headings."""
-    copilot_dir = profiles_dir / "copilot"
+    copilot_dir = profiles_dir / "copilot" / "instructions"
     copilot_dir.mkdir(parents=True, exist_ok=True)
 
     descriptions = {
@@ -1378,7 +1383,7 @@ def cmd_build(no_bin: bool = False, no_rules: bool = False, target_os: str = "au
                     print(f"  {Style.DIM}(PyInstaller running silently...){Style.RESET}")
                     result = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
                     if result.returncode != 0:
-                        print(f"\n{Style.BRIGHT_RED}PyInstaller Output:{Style.RESET}\n{result.stdout}\n{result.stderr}")
+                        print(f"\n{Style.RED}PyInstaller Output:{Style.RESET}\n{result.stdout}\n{result.stderr}")
 
                 # Clean PyInstaller .spec file (leave 'build' so subsequent builds take 20s instead of 8m)
                 spec_path = ROOT / f"{bin_name}.spec"

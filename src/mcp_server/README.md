@@ -1,6 +1,6 @@
 # AWLab-AI-Assistant MCP Server
 
-**Deterministic MCP server — published as a `bridge + worker` pair exposing exactly 2 tools (`action_call`, `action_help`) that route 23 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation. The `awlab-ai-assistant` executable is a thin stdio proxy (the *bridge*) that fronts `awlab-ai-worker`, this heavy server: the bridge keeps an IDE's JSON-RPC pipe alive, so `publish --target=binary` hot-swaps the worker underneath it with no `context canceled`.**
+**Deterministic MCP server — published as a `bridge + worker` pair exposing exactly 2 tools (`action_call`, `action_help`) that route 26 actions across plan management, memory operations (incl. pattern baking), registry control, workflow execution, project scanning, project families, the offline cache, and the code knowledge graph — all without AI model invocation. The `awlab-ai-assistant` executable is a thin stdio proxy (the *bridge*) that fronts `awlab-ai-worker`, this heavy server: the bridge keeps an IDE's JSON-RPC pipe alive, so `publish --target=binary` hot-swaps the worker underneath it with no `context canceled`.**
 
 Part of the [awlab-ai-assistant](../../README.md) system.
 
@@ -25,7 +25,7 @@ graph TB
     direction LR
     MAIN["__main__.py / server.py<br/>Single Entry Point"]
     DISP["modules/dispatcher.py<br/>action_call + action_help"]
-    REG["registry.py<br/>REGISTRY — 23 actions, single source of truth"]
+    REG["registry.py<br/>REGISTRY — 26 actions, single source of truth"]
     TOOLS["tools/<br/>plan_tools · memory_tools · utils_tools<br/>file_tools · context_tools/"]
     HELPERS["helpers/<br/>agent_recall · file_utils<br/>registry_utils · embeddings · hybrid_search"]
   end
@@ -143,7 +143,7 @@ a `context canceled`.
 
 ---
 
-## Tools Reference — action_call dispatcher (23 actions)
+## Tools Reference — action_call dispatcher (26 actions)
 
 Two MCP tools are exposed:
 
@@ -239,7 +239,7 @@ mcp_server/
 ├── server.py               # Dev console entry (AWLab-AI-Assistant)
 ├── __main__.py             # Worker PyInstaller entry (awlab-ai-worker)
 ├── bridge.py               # Bridge entry (awlab-ai-assistant, onefile) — stdio proxy
-├── registry.py             # REGISTRY — 23 actions, single source of truth
+├── registry.py             # REGISTRY — 26 actions, single source of truth
 ├── config.py               # Settings — prod/dev detection, .env + config.json
 ├── README.md               # This file
 ├── tools/

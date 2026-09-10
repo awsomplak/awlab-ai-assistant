@@ -100,6 +100,30 @@ def _fmt_memory(mem: dict | None) -> list[str]:
     return lines
 
 
+def _fmt_family(family: dict | None) -> list[str]:
+    """Render the project-family section of context.md."""
+    if not family or not isinstance(family, dict):
+        return ["_Not part of any project family._"]
+    primary = family.get("workspace_family") or {}
+    lines: list[str] = []
+    if primary.get("slug"):
+        name = primary.get("name") or ""
+        lines.append(f"- **Primary family:** {name} (`{primary.get('slug')}`) — memory store `{primary.get('store')}`")
+        members = primary.get("members") or []
+        if members:
+            lines.append(
+                "  - Members (" + str(len(members)) + "): " + ", ".join(m.get("path", "") for m in members[:8])
+            )
+    else:
+        lines.append("_Not part of any project family._")
+    ws_fams = family.get("workspace_families") or []
+    primary_slug = (primary or {}).get("slug")
+    others = [f for f in ws_fams if f.get("slug") and f.get("slug") != primary_slug]
+    if others:
+        lines.append("- **Also in families:** " + ", ".join(f"{f.get('slug')} (`{f.get('store')}`)" for f in others))
+    return lines
+
+
 def _fmt_plan_doc(plan_doc: dict | None) -> list[str]:
     """Render the parsed plan.md section (approach + preferences)."""
     if not plan_doc or not isinstance(plan_doc, dict):
@@ -177,10 +201,15 @@ def build_context_md(
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
     walkthrough_doc: dict | None = None,
+    family: dict | None = None,
     patterns: list | None = None,
     pattern_candidates: list | None = None,
 ) -> str:
-    """Assemble the full context.md content from the orchestration composite."""
+    """Assemble the full context.md content from the orchestration composite.
+
+    The ``## Current Work & Handoff`` section is the single source of truth for
+    what is being worked on right now (matches the session-start protocol docs).
+    """
     now = datetime.now(timezone.utc).isoformat()
     lines = [
         "# Project Context",
@@ -189,7 +218,7 @@ def build_context_md(
         "the current orchestration state — atomic-replaced on every refresh. "
         'Follow up here or via `action_call(action="ctx_info", params={"mode": "context"})`.',
         "",
-        "## Plan",
+        "## Current Work & Handoff",
         "",
         *_fmt_plan(plan),
         "",
@@ -204,6 +233,10 @@ def build_context_md(
         "## Walkthrough",
         "",
         *_fmt_walkthrough_doc(walkthrough_doc),
+        "",
+        "## Project Family",
+        "",
+        *_fmt_family(family),
         "",
         "## Code",
         "",
@@ -256,6 +289,7 @@ def materialize_context(
     plan_doc: dict | None = None,
     notes_doc: dict | None = None,
     walkthrough_doc: dict | None = None,
+    family: dict | None = None,
     patterns: list | None = None,
     pattern_candidates: list | None = None,
 ) -> dict:
@@ -275,6 +309,7 @@ def materialize_context(
         plan_doc=plan_doc,
         notes_doc=notes_doc,
         walkthrough_doc=walkthrough_doc,
+        family=family,
         patterns=patterns,
         pattern_candidates=pattern_candidates,
     )
@@ -305,10 +340,18 @@ At the start of **every** session, before touching any code:
    "format": "structured"})` → next eligible task via `action_call(action="plan_status", params={"plan_uuid": "..."})`.
 4. **Load User Patterns:** Always retrieve user preferences at the start of a session by running
    `action_call(action="mem_search", params={"entity_type": "pattern"})` and apply them to your workflow.
-5. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what
+5. **Discover project families (zero-discovery):** `ctx_info mode="snapshot"` returns your project's family
+   membership — read `.ai/family-id` (PRIMARY family key) and note every family this project belongs to
+   (`family` block). Family knowledge is shared across members via `store="family_<slug>"`; when a task spans
+   repos, operate on the MERGED graph with `family="<slug>"` on graph_* actions. `family_info` lists all
+   families / resolves this project's; never read the global config file by hand.
+6. **Navigate code GRAPH-FIRST:** before reading source files to locate a symbol/method/class/caller, call
+   `graph_query`; use `graph_explain` (neighbours/callers) and `graph_path` (dependency paths). Then read only
+   the 1-3 files that matter. Use grep/source scan only for exact literal text or when a query dead-ends.
+7. **Never invent task state.** If there is no handoff and no active plan, state that clearly and ask the user what
    to work on — do not guess, do not fabricate a task, do not "continue" something you cannot see.
-6. **Token Burn Protection:** NEVER call `plan_doc` with `mode="read"` just to read the plan for context. It dumps the entire raw file and burns tokens. ALWAYS rely on `ctx_info` for plan context. Only use `plan_doc(mode="read")` when explicitly migrating or rewriting the plan document.
-"""
+8. **Token Burn Protection:** NEVER call `plan_doc` with `mode="read"` just to read the plan for context. It dumps the entire raw file and burns tokens. ALWAYS rely on `ctx_info` for plan context. Only use `plan_doc(mode="read")` when explicitly migrating or rewriting the plan document.
+"""  # noqa: E501
 
 
 def _ensure_protocol_and_agents_md(workspace_path: str | Path) -> None:

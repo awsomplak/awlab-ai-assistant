@@ -486,9 +486,19 @@ def test_hot_reload_replays_initialize_handshake(tmp_path, mcp_worker):
         pid1 = worker_pid(pidfile)
 
         # Client handshake + baseline call.
-        send_mcp(proc, {"jsonrpc": "2.0", "id": 100, "method": "initialize",
-                        "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                                   "clientInfo": {"name": "t", "version": "1"}}})
+        send_mcp(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 100,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "t", "version": "1"},
+                },
+            },
+        )
         assert wait_until(lambda: find_response(state, 100) is not None), "no initialize response"
         assert find_response(state, 100).get("result", {}).get("serverInfo")
         send_mcp(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -512,4 +522,3 @@ def test_hot_reload_replays_initialize_handshake(tmp_path, mcp_worker):
         assert resp.get("result", {}).get("tools") == [{"name": "fake_tool"}]
     finally:
         kill_graceful(proc)
-

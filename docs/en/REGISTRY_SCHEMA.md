@@ -32,7 +32,7 @@
 1. **One source of truth** — `REGISTRY` drives tool description, `action_help`, and SKILL.md.
 2. **Server-owned orchestration** — the agent makes ONE call; the server guarantees the
    complete flow via `preconditions` + `pipeline`. No partial execution, ever.
-3. **Coarse, complete actions** — 36 partial tools → 23 actions (incl. `graph_*`, the
+3. **Coarse, complete actions** — 36 partial tools → 26 actions (incl. `graph_*`, the
    `mem_list_entities` + `mem_dedupe` memory-auditing actions, the `mem_replay` offline-cache
    replay, the `reg_update` single registry.md CRUD, and the `plan_doc` / `project_id` /
    `mem_observe` additions).

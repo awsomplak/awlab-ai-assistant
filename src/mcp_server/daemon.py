@@ -23,6 +23,19 @@ def _get_port_file() -> Path:
     return settings.config_home / "daemon.port"
 
 
+# A daemon with no hook traffic for this long exits on its own (self-cleanup).
+# Hooks are sporadic, so a leftover/orphaned daemon (whose transient spawner
+# exited long ago) must not linger forever — it idles out and is respawned on
+# the next hook demand via ``send_to_daemon``.
+_DAEMON_IDLE_SECONDS = 300
+_DAEMON_CHECK_SECONDS = 5
+
+# Port this daemon bound, set by ``start_daemon_server``; ``run_daemon`` only
+# unlinks the shared port file while it still points at us (never clobber a
+# replacement daemon's port).
+_MY_PORT: int | None = None
+
+
 async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         data = await reader.read()
@@ -49,8 +62,16 @@ async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWri
 
 
 async def start_daemon_server() -> None:
-    server = await asyncio.start_server(_handle_client, "127.0.0.1", 0)
+    global _MY_PORT
+    last_activity = {"t": time.monotonic()}
+
+    async def _handle_with_activity(reader, writer) -> None:
+        last_activity["t"] = time.monotonic()
+        await _handle_client(reader, writer)
+
+    server = await asyncio.start_server(_handle_with_activity, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
+    _MY_PORT = port
 
     port_file = _get_port_file()
     port_file.parent.mkdir(parents=True, exist_ok=True)
@@ -58,8 +79,27 @@ async def start_daemon_server() -> None:
 
     logger.info(f"Daemon listening on 127.0.0.1:{port}")
 
-    async with server:
-        await server.serve_forever()
+    # Serve until (a) idle — a leftover/orphaned daemon must not linger forever —
+    # or (b) the shared port file no longer points at us (a replacement daemon
+    # took over, so this one is redundant and must not clobber it on exit).
+    task = asyncio.ensure_future(server.serve_forever())
+    try:
+        while True:
+            await asyncio.sleep(_DAEMON_CHECK_SECONDS)
+            idle = time.monotonic() - last_activity["t"] > _DAEMON_IDLE_SECONDS
+            lost_ownership = not port_file.is_file() or port_file.read_text(encoding="utf-8").strip() != str(port)
+            if idle:
+                logger.info(f"Daemon idle for {_DAEMON_IDLE_SECONDS}s — exiting")
+                break
+            if lost_ownership:
+                logger.info("Daemon superseded by another listener — exiting")
+                break
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 def run_daemon() -> None:
@@ -70,7 +110,15 @@ def run_daemon() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        _get_port_file().unlink(missing_ok=True)
+        # Only unlink while we still own the port file (never remove a
+        # replacement daemon's port).
+        if _MY_PORT is not None:
+            pf = _get_port_file()
+            try:
+                if pf.is_file() and pf.read_text(encoding="utf-8").strip() == str(_MY_PORT):
+                    pf.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def send_to_daemon(hook: HookEvent) -> dict[str, Any]:

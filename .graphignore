@@ -1,0 +1,10 @@
+/assets
+/docs
+/scripts
+/tests
+.vulture_whitelist.py
+AGENTS.md
+README.md
+README_ID.md
+CHANGELOG.md
+LICENSE

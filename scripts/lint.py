@@ -60,7 +60,7 @@ def _run(label: str, cmd: list[str]) -> int:
 def main() -> int:
     if "--ruff" in sys.argv:
         idx = sys.argv.index("--ruff")
-        ruff_args = sys.argv[idx + 1:]
+        ruff_args = sys.argv[idx + 1 :]
         return _run("Ruff", [*_ruff_cmd(), *ruff_args])
 
     parser = argparse.ArgumentParser(description="Lint & code-hygiene runner (ruff).")

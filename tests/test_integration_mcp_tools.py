@@ -10,37 +10,15 @@ to validate handler logic without requiring a running server.
 """
 
 import json
-import uuid as uuid_mod
 from pathlib import Path
 
 import pytest
 
-from mcp_server.helpers.validation import (
-    validate_status,
-    validate_status_transition,
-    validate_uuid,
-)
-from mcp_server.tools.context_tools._cache import load_cache, save_cache
-from mcp_server.tools.context_tools.context import get_context_snapshot
-from mcp_server.tools.context_tools.scanner import scan_project
-from mcp_server.tools.context_tools.suggest import suggest_relevant_files
-from mcp_server.tools.file_tools import read_memory_bank
-from mcp_server.tools.memory_tools import search_memory
-from mcp_server.tools.plan_tools.io import (
-    store_memory_checkpoint,
-    sync_to_agent_recall,
-    update_registry_phase_count,
-)
-from mcp_server.tools.plan_tools.phase import validate_phase_gate
 from mcp_server.tools.plan_tools.plan import (
-    check_plan_completable,
-    execute_workflow,
-    generate_retrospective_summary,
     get_next_eligible_task,
     list_registry,
     list_workflows,
     mark_phase_complete,
-    resolve_deferred_tasks,
     switch_active_plan,
 )
 from mcp_server.tools.plan_tools.tasks import (
@@ -48,7 +26,6 @@ from mcp_server.tools.plan_tools.tasks import (
     read_plan_tasks,
     update_task_status,
 )
-from mcp_server.tools.utils_tools import get_environment, get_server_version
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -147,8 +124,22 @@ class TestPlanToolsIntegration:
             (list_registry, {}, True, ["active"]),
             (switch_active_plan, {"uuid": VALID_UUID}, True, []),
             (read_plan_tasks, {"plan_uuid": VALID_UUID, "format": "structured"}, True, []),
-            (update_task_status, {"project_id": "test-project", "plan_uuid": VALID_UUID, "task_path": "1.1", "new_status": "[x!]"}, True, []),
-            (batch_update_tasks, {"project_id": "test-project", "plan_uuid": VALID_UUID, "updates": [{"task_path": "1.2", "new_status": "[x✓]"}]}, True, [("executed", [{"task_path": "1.2", "old_status": "[x]", "new_status": "[x✓]"}])]),
+            (
+                update_task_status,
+                {"project_id": "test-project", "plan_uuid": VALID_UUID, "task_path": "1.1", "new_status": "[x!]"},
+                True,
+                [],
+            ),
+            (
+                batch_update_tasks,
+                {
+                    "project_id": "test-project",
+                    "plan_uuid": VALID_UUID,
+                    "updates": [{"task_path": "1.2", "new_status": "[x✓]"}],
+                },
+                True,
+                [("executed", [{"task_path": "1.2", "old_status": "[x]", "new_status": "[x✓]"}])],
+            ),
             (get_next_eligible_task, {"plan_uuid": VALID_UUID}, True, ["next_task"]),
             (mark_phase_complete, {"project_id": "test-project", "plan_uuid": VALID_UUID, "phase_num": 1}, True, []),
             (list_workflows, {"workflows_dir": "auto"}, True, []),
@@ -174,4 +165,3 @@ class TestPlanToolsIntegration:
         for v in extra_asserts:
             if isinstance(v, tuple):
                 assert result.get(v[0]) == v[1], f"Expected {v[0]} == {v[1]}, got {result.get(v[0])}"
-

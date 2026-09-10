@@ -413,7 +413,12 @@ def parse_walkthrough_md(content: str) -> dict[str, Any]:
 
 # Unified patterns for Auto-Healing parsing
 _PHASE_RE = re.compile(r"^##\s+Phase\s+(\d+)[.:\-]?\s*(.+)$", re.IGNORECASE)
-_TASK_RE = re.compile(r"^(\s*)([-*]\s+)(\[\s*[ x✓!—⏳a-zA-Z]*\s*\])(.*)$")
+# The status character class MUST cover every marker in VALID_STATUS_MARKERS
+# (validation.py): "[ ]", "[x]", "[x✓]", "[x!]", "[!]", "[—]", "[-]", "[⏳]", "[/]".
+# It includes "/" (in-progress) and a literal "-" (skipped) — omitting them made
+# `[/]`/`[-]` tasks invisible to the parser, shifting every later path in the
+# phase down by one so the real last task resolved as "Task not found".
+_TASK_RE = re.compile(r"^(\s*)([-*]\s+)(\[\s*[ x✓!—⏳a-zA-Z\-/]*\s*\])(.*)$")
 
 # Metadata continuation lines attached to the previous task (block style).
 #   - `    → depends: Task 1, Task 2`   (dependencies — refs resolved by path or name)

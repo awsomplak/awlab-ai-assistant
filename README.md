@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/awsomplak/awlab-ai-assistant?color=blue&label=version" alt="Latest Version" />
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/tests-55%20passing-brightgreen" alt="67 tests passing" />
+  <img src="https://img.shields.io/badge/tests-81%20passing-brightgreen" alt="81 tests passing" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange" alt="Cross-platform" />
 </p>
@@ -183,7 +183,7 @@ This README is the single documentation entry point. Use the tables below to fin
 | [`README_ID.md`](README_ID.md)                               | What AWLab-AI-Assistant is, features, tested OS/agents, architecture (Bahasa Indonesia)                                                                                   |
 | [`docs/en/CRDT_SYNC.md`](docs/en/CRDT_SYNC.md)               | Experimental guide on enabling CRDT memory sync across the cloud                                                                                                          |
 | [`docs/en/INSTALL.md`](docs/en/INSTALL.md)                   | Requirements, install from source, build the executable pair (bridge + worker), publish rules + skills, wire the MCP server per agent, environment variables, CLI reference           |
-| [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md)   | The 2 exposed MCP tools and the **23 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
+| [`docs/en/AVAILABLE_TOOLS.md`](docs/en/AVAILABLE_TOOLS.md)   | The 2 exposed MCP tools and the **26 actions** they route (plan, task, memory, graph, context, util, workflow), plus graph freshness, offline cache, and project families |
 | [`docs/en/PROJECT_FAMILIES.md`](docs/en/PROJECT_FAMILIES.md) | Documentation on configuring project families for unified code graphs and shared episodic memory across multi-repository workspaces                                       |
 | [`docs/en/HOOKS.md`](docs/en/HOOKS.md)                       | Optional zero-LLM hook automation — per-agent registration (Claude Code, Hermes, Cline, Copilot), event behaviour, pros/cons vs MCP-only, verification & troubleshooting  |
 | [`CHANGELOG.md`](CHANGELOG.md)                               | Version-by-version release notes                                                                                                                                          |

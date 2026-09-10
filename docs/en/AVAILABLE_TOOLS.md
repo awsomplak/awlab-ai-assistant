@@ -2,7 +2,7 @@
 
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Available MCP Tools**
 
-> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help), routing **23 actions**.
+> The MCP surface is **2 tools**: `action_call` (dispatcher) + `action_help` (help), routing **26 actions**.
 
 **In this page:**
 
@@ -22,6 +22,27 @@ proxy (the *bridge*, the single entrypoint every IDE/hook config points at) that
 `awlab-ai-worker`, the heavy server whose `REGISTRY` routes to all actions. The bridge keeps
 an IDE's JSON-RPC pipe alive so `publish --target=binary` hot-swaps the worker with no
 `context canceled`.
+
+### 🛡️ Process lifecycle — no orphan workers
+
+The bridge + worker pair never leaves orphan processes behind (all OSes):
+
+- **Worker orphan watchdog** — the bridge passes its PID to the worker (`AWLAB_BRIDGE_PID`);
+  a stdlib/ctypes daemon watchdog polls the parent and the worker self-terminates —
+  cancelling any in-flight background rebuild first — the moment the bridge dies.
+- **Bridge parent watchdog** — `awlab-ai-assistant` is a PyInstaller ONEFILE, so the process a
+  host manages is its *bootloader* parent. The real bridge watches that parent and, on its
+  death, tears down the worker tree and exits.
+- **Tree teardown on every exit path** — Windows wraps the worker in a Job Object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (the OS reaps the worker + descendants even on a
+  force-kill) plus `taskkill /T`; POSIX sends `killpg` (SIGTERM → SIGKILL) to the worker's
+  process group. A stdin-EOF gives the worker a 5s grace, then force-kill.
+- **Cancellable background rebuilds** — a busy chunk-drain loop stops between chunks when the
+  worker is shutting down (signal / orphan watchdog / stdio EOF).
+- **Frozen builds never spawn pool children** — `GRAPH_PARALLEL` is ignored inside the
+  executable (multiprocessing spawn would re-exec `awlab-ai-worker` as pool children).
+- **Hook daemon self-cleans** — the background daemon idles out after 5 minutes without hook
+  traffic and never leaves a stale `daemon.port`.
 
 ```mermaid
 graph LR
@@ -293,8 +314,14 @@ Registration is per-host; the exe derives the project per event (see `docs/en/IN
 ## 👨‍👩‍👧‍👦 Project families
 
 Correlated projects at different paths share a merged code graph and a dedicated
-`family_<slug>` memory store. `project-families.json` (v2) declares members as
-`[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
+`family_<slug>` memory store. The family declaration lives in
+`~/.awlab-id/agent-memory/project-families.json` (v2), which maps each family slug
+to `{name, members: [{path, project_id}]}`. `project-families.json` declares members
+as `[{path, project_id}]` — the project's own `.ai/project-id` is authoritative over
 the declared id (reconciled automatically on family build), fresh members are
 seeded, and `graph_build` with `family=<slug>` produces the merged graph with
-`<project_id>::`-tagged nodes. For full setup instructions, see [Project Families Configuration](PROJECT_FAMILIES.md).
+`<project_id>::`-tagged nodes. Every member project carries a `.ai/family-id` marker
+(its PRIMARY family key, mirroring `.ai/project-id`), and `ctx_info`/`family_info`
+report it plus every family the project belongs to. `family_info` (read-only) lists and
+resolves families; `family_config` lets the agent create/update/remove families and
+members — the user only monitors the file. For full setup instructions, see [Project Families Configuration](PROJECT_FAMILIES.md).

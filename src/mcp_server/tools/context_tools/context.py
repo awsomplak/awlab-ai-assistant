@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from ...config import settings
-from ...helpers import compute_tasks_summary, load_registry, read_plan_md, read_tasks_md
+from ...helpers import (
+    compute_tasks_summary,
+    load_registry,
+    read_plan_md,
+    read_tasks_md,
+    resolve_family_info,
+)
 from ._memory_search import query_agent_recall_for_patterns
 from ._registry_parser import get_current_phase_from_tasks
 
@@ -59,6 +65,21 @@ async def get_context_snapshot(workspace_path: str | Path = "") -> dict[str, Any
 
     patterns = query_agent_recall_for_patterns(workspace_path=workspace_path, project_id=project_id, limit=5)
 
+    # Project-family discovery: primary family (.ai/family-id) + every family this
+    # workspace belongs to. Zero-discovery — the agent knows its family stores
+    # (store="family_<slug>") without reading the global config.
+    family = None
+    try:
+        finfo = resolve_family_info(workspace_path=workspace_path)
+        if finfo.get("success"):
+            family = {
+                "family_id": finfo.get("family_id"),
+                "workspace_family": finfo.get("workspace_family"),
+                "workspace_families": finfo.get("workspace_families", []),
+            }
+    except Exception:  # noqa: BLE001 — discovery must never break the snapshot
+        family = None
+
     return {
         "success": True,
         "active_plan": {
@@ -71,4 +92,5 @@ async def get_context_snapshot(workspace_path: str | Path = "") -> dict[str, Any
         else None,
         "patterns": patterns if patterns else [],
         "project_id": project_id,
+        "family": family,
     }

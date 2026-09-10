@@ -2,7 +2,7 @@
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumentasi](../../README_ID.md#dokumentasi) · **Tool MCP yang Tersedia**
 
-> MCP server memiliki **2 tool**: `action_call` (dispatcher) dan `action_help` (bantuan), yang menangani **23 action**.
+> MCP server memiliki **2 tool**: `action_call` (dispatcher) dan `action_help` (bantuan), yang menangani **26 action**.
 
 **Di halaman ini:**
 
@@ -26,6 +26,29 @@
 > yang menjalankan `awlab-ai-worker`, server MCP berat tempat `REGISTRY` menangani semua
 > action. Bridge menjaga pipa JSON-RPC IDE tetap hidup, sehingga `publish --target=binary`
 > dapat mengganti (*hot-swap*) worker tanpa membuat IDE mengalami `context canceled`.
+
+### 🛡️ Proses Lifecycle — tidak ada worker yang menjadi orphan
+
+Pasangan bridge + worker tidak pernah meninggalkan proses *orphan* (di semua OS):
+
+- **Worker orphan watchdog** — bridge mengirim PID-nya ke worker (`AWLAB_BRIDGE_PID`);
+  *daemon watchdog* berbasis stdlib/ctypes memantau parent, dan worker akan menghentikan diri
+  — membatalkan background rebuild yang sedang berjalan lebih dulu — begitu parent (bridge)
+  mati.
+- **Bridge parent watchdog** — `awlab-ai-assistant` adalah PyInstaller ONEFILE, jadi proses
+  yang dikelola host adalah *bootloader parent*-nya. Bridge asli memantau parent tersebut dan,
+  saat mati, menutup pohon worker lalu keluar.
+- **Tree teardown di semua jalur keluar** — di Windows, worker dibungkus Job Object dengan
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (OS menutup worker + turunannya bahkan saat di-*force*
+  -kill) plus `taskkill /T`; di POSIX, `killpg` (SIGTERM → SIGKILL) dikirim ke *process group*
+  worker. Saat stdin-EOF, worker diberi waktu 5 detik, lalu di-*force*-kill.
+- **Background rebuild yang bisa dibatalkan** — loop chunk-drain berhenti di antara chunk saat
+  worker sedang shutdown (signal / orphan watchdog / stdio EOF).
+- **Build frozen tidak pernah membuat pool children** — `GRAPH_PARALLEL` diabaikan di dalam
+  executable (multiprocessing spawn akan menge-*re-exec* `awlab-ai-worker` sebagai pool
+  children).
+- **Hook daemon membersihkan diri** — daemon background berhenti sendiri setelah 5 menit tanpa
+  traffic hook dan tidak pernah meninggalkan `daemon.port` yang basi.
 
 ---
 
@@ -251,4 +274,4 @@ Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda
 }
 ```
 
-Jika `project-id` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/project-id` dari project, maka akan lebih diutamakan menggunakan `project-id` dari project tersebut daripada `project-id` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **code-graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`.
+Jika `project-id` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/project-id` dari project, maka akan lebih diutamakan menggunakan `project-id` dari project tersebut daripada `project-id` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **code-graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`. Setiap project anggota memiliki penanda `.ai/family-id` (kunci family **utama**, meniru `.ai/project-id`), dan `ctx_info`/`family_info` melaporkannya beserta semua family yang dimiliki project tersebut. `family_info` (hanya-baca) mendaftar dan me-resolve family; `family_config` memungkinkan agent membuat/mengubah/menghapus family beserta anggotanya — pengguna hanya memantau filenya.

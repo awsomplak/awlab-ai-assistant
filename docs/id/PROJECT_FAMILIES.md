@@ -2,7 +2,7 @@
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumentasi](../../README_ID.md#dokumentasi) · **Project Families**
 
-> **Singkatnya (TL;DR):** Untuk berbagi memori dan code-graph di antara project yang saling berkaitan (contoh: backend + frontend), buat file `~/.awlab-id/project-families.json` yang mengelompokkan path mereka. AI akan mendeteksinya secara otomatis.
+> **Singkatnya (TL;DR):** Untuk berbagi memori dan code-graph di antara project yang saling berkaitan (contoh: backend + frontend), buat file `~/.awlab-id/agent-memory/project-families.json` yang mengelompokkan path mereka. AI akan mendeteksinya secara otomatis.
 
 **Project Family** memungkinkan Anda untuk mengelompokkan beberapa proyek yang saling berkaitan (misalnya, repositori frontend dan repositori backend yang terpisah). Dengan mengonfigurasi _project family_, sistem MCP akan mengaktifkan:
 
@@ -26,8 +26,8 @@ Praktik terbaik untuk mengonfigurasi _project family_ adalah dengan membuat file
 
 File konfigurasi bernama `project-families.json` dan harus ditempatkan di direktori konfigurasi global Anda:
 
-- **Windows:** `C:\Users\<username>\.awlab-id\project-families.json`
-- **Mac/Linux:** `~/.awlab-id/project-families.json`
+- **Windows:** `C:\Users\<username>\.awlab-id\agent-memory\project-families.json`
+- **Mac/Linux:** `~/.awlab-id/agent-memory/project-families.json`
 
 ### 🔖 2. 📝 Tentukan Struktur JSON (format v2)
 

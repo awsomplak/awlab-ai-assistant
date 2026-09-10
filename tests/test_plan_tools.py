@@ -17,21 +17,9 @@ from pathlib import Path
 import pytest
 
 from mcp_server.config import settings
-from mcp_server.helpers.validation import validate_status_transition
 from mcp_server.tools.plan_tools import (
-    batch_update_tasks,
-    check_plan_completable,
-    execute_workflow,
-    generate_retrospective_summary,
-    get_next_eligible_task,
-    list_registry,
-    list_workflows,
-    mark_phase_complete,
     read_plan_tasks,
-    resolve_deferred_tasks,
-    switch_active_plan,
     update_task_status,
-    validate_phase_gate,
 )
 
 # ── Fixtures for extended test scenarios ────────────────────────────────────────
@@ -142,7 +130,13 @@ class TestReadPlanTasks:
         ],
     )
     async def test_read_plan_formats(
-        self, temp_project_dir: str, setup_tasks_md: str, plan_uuid: str, format_type: str, expected_format: str, expected_keys: list[str]
+        self,
+        temp_project_dir: str,
+        setup_tasks_md: str,
+        plan_uuid: str,
+        format_type: str,
+        expected_format: str,
+        expected_keys: list[str],
     ):
         """Test read_plan_tasks with various formats."""
         result = await read_plan_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid, format=format_type)
@@ -167,7 +161,9 @@ class TestReadPlanTasks:
             ("ffffffff", True),  # Non-existent plan UUID
         ],
     )
-    async def test_read_errors(self, temp_project_dir: str, plan_dir: str, plan_uuid: str, plan_id: str, inject_tasks: bool):
+    async def test_read_errors(
+        self, temp_project_dir: str, plan_dir: str, plan_uuid: str, plan_id: str, inject_tasks: bool
+    ):
         """Test read_plan_tasks error conditions (missing plan or missing tasks.md)."""
         target_uuid = plan_uuid if plan_id == "valid" else plan_id
         if inject_tasks:
@@ -186,22 +182,35 @@ class TestUpdateTaskStatus:
         "task_path, new_status, expected_old, verify_path",
         [
             ("1.1", "[x]", "[ ]", "1.1"),
-        ]
+        ],
     )
     async def test_update_task_success(
-        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, task_path: str, new_status: str, expected_old: str, verify_path: str
+        self,
+        temp_project_dir: str,
+        project_id: str,
+        setup_tasks_md: str,
+        plan_uuid: str,
+        mock_agent_recall_success,
+        task_path: str,
+        new_status: str,
+        expected_old: str,
+        verify_path: str,
     ):
         """Should successfully update task status and return metadata."""
         result = await update_task_status(
-            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path=task_path, new_status=new_status
+            workspace_path=temp_project_dir,
+            project_id=project_id,
+            plan_uuid=plan_uuid,
+            task_path=task_path,
+            new_status=new_status,
         )
         assert result["success"] is True
         assert result.get("old_status") == expected_old
         assert result["new_status"] == new_status
         assert "pre_mutation_state" in result
-        
+
         check = await read_plan_tasks(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
-        phase_idx, task_idx = int(verify_path.split('.')[0]) - 1, int(verify_path.split('.')[1]) - 1
+        phase_idx, task_idx = int(verify_path.split(".")[0]) - 1, int(verify_path.split(".")[1]) - 1
         assert check["phases"][phase_idx]["tasks"][task_idx]["status"] == new_status
 
     async def test_update_deferred_unmet_dependency(
@@ -209,10 +218,16 @@ class TestUpdateTaskStatus:
     ):
         """Should allow setting a task to [⏳] (deferred)."""
         tasks = settings.get_plan_tasks_path(workspace_path=temp_project_dir, plan_uuid=plan_uuid)
-        tasks.write_text("# Tasks\n\n## Phase 1: Setup\n- [ ] Task 1\n- [ ] Task 2 → depends: Task 1\n", encoding="utf-8")
+        tasks.write_text(
+            "# Tasks\n\n## Phase 1: Setup\n- [ ] Task 1\n- [ ] Task 2 → depends: Task 1\n", encoding="utf-8"
+        )
 
         result = await update_task_status(
-            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path="1.2", new_status="[⏳]"
+            workspace_path=temp_project_dir,
+            project_id=project_id,
+            plan_uuid=plan_uuid,
+            task_path="1.2",
+            new_status="[⏳]",
         )
         assert result["success"] is True
         assert result["new_status"] == "[⏳]"
@@ -221,32 +236,66 @@ class TestUpdateTaskStatus:
         self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success
     ):
         """Should transition from [x] to [x✓]."""
-        await update_task_status(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path="1.2", new_status="[x]")
-        result = await update_task_status(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path="1.2", new_status="[x✓]")
+        await update_task_status(
+            workspace_path=temp_project_dir,
+            project_id=project_id,
+            plan_uuid=plan_uuid,
+            task_path="1.2",
+            new_status="[x]",
+        )
+        result = await update_task_status(
+            workspace_path=temp_project_dir,
+            project_id=project_id,
+            plan_uuid=plan_uuid,
+            task_path="1.2",
+            new_status="[x✓]",
+        )
         assert result["success"] is True
         assert result["old_status"] == "[x]"
 
     @pytest.mark.parametrize(
         "task_path, new_status, plan_id_override",
         [
-            ("1.99", "[x]", None),              # invalid path
-        ]
+            ("1.99", "[x]", None),  # invalid path
+        ],
     )
     async def test_update_errors(
-        self, temp_project_dir: str, project_id: str, setup_tasks_md: str, plan_uuid: str, mock_agent_recall_success, task_path: str, new_status: str, plan_id_override: str
+        self,
+        temp_project_dir: str,
+        project_id: str,
+        setup_tasks_md: str,
+        plan_uuid: str,
+        mock_agent_recall_success,
+        task_path: str,
+        new_status: str,
+        plan_id_override: str,
     ):
         target_uuid = plan_id_override if plan_id_override else plan_uuid
-        
+
         # Setup for illegal transitions
         if task_path == "1.2" and new_status == "[ ]":
-            await update_task_status(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path="1.2", new_status="[x]")
+            await update_task_status(
+                workspace_path=temp_project_dir,
+                project_id=project_id,
+                plan_uuid=plan_uuid,
+                task_path="1.2",
+                new_status="[x]",
+            )
         elif task_path == "1.1" and new_status == "[x]" and not plan_id_override:
-            await update_task_status(workspace_path=temp_project_dir, project_id=project_id, plan_uuid=plan_uuid, task_path="1.1", new_status="[—]")
+            await update_task_status(
+                workspace_path=temp_project_dir,
+                project_id=project_id,
+                plan_uuid=plan_uuid,
+                task_path="1.1",
+                new_status="[—]",
+            )
 
         result = await update_task_status(
-            workspace_path=temp_project_dir, project_id=project_id, plan_uuid=target_uuid, task_path=task_path, new_status=new_status
+            workspace_path=temp_project_dir,
+            project_id=project_id,
+            plan_uuid=target_uuid,
+            task_path=task_path,
+            new_status=new_status,
         )
         assert result["success"] is False
         assert "error" in result
-
-

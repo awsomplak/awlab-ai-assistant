@@ -13,17 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from mcp_server.config import settings
 from mcp_server.helpers.file_utils import compute_tasks_summary as _get_task_summary
 from mcp_server.tools.context_tools import (
     _detect_framework,
-    _load_cache,
     _parse_registry,
-    _save_cache,
-    get_cache_path,
     get_context_snapshot,
-    scan_project,
-    suggest_relevant_files,
 )
 
 # ── _get_task_summary ────────────────────────────────────────────────────────
@@ -143,5 +137,3 @@ class TestGetContextSnapshot:
         assert result["success"] is True
         assert result["active_plan"] is None
         assert result["patterns"] == []
-
-

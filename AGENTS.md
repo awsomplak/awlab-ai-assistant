@@ -3,7 +3,7 @@
 # AGENTS.md — AI Agent Guidelines & Operating Rules
 
 This project is **AWLab-AI-Assistant** — an AI-Assisted Development System (rules, workflows, skills, MCP server).
-It provides a **single consolidated MCP server** (`awlab-ai-assistant.exe` or via `.venv/Scripts/python.exe`) exposing **2 tools** — `action_call` and `action_help` — routing **24 deterministic actions** across plan, task, memory, graph, context, util, and workflow domains.
+It provides a **single consolidated MCP server** (`awlab-ai-assistant.exe` or via `.venv/Scripts/python.exe`) exposing **2 tools** — `action_call` and `action_help` — routing **26 deterministic actions** across plan, task, memory, graph, context, util, and workflow domains.
 
 ---
 

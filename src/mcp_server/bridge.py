@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import json
 import os
-import select
 import signal
 import subprocess
 import sys
@@ -53,7 +52,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 # NOTE: This module intentionally imports ONLY the standard library. It is the
 # PyInstaller entry for the bridge executable (awlab-ai-assistant), and importing
@@ -84,6 +83,18 @@ LOCK_TTL_SECONDS = 30.0
 # Small settle between a crash-respawn and re-checking the lock so a worker that
 # dies instantly (e.g. bad config) cannot spin the main loop into a tight loop.
 CRASH_BACKOFF_SECONDS = 0.25
+
+# Env var the bridge sets on the worker it spawns so the worker can detect when
+# its parent (the real bridge) dies and self-terminate instead of leaking as an
+# orphan (all OSes). Left unset in dev/standalone runs, where no watchdog runs.
+AWLAB_BRIDGE_PID_ENV = "AWLAB_BRIDGE_PID"
+
+# Parent-liveness poll interval for the orphan watchdog.
+PARENT_WATCH_INTERVAL_SECONDS = 1.0
+
+# How long the bridge waits for the worker to exit on its own after stdin EOF /
+# shutdown before force-killing the worker tree (a busy worker can ignore EOF).
+EOF_GRACE_SECONDS = 5.0
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -205,6 +216,12 @@ def resolve_worker_cmd() -> list[str]:
     """
     env_worker = os.environ.get("AWLAB_WORKER", "").strip()
     if env_worker:
+        # A bare Python script (.py/.pyw) cannot be launched directly on Windows
+        # (Popen/os.execv would fail with an "Exec format error"), and is brittle
+        # elsewhere too. Run it under the current interpreter so dev/tests can
+        # point AWLAB_WORKER at a tiny stdlib-only fake worker cross-platform.
+        if env_worker.lower().endswith((".py", ".pyw")):
+            return [sys.executable, env_worker]
         return [env_worker]
 
     if _is_frozen():
@@ -278,6 +295,70 @@ def _worker_log_file() -> Path:
     return path
 
 
+def _process_alive(pid: int) -> bool:
+    """Return True while process ``pid`` exists (stdlib/ctypes only).
+
+    Windows never reparents orphans, so ``os.getppid()`` keeps returning the dead
+    parent's PID forever — probe the actual process handle instead (OpenProcess +
+    WaitForSingleObject). POSIX uses the conventional ``os.kill(pid, 0)`` existence
+    probe (ESRCH → gone; EPERM → exists but not ours).
+    """
+    if os.name == "nt":
+        import ctypes
+
+        SYNCHRONIZE = 0x00100000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+        if not handle:
+            return False  # already gone (or access denied → treat as gone)
+        try:
+            # WaitForSingleObject(h, 0) == WAIT_OBJECT_0 (0) means the process has
+            # exited; WAIT_TIMEOUT means it is still running.
+            return kernel32.WaitForSingleObject(handle, 0) == 0x00000102  # WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
+    import errno
+
+    try:
+        os.kill(int(pid), 0)
+    except OSError as exc:
+        return exc.errno != errno.ESRCH  # EPERM → alive but owned by another user
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def watch_parent(
+    parent_pid: int | str | None,
+    on_death,
+    interval: float = PARENT_WATCH_INTERVAL_SECONDS,
+) -> threading.Thread | None:
+    """Start a daemon watchdog that calls ``on_death()`` when ``parent_pid`` exits.
+
+    Returns ``None`` when ``parent_pid`` is empty or is this process (dev/standalone
+    or exec-passthrough, where no bridge spawned us) so no watchdog runs. The daemon
+    thread polls ``_process_alive``; once the parent is gone it invokes ``on_death``
+    exactly once and stops.
+    """
+    if not parent_pid or int(parent_pid) == os.getpid():
+        return None
+
+    def _run() -> None:
+        while True:
+            time.sleep(interval)
+            if not _process_alive(int(parent_pid)):
+                name = getattr(on_death, "__name__", "shutdown")
+                log.warning(f"parent pid={parent_pid} died — invoking {name}")
+                try:
+                    on_death()
+                finally:
+                    return
+
+    t = threading.Thread(target=_run, name="bridge-parent-watch", daemon=True)
+    t.start()
+    return t
+
+
 def spawn_worker(cmd: list[str]) -> subprocess.Popen:
     """Spawn the worker with piped stdio.
 
@@ -285,7 +366,8 @@ def spawn_worker(cmd: list[str]) -> subprocess.Popen:
     group so terminal signal storms never hit it directly (the bridge forwards
     termination explicitly). Windows: ``CREATE_NO_WINDOW`` keeps a console from
     flashing for every IDE launch. ``bufsize=0`` yields raw (unbuffered) pipes so
-    the forwarding threads write with no extra copy.
+    the forwarding threads write with no extra copy. The child inherits our env
+    plus ``AWLAB_BRIDGE_PID`` so its orphan watchdog knows which parent to watch.
     """
     kwargs: dict = {}
     if os.name == "nt":
@@ -293,8 +375,11 @@ def spawn_worker(cmd: list[str]) -> subprocess.Popen:
     else:
         kwargs["start_new_session"] = True
 
+    stderr_owned = False
+    stderr_fh: Any
     try:
         stderr_fh = open(_worker_log_file(), "ab")
+        stderr_owned = True
     except OSError:
         stderr_fh = subprocess.DEVNULL
 
@@ -305,11 +390,12 @@ def spawn_worker(cmd: list[str]) -> subprocess.Popen:
             stdout=subprocess.PIPE,
             stderr=stderr_fh,
             bufsize=0,
+            env={**os.environ, AWLAB_BRIDGE_PID_ENV: str(os.getpid())},
             **kwargs,
         )
     except BaseException:
         # Popen raised (e.g. FileNotFoundError) — don't leak the log handle.
-        if stderr_fh is not subprocess.DEVNULL:
+        if stderr_owned:
             try:
                 stderr_fh.close()
             except OSError:
@@ -317,29 +403,129 @@ def spawn_worker(cmd: list[str]) -> subprocess.Popen:
         raise
 
 
-def _terminate_worker(proc: subprocess.Popen | None) -> None:
-    """Terminate a worker, escalating on Windows if it lingers (1.7)."""
-    if proc is None or proc.poll() is not None:
+# Job handles for Windows kill-on-close worker reaping. Kept referenced for the
+# whole bridge lifetime so the OS holds them; when this process dies (even by a
+# force-kill that runs no cleanup), the OS closes the last handle and terminates
+# every process assigned to the job (the worker AND anything it spawned).
+_WIN_JOBS: list = []
+
+
+def _assign_worker_tree_kill(proc: subprocess.Popen) -> None:
+    """Windows: assign the worker to a Job Object with ``KILL_ON_JOB_CLOSE``.
+
+    This is the guarantee that reaps the worker tree even when the bridge is
+    force-killed (TerminateProcess / host kill) — no cleanup code runs, but the
+    OS kills the job's processes the moment the bridge's job handle closes.
+    POSIX: no-op here — teardown uses ``killpg`` on the worker's process group.
+    Degrades gracefully (logs + falls back to ``taskkill /T``) if job creation
+    or assignment fails (e.g. the worker is already nested in a non-breakaway
+    job).
+    """
+    if os.name != "nt":
         return
     try:
-        proc.terminate()
-    except OSError:
+        import ctypes
+        from ctypes import wintypes
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class _BASIC_LIMIT(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class _EXTENDED_LIMIT(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC_LIMIT),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        # JobObjectExtendedLimitInformation = 9. Only LimitFlags matters here.
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        info = _EXTENDED_LIMIT()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok_set = kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
+        # AssignProcessToJobObject needs PROCESS_SET_QUOTA | PROCESS_TERMINATE on
+        # the worker handle; proc._handle (private, from CreateProcess) carries
+        # full access. getattr keeps Pylance clean about the private attribute.
+        handle = getattr(proc, "_handle", 0)
+        ok_assign = bool(ok_set) and bool(handle) and bool(kernel32.AssignProcessToJobObject(job, int(handle)))
+        if ok_assign:
+            _WIN_JOBS.append(int(job))  # keep the handle alive until process exit
+            log.info(f"worker pid={proc.pid} assigned to kill-on-close job object")
+    except Exception as e:  # pragma: no cover - defensive; taskkill fallback below
+        log.warning(f"job-object assignment failed ({e}) — fall back to taskkill /T")
+
+
+def _terminate_worker_tree(proc: subprocess.Popen | None, grace: float = 3.0) -> None:
+    """Kill the worker AND its whole process tree (every bridge exit path).
+
+    POSIX: the worker is a session leader (``start_new_session``), so its PID is
+    its process-group id — ``os.killpg`` SIGTERM then SIGKILL reaches the worker
+    and any children it spawned. Windows: ``proc.terminate()`` (TerminateProcess)
+    kills ONLY the worker and would orphan its children, so always ``taskkill /T``
+    which reaps the whole descendant tree; the kill-on-close Job Object
+    (``_assign_worker_tree_kill``) additionally guarantees tree death when this
+    bridge process itself dies.
+    """
+    if proc is None or proc.poll() is not None:
         return
-    # Windows: TerminateProcess is immediate, but a worker that ignores it would
-    # otherwise linger. taskkill /T also reaps any children the worker spawned.
     if os.name == "nt":
         try:
-            proc.wait(timeout=3.0)
-        except subprocess.TimeoutExpired:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.TimeoutExpired):
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    capture_output=True,
-                    timeout=5,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            except (OSError, subprocess.TimeoutExpired):
+                proc.terminate()
+            except OSError:
                 pass
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=grace)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
 
 
 def _make_signal_handler(runtime: _Runtime):
@@ -351,7 +537,7 @@ def _make_signal_handler(runtime: _Runtime):
             proc = runtime.proc
             runtime.cond.notify_all()
         if proc is not None:
-            _terminate_worker(proc)
+            _terminate_worker_tree(proc)
         log.warning(f"bridge received signal {signum} — exiting")
         raise SystemExit(128 + signum)
 
@@ -406,8 +592,11 @@ def _write_line_to_worker(runtime: _Runtime, payload: bytes) -> bool:
             if runtime.proc is None:
                 return False  # EOF/shutdown while no worker is up
             proc = runtime.proc
+        stdin = proc.stdin
+        if stdin is None:  # pragma: no cover - spawn always pipes stdin
+            return False
         try:
-            _write_all(proc.stdin.fileno(), payload + b"\n")
+            _write_all(stdin.fileno(), payload + b"\n")
             return True
         except OSError:
             # Worker died mid-write (update/crash). Clear it so the main loop
@@ -449,10 +638,13 @@ def _ide_stdin_reader(runtime: _Runtime) -> None:
             runtime.stdin_eof = True
             proc = runtime.proc
             runtime.cond.notify_all()
+        log.info("IDE stdin EOF — closing worker stdin and waiting for it to exit")
         # Let the (possibly idle) worker see EOF so it shuts down cleanly.
         if proc is not None:
             try:
-                proc.stdin.close()
+                stdin = proc.stdin
+                if stdin is not None:
+                    stdin.close()
             except OSError:
                 pass
 
@@ -463,31 +655,45 @@ def _swallow_until_response(fd: int, want_id, timeout: float = 20.0) -> None:
     Consumes a respawned worker's ``initialize`` response so it is NOT forwarded
     to the client (which already received one and is not expecting another).
     Bounded by ``timeout`` so a broken worker cannot wedge the bridge.
+
+    Uses a non-blocking read loop (``os.set_blocking``) rather than
+    ``select.select``: on Windows ``select`` only works on sockets, not pipes
+    (OSError 10038), which broke handshake replay on every respawned worker.
     """
     buf = b""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        readable, _, _ = select.select([fd], [], [], 0.1)
-        if not readable:
-            continue
-        try:
-            data = os.read(fd, _CHUNK)
-        except OSError:
-            return
-        if not data:
-            return
-        buf += data
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            line = line.strip()
-            if not line:
-                continue
+    try:
+        os.set_blocking(fd, False)
+    except OSError:  # pragma: no cover - non-blocking pipes unsupported
+        return
+    try:
+        while time.monotonic() < deadline:
             try:
-                obj = json.loads(line.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
+                data = os.read(fd, _CHUNK)
+            except BlockingIOError:
+                time.sleep(0.05)
                 continue
-            if isinstance(obj, dict) and obj.get("id") == want_id:
+            except OSError:
                 return
+            if not data:  # worker closed stdout
+                return
+            buf += data
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if isinstance(obj, dict) and obj.get("id") == want_id:
+                    return
+    finally:
+        try:
+            os.set_blocking(fd, True)  # restore for the stdout-forwarding thread
+        except OSError:  # pragma: no cover
+            pass
 
 
 def _replay_handshake(proc: subprocess.Popen, runtime: _Runtime) -> None:
@@ -505,21 +711,28 @@ def _replay_handshake(proc: subprocess.Popen, runtime: _Runtime) -> None:
         init_req_id = runtime.init_request_id
         init_notif = runtime.init_notification
     if not init_req:
+        return  # no handshake captured yet (first spawn / plain client)
+    stdin = proc.stdin
+    stdout = proc.stdout
+    if stdin is None or stdout is None:  # pragma: no cover - spawn always pipes
         return
     try:
-        os.write(proc.stdin.fileno(), init_req)
-        _swallow_until_response(proc.stdout.fileno(), init_req_id)
+        os.write(stdin.fileno(), init_req)
+        _swallow_until_response(stdout.fileno(), init_req_id)
         if init_notif:
-            os.write(proc.stdin.fileno(), init_notif)
+            os.write(stdin.fileno(), init_notif)
         log.info("replayed MCP initialize handshake to respawned worker")
     except OSError:
-        pass
+        log.warning("replay failed: worker pipe write/read error")
 
 
 def _worker_stdout_to_ide(worker: subprocess.Popen) -> None:
     """Forward worker stdout -> IDE stdout (fd 1). One thread per worker."""
+    stdout = worker.stdout
+    if stdout is None:  # pragma: no cover - spawn always pipes stdout
+        return
     try:
-        rfd = worker.stdout.fileno()
+        rfd = stdout.fileno()
         while True:
             try:
                 data = os.read(rfd, _CHUNK)
@@ -546,11 +759,27 @@ def run_bridge() -> int:
         return 1
 
     lock = default_lock_path()
-    log.info(f"bridge starting (pid={os.getpid()}) worker={' '.join(worker_cmd)} lock={lock}")
+    log.info(f"bridge starting (pid={os.getpid()} parent={os.getppid()}) worker={' '.join(worker_cmd)} lock={lock}")
 
     runtime = _Runtime()
     signal.signal(signal.SIGINT, _make_signal_handler(runtime))
     signal.signal(signal.SIGTERM, _make_signal_handler(runtime))
+
+    # Parent (bootloader / host launcher) watchdog: the host manages the process
+    # it launched — for a PyInstaller ONEFILE that is this bridge's PARENT, not
+    # this process. If it dies (VS Code stop / kill / close) without a clean EOF,
+    # self-terminate and take the worker tree with us (orphan prevention).
+    def _on_parent_death() -> None:
+        log.warning("bridge parent (bootloader/host) died — tearing down worker tree and exiting")
+        with runtime.cond:
+            runtime.shutdown = True
+            proc = runtime.proc
+            runtime.cond.notify_all()
+        if proc is not None:
+            _terminate_worker_tree(proc)
+        os._exit(0)  # job object / killpg already reaped the worker tree
+
+    watch_parent(os.getppid(), _on_parent_death)
 
     reader = threading.Thread(
         target=_ide_stdin_reader,
@@ -561,56 +790,85 @@ def run_bridge() -> int:
     reader.start()
 
     generation = 0
-    while not runtime.shutdown:
-        # Wait out any in-flight publish before (re)spawning a worker. This also
-        # covers the very first spawn when the bridge boots mid-update.
-        wait_for_lock_clear(lock)
+    try:
+        while not runtime.shutdown:
+            # Wait out any in-flight publish before (re)spawning a worker. This also
+            # covers the very first spawn when the bridge boots mid-update.
+            wait_for_lock_clear(lock)
 
-        with runtime.cond:
-            if runtime.stdin_eof or runtime.shutdown:
-                break
+            with runtime.cond:
+                if runtime.stdin_eof or runtime.shutdown:
+                    break
 
-        generation += 1
-        log.info(f"spawning worker (gen {generation})")
-        try:
-            proc = spawn_worker(worker_cmd)
-        except Exception as exc:  # noqa: BLE001 — surface any spawn failure clearly
-            log.error(f"failed to spawn worker: {exc}")
-            return 1
+            generation += 1
+            log.info(f"spawning worker (gen {generation})")
+            try:
+                proc = spawn_worker(worker_cmd)
+            except Exception as exc:  # noqa: BLE001 — surface any spawn failure clearly
+                log.error(f"failed to spawn worker: {exc}")
+                return 1
+            log.info(f"worker (gen {generation}) spawned pid={proc.pid}")
+            # Windows: kill-on-close Job Object so the worker tree dies with this
+            # bridge even on a force-kill (no cleanup code runs then).
+            _assign_worker_tree_kill(proc)
 
-        # Re-establish the MCP session on the fresh worker BEFORE routing any new
-        # client traffic (the reader holds lines while runtime.proc is still None,
-        # so the replayed initialize is guaranteed to precede them).
-        _replay_handshake(proc, runtime)
+            # Re-establish the MCP session on the fresh worker BEFORE routing any
+            # new client traffic (the reader holds lines while runtime.proc is
+            # still None, so the replayed initialize precedes them).
+            _replay_handshake(proc, runtime)
 
-        with runtime.cond:
-            runtime.proc = proc
-            runtime.cond.notify_all()
+            with runtime.cond:
+                runtime.proc = proc
+                runtime.cond.notify_all()
 
-        fwd = threading.Thread(
-            target=_worker_stdout_to_ide,
-            args=(proc,),
-            name=f"bridge-stdout-fwd-{generation}",
-            daemon=True,
-        )
-        fwd.start()
+            fwd = threading.Thread(
+                target=_worker_stdout_to_ide,
+                args=(proc,),
+                name=f"bridge-stdout-fwd-{generation}",
+                daemon=True,
+            )
+            fwd.start()
 
-        try:
-            rc = proc.wait()
-        finally:
+            # Wait for the worker to exit — bounded once we are shutting down, so
+            # a worker that ignores stdin EOF can never wedge the bridge forever.
+            rc = None
+            eof = False
+            eof_deadline = None
+            while True:
+                rc = proc.poll()
+                if rc is not None:
+                    break
+                with runtime.cond:
+                    eof = runtime.stdin_eof or runtime.shutdown
+                if eof:
+                    if eof_deadline is None:
+                        eof_deadline = time.monotonic() + EOF_GRACE_SECONDS
+                        log.info("EOF/shutdown — giving the worker a short grace to exit")
+                    if time.monotonic() >= eof_deadline:
+                        log.warning("worker did not exit after EOF — force-killing worker tree")
+                        _terminate_worker_tree(proc)
+                        rc = proc.wait()
+                        break
+                time.sleep(0.1)
             with runtime.cond:
                 if runtime.proc is proc:
                     runtime.proc = None
-                eof = runtime.stdin_eof or runtime.shutdown
                 runtime.cond.notify_all()
 
-        log.info(f"worker (gen {generation}) exited rc={rc}")
-        if eof:
-            break  # IDE disconnected or we were signalled — do not respawn
-        # Worker exited on its own (crash, or a publish just killed it). A small
-        # settle prevents a tight loop; the next iteration waits on the lock and
-        # respawns the (possibly fresh) worker.
-        time.sleep(CRASH_BACKOFF_SECONDS)
+            log.info(f"worker (gen {generation}) exited rc={rc}")
+            if eof:
+                break  # IDE disconnected or we were signalled — do not respawn
+            # Worker exited on its own (crash, or a publish just killed it). A
+            # small settle prevents a tight loop; the next iteration waits on the
+            # lock and respawns the (possibly fresh) worker.
+            time.sleep(CRASH_BACKOFF_SECONDS)
+    finally:
+        # Every exit path (signal, EOF, parent death, exception): ensure the
+        # worker tree is gone so nothing is left orphaned.
+        with runtime.cond:
+            remaining = runtime.proc
+        if remaining is not None and remaining.poll() is None:
+            _terminate_worker_tree(remaining)
 
     log.info("bridge exiting")
     return 0

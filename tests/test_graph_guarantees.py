@@ -12,9 +12,7 @@ Locks in:
 Uses the same direct-tool-call pattern as test_dispatcher_surface.py.
 """
 
-import asyncio
 import json
-import time
 from pathlib import Path
 
 from mcp_server.modules import registration
@@ -125,5 +123,3 @@ async def test_graph_status_reports_existence_per_project(tmp_path: Path):
     sb = await action_call("graph_status", {"workspace_path": str(proj_b)})
     assert sa["result"].get("exists") is True
     assert sb["result"].get("exists") is False
-
-

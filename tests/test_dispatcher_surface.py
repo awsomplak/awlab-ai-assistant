@@ -59,12 +59,13 @@ def test_schema_context_budget_is_small():
 
 
 def test_registry_has_expected_action_count():
-    """23 actions across 7 groups — matches the documented surface.
+    """25 actions across 7 groups — matches the documented surface.
 
     21 + ``project_id`` (check-and-create, isolation bootstrap) + ``plan_doc``
-    (direct plan.md/notes.md read/write/delete).
+    (direct plan.md/notes.md read/write/delete) + ``family_info`` / ``family_config``
+    (agent-managed project-families.json discovery + mutation).
     """
-    assert len(REGISTRY) == 24
+    assert len(REGISTRY) == 26
     groups = {spec["group"] for spec in REGISTRY.values()}
     assert {"task", "plan", "memory", "graph", "context", "util", "workflow"} <= groups
 
@@ -128,4 +129,3 @@ async def test_graph_read_second_call_is_idempotent(tmp_path: Path):
     assert second["success"] is True
     assert second["executed"] == []  # nothing re-ran
     assert "graph_fresh" in second["skipped"]  # now fresh → skipped
-

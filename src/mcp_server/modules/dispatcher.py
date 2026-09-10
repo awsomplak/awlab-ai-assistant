@@ -165,6 +165,18 @@ async def _action_call_impl(
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             logger.tool("action_call").warning(f"baking tick skipped for {workspace_path}")
 
+    # Context auto-sync (Phase 5): after every successful MUTATING action, rewrite
+    # .ai/memory-bank/context.md so it never drifts from the live state. Read-only
+    # (deliver=False) so tell-once pattern candidates are NOT consumed, and it never
+    # calls back into action_call — no recursion. Never breaks the action.
+    if workspace_path and spec.get("mutates"):
+        try:
+            from ..registry import refresh_context_md
+
+            await refresh_context_md(workspace_path)
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            logger.tool("action_call").warning(f"context.md auto-refresh skipped for {workspace_path}")
+
     return json.dumps(
         {
             "success": True,
