@@ -32,6 +32,16 @@ Different AI agents have wildly different context window capacities (ranging fro
 - **Session Checkpoints**: If you detect context decay, explicitly recommend: "⚠️ Session context appears saturated. Use `mem_write` to save state, then start a fresh session."
 - **Hard Limit**: If you are repeatedly failing a complex task, STOP and force a checkpoint: "🛑 Context limit reached. Saving state via `mem_write`. Start a new session."
 
+### Post-Compact Recovery Protocol
+
+When a session compacts (or you detect context decay), recover deterministically instead of rebuilding from scratch:
+
+1. **Restore minimal state** — call `action_call(action="ctx_info", params={"mode": "compact"})`. It returns only what you need to resume: active plan + next task, project/family store ids, and `session.tool_calls_this_session` (per-worker counter; resets on worker restart = fresh-session signal).
+2. **Pull only relevant memory** — `action_call(action="mem_search", params={"query": "<current task>", "limit": 3})`. Use the returned `total_matches` / `truncated` to know if results were cut; raise `limit` only if needed.
+3. **Resume from the checkpoint** — continue the active plan's next task. Do NOT re-read the full plan or memory; the compact snapshot + 3-result search is enough to continue.
+
+This turns compaction from a "context loss event" into a "context checkpoint". The server cannot detect compaction or push state — recovery is cheap and structured by design.
+
 ### Proactive Cognitive Cache Protocol
 
 To prevent context bloat and token waste, you MUST NOT re-read files that have already been loaded or whose content is available in your current chat history unless:
