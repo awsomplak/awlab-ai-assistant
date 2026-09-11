@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.8] - 2026-09-11
+
+### 🚀 Highlights
+
+- **Context-compaction recovery is now cheap and structured** — after a session compacts,
+  agents recover deterministically instead of rebuilding from scratch: `ctx_info
+  mode="compact"` returns a minimal snapshot (active plan + next task + project/family
+  stores + session counter), `mem_search` reports `total_matches`/`truncated`, and the
+  Post-Compact Recovery Protocol in `assets/rules/03-token-strategies.md` turns compaction
+  from a "context loss event" into a "context checkpoint".
+
+### ✨ New Features
+
+- **`ctx_info mode="compact"`** — minimal post-compaction recovery snapshot: active plan +
+  next task + project/family store ids + session counter. No code nodes, no memory dump.
+- **`session.tool_calls_this_session`** — every `ctx_info` response now carries a per-worker
+  counter of `action_call` dispatches; resets on worker restart (bridge hot-swap) = clean
+  fresh-session signal.
+- **`mem_search` truncation metadata** — results now include `total_matches` and `truncated`
+  so agents know when results were cut and can raise `limit` if needed.
+
+### 🛠️ Enhancements & Changes
+
+- **Post-Compact Recovery Protocol** documented in `assets/rules/03-token-strategies.md`
+  (zero-code): after compaction → `ctx_info mode="compact"` → `mem_search(limit=3)` → resume.
+
+### ✨ Fixed
+
+- **`[/]`/`[-]` task-marker parsing verified live** — the `task_update` "Task not found"
+  fix (introduced in 3.0.7) is confirmed working against the published binary: in-progress
+  (`[/]`) and skipped (`[-]`) tasks now transition correctly (e.g. `[/]` → `[x]`) instead of
+  failing whole-phase batches. The deployed binary was stale until this release's publish.
+
+### 📦 Migration / Upgrading
+
+- No breaking changes. The MCP surface stays fixed at 2 tools (`action_call` /
+  `action_help`); new capabilities are fields/actions on existing tools.
+
 ## [3.0.7] - 2026-09-09
 
 ### 🚀 Highlights
