@@ -1,21 +1,21 @@
-# 📖 Registrasi Hook (otomasi opsional)
+# 📖 Registrasi Hook (Otomasi Opsional)
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Registrasi Hook**
 
-Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa Token* (zero-LLM) sebagai bagian dari fitur MCP server. Dengan hook, host agent atau IDE bisa menjalankan exe / binary **bridge** hasil build (`dist/bin/awlab-ai-assistant{.exe}`) pada event lifecycle dari host agent atau IDE (penggunaan tool, saat user melakukan prompt, saat sesi berjalan, saat sesi berhenti atau selesai) sehingga observasi pola pengguna (user pattern) tertangkap otomatis — tanpa keterlibatan agent dan tanpa biaya LLM tambahan. Untuk mode `hook`, bridge akan `exec` worker (`awlab-ai-worker`) dengan argv yang sama, jadi setiap pemicuan hanya berjalan dalam satu proses singkat.
+Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Zero-Token* (zero-LLM) sebagai bagian dari fitur server MCP. Dengan hook, AI agent atau IDE dapat menjalankan *executable binary* **bridge** yang telah di-*publish* (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant`) pada setiap kejadian siklus hidup (lifecycle event) agent atau IDE tersebut (seperti penggunaan tool, pengiriman prompt, dimulainya sesi, hingga selesainya sesi). Hal ini membuat observasi pola pengguna (user pattern) dapat terekam secara otomatis — tanpa harus melibatkan agen secara eksplisit dan tanpa biaya LLM tambahan. Untuk mode `hook`, bridge akan me-`exec` worker (`awlab-ai-worker`) dengan argumen (argv) yang sama, sehingga setiap pemicu hanya berjalan sebentar dalam satu proses tunggal.
 
-**Singkatnya: memasang MCP tanpa hook tetap berfungsi normal.** Hook hanya menambahkan penangkapan otomatis. Baca [pro/kontra](#pro--kontra-mengaktifkan-hook) di bawah ini untuk lebih detail.
+**Singkatnya: MCP tanpa hook akan tetap berfungsi normal.** Hook hanya sekadar menambahkan perekaman pola secara otomatis. Baca [pro/kontra](#pro--kontra-mengaktifkan-hook) di bawah ini untuk lebih detail.
 
 ---
 
 ## 📌 Apakah hook wajib? (Tidak)
 
-| Mode | Pengambilan pola kebiasaan pengguna | Proses pengolahan tetap berjalan? |
+| Mode | Pengambilan pola pengguna | Proses Bake (pengolahan data) tetap berjalan? |
 |------|-------------------------------------|-----------------------------------|
-| **MCP saja** (tanpa hook) | Agent akan mengambil pola kebiasaan pengguna melalui perintah `mem_observe` dalam penggunaan tool `action_call` | ✅ Ya — setiap `action_call` menjalankan *bake tick* secara *inline*, dan scheduler dari proses latar belakang melakukan *re-bake* pada workspace yang aktif |
-| **MCP + hook** | Host (Agent atau IDE) menangkap event yang melakukan perintah secara otomatis (zero-LLM), ditambah `mem_observe` | ✅ Ya — penyimpanan yang sama, alur kerja yang sama |
+| **MCP saja** (tanpa hook) | Agent akan menangkap pola pengguna secara manual melalui pemanggilan perintah `mem_observe` dengan tool `action_call` | ✅ Ya — setiap `action_call` menjalankan *bake tick* secara *inline*, dan *scheduler* latar belakang akan melakukan *re-bake* pada workspace yang aktif |
+| **MCP + hook** | Agent / IDE host merekam *event* (kejadian tool/prompt) secara otomatis (zero-LLM), dan ditambah dengan panggilan `mem_observe` | ✅ Ya — menggunakan penyimpanan dan alur kerja yang sama |
 
-**Kesimpulan:** server MCP adalah inti utamanya. Hook hanyalah fitur tambahan. Anda dapat menggunakan MCP saja dahulu dan menggunakan *hook* di kemudian hari tanpa perlu melakukan migrasi.
+**Kesimpulan:** Server MCP adalah inti dari sistem ini. Hook hanyalah fitur tambahan. Anda dapat menggunakan MCP-nya saja pada awalnya, lalu menambahkan hook di kemudian hari tanpa perlu repot melakukan migrasi.
 
 ---
 
@@ -23,37 +23,37 @@ Hook adalah fitur otomasi yang bersifat **opsional** dan penggunaannya *Tanpa To
 
 | | Deskripsi |
 |---|---|
-| ✅ **Pro** | **Perekaman pola kebiasaan yang Tanpa Token (zero-LLM Capture)** — perintah yang dijalankan pengguna (contoh: `pnpm install`) dicatat langsung sebagai observasi tanpa menghabiskan token LLM. <br> **Otomatis & Selalu Aktif (Always-on)** — Proses perekaman tetap berjalan meskipun agent lupa memanggil fungsi `mem_observe`. <br> **Pemrosesan Otomatis di Akhir Sesi (Turn-end Baking)** — event `Stop` akan otomatis memproses / mengolah (***bake***) data yang terkumpul. <br> **Injeksi Konteks (Context Injection)** — saat prompt dapat menyuntikkan pola data yang sudah diproses (*baked patterns*) sesuai scope ke dalam konteks. <br> **Aman dari Perulangan Tak Terbatas (Self-loop Safe)** — desain anti-loop: saat prompt hanya bertugas menyuntikkan data (injection), sedangkan tool hanya bertugas untuk mencatat hasilnya saja. |
-| ⚠️ **Kontra** | **Konfigurasi per-host agent atau IDE** — perlu melakukan pengaturan hook sekali namun berlaku untuk setiap agent atau IDE (lihat di bawah). **Subproses per event** — Setiap kali hook aktif, sistem memuat bridge (onefile) satu kali lalu `exec` worker (ada sedikit overhead durasi pemanggilan awal yang disebabkan oleh PyInstaller pada setiap tool call). **Perekaman selektif** — hanya event dari tool yang membawa perintah saja yang dicatat sebagai observasi. Tool yang membaca file dan prompt tidak dicatat. **Pembacaan projct path** — host agent atau IDE yang payload-nya tidak memiliki konteks project path memerlukan parameter `--project <path>` atau variable environment khusus (contoh: variable environment `CLAUDE_PROJECT_DIR` pada claude code). |
+| ✅ **Pro** | **Perekaman Pola Zero-Token (*Zero-LLM Capture*)** — perintah-perintah yang dijalankan pengguna (contoh: `pnpm install`) langsung dicatat sebagai observasi tanpa menghabiskan token LLM. <br> **Otomatis & Selalu Aktif (*Always-on*)** — Perekaman berjalan tanpa henti meskipun agent lupa memanggil tool `mem_observe`. <br> **Pemrosesan Otomatis di Akhir Sesi (*Turn-end Baking*)** — event `Stop` akan otomatis mengolah (*bake*) data pola-pola yang terkumpul. <br> **Injeksi Konteks (*Context Injection*)** — pada saat prompt, sistem otomatis menyuntikkan data pola yang sudah jadi (*baked patterns*) berdasarkan cakupannya (scope) ke dalam konteks prompt. <br> **Aman dari Loop Tak Terbatas (*Self-loop Safe*)** — desainnya kebal terhadap perulangan terus-menerus: pada saat prompt, sistem hanya bertugas menyuntikkan data, sedangkan tool hanya bertugas merekam hasilnya. |
+| ⚠️ **Kontra** | **Konfigurasi per-Agent/IDE** — Anda harus melakukan pengaturan registrasi hook ini satu kali per setiap AI agent (lihat di bawah). **Sub-proses per event** — Setiap kali hook aktif, sistem memuat *bridge* lalu me-`exec` worker (terdapat sedikit latensi yang diakibatkan oleh inisialisasi PyInstaller pada setiap *tool call*). **Perekaman selektif** — Hanya event tool yang membawa perintah operasi yang dicatat; operasi membaca file atau mengirim *prompt* biasa tidak dicatat. **Pendeteksian Path Project** — AI agent yang muatan payload-nya tidak menyertakan context lokasi project akan butuh argumen tambahan `--project <path>` atau sebuah environment variable (contoh: `$CLAUDE_PROJECT_DIR` pada Claude Code). |
 
 ---
 
 ## 📌 Prasyarat
 
-1. Pasangan executable hasil build: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant{.exe}` (bridge) + `dist/bin/awlab-ai-worker` (worker).
-2. Konfigurasi registrasi siap pakai (setiap build) di `dist/profiles/hooks/`:
+1. Pasangan *executable* yang telah di-*publish*: `python scripts/run.py publish --target=binary` → `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` (bridge) + `~/.awlab-id/agent-memory/bin/awlab-ai-worker` (worker).
+2. Konfigurasi registrasi siap pakai yang dihasilkan (setiap build) di folder `dist/profiles/hooks/`:
    `claude.hooks.json`, `hermes.hooks.yaml`, `copilot.hooks.txt`, `cline.hooks.txt`.
 
-> Hook memanggil bridge `awlab-ai-assistant` yang sama dengan server MCP. Untuk mode `hook`,
-> bridge menunggu hingga `.update_lock` yang sedang berjalan selesai (agar hook tidak pernah
-> berjalan terhadap binary yang setengah jadi saat publish), lalu `exec` worker dengan argv
-> yang sama. Tidak perlu instalasi lainnya.
+> Hook memanggil *bridge* `awlab-ai-assistant` yang sama persis seperti yang digunakan server MCP. Pada mode `hook`,
+> *bridge* akan menunggu hingga proses `.update_lock` yang sedang berjalan selesai (sehingga hook tidak akan
+> crash jika binary sedang diperbarui), kemudian langsung mengeksekusi worker dengan argumen yang
+> sama. Tidak dibutuhkan instalasi *daemon* atau *library* lain.
 
 ---
 
 ## 📌 Fungsi tiap event
 
-Event dibedakan berdasarkan `jenis` yang menentukan perilakunya:
+Event dibedakan berdasarkan `jenis` (*type*) yang akan menentukan perilakunya:
 
 | Jenis | Contoh event host | Perilaku |
 |------|------------------------|-----------|
-| `prompt` | `UserPromptSubmit`, `pre_llm_call` | menyisipkan pola siap pakai (*baked patterns*) dengan cakupan *stack* |
-| `tool` | `PostToolUse`, `post_tool_call` | **CAPTURE** — menambahkan observasi saat tool membawa perintah (*command*) |
-| `pre_tool` | `PreToolUse` | **pemeriksaan penyimpangan** — izinkan/blokir berdasarkan pola tersimpan |
-| `stop` | `Stop` | **BAKE** — menjalankan pipeline (key → hitung → consistency → confidence) |
-| `session` / `subagent` | `SessionStart`, `SubagentStop` | hanya-observer (belum ada aksi) |
+| `prompt` | `UserPromptSubmit`, `pre_llm_call` | menyisipkan pola-pola jadi (*baked patterns*) dengan cakupan *stack* saat ini |
+| `tool` | `PostToolUse`, `post_tool_call` | **CAPTURE** — menambahkan observasi baru ketika suatu tool membawa operasi perintah (*command*) |
+| `pre_tool` | `PreToolUse` | **Pemeriksaan aturan** — mencegah/mengizinkan tool berjalan sesuai dengan pola yang ada |
+| `stop` | `Stop` | **BAKE** — menjalankan pipeline pengolahan pola (key → iterasi → konsistensi → confidence) |
+| `session` / `subagent` | `SessionStart`, `SubagentStop` | hanya observasi pasif (belum diimplementasikan tindakannya) |
 
-Proses perekaman data pola kebiasaan atau pattern bersifat **selektif** contoh: sebuah *tool* Bash dengan `{"command": "pnpm install"}` akan dicatat sebagai sebuah observasi, sedangkan *tool* untuk melakukan pembacaan (tanpa perintah) tidak ditandai sebagai observasi — karena membaca berkas bukanlah sebuah kebiasaan atau pattern.
+Proses penangkapan observasi bersifat **selektif**. Contoh: penggunaan tool Bash dengan `{"command": "pnpm install"}` akan direkam sebagai observasi, sedangkan tool untuk membaca file tidak akan direkam — karena sekadar membaca file bukanlah sebuah "pola kebiasaan" (*user pattern*).
 
 ---
 
@@ -61,7 +61,7 @@ Proses perekaman data pola kebiasaan atau pattern bersifat **selektif** contoh: 
 
 ### 🔖 1) Claude Code
 
-Gabungkan blok `hooks` dari `dist/profiles/hooks/claude.hooks.json` ke `~/.claude/settings.json` (buat jika belum ada). Ganti `awlab-ai-assistant` dengan path (lokasi) file exe atau binary hasil build Anda:
+Gabungkan blok `hooks` dari file `dist/profiles/hooks/claude.hooks.json` ke dalam `~/.claude/settings.json` (buat file ini jika belum ada). Pastikan untuk mengganti path ke `awlab-ai-assistant` dengan path *binary executable* asli Anda:
 
 ```json
 {
@@ -88,11 +88,11 @@ Gabungkan blok `hooks` dari `dist/profiles/hooks/claude.hooks.json` ke `~/.claud
 }
 ```
 
-Claude Code menentukan project dari payload (`cwd`) atau environment `$CLAUDE_PROJECT_DIR`.
+Claude Code sudah menentukan path project otomatis dari field `cwd` di payload-nya atau dari variabel environment `$CLAUDE_PROJECT_DIR`.
 
 ### 🔖 2) Hermes
 
-Gabungkan blok `hooks:` dari `dist/profiles/hooks/hermes.hooks.yaml` ke konfigurasi Hermes:
+Gabungkan blok `hooks:` dari file `dist/profiles/hooks/hermes.hooks.yaml` ke dalam konfigurasi Hermes milik Anda:
 
 ```yaml
 hooks:
@@ -112,7 +112,7 @@ hooks:
 
 ### 🔖 3) Cline
 
-Hook Cline didaftarkan di UI pengaturan (pengaturan MCP/hook). Tambahkan perintah dari `dist/profiles/hooks/cline.hooks.txt`:
+Hook untuk Cline perlu didaftarkan di halaman pengaturan UI extension-nya (pada tab pengaturan MCP/hook). Salin teks perintah yang ada di `dist/profiles/hooks/cline.hooks.txt`:
 
 ```
 awlab-ai-assistant hook --agent cline --event NewTask
@@ -122,7 +122,7 @@ awlab-ai-assistant hook --agent cline --event Stop
 
 ### 🔖 4) VSCode Copilot
 
-Copilot tidak membaca file konfigurasi hook melainkan registrasinya melalui pengaturan/UI VSCode itu sendiri. Gunakan perintah dari `dist/profiles/hooks/copilot.hooks.txt`:
+Copilot tidak mengandalkan file pengaturan hook berformat teks, tetapi diregistrasikan dari antarmuka Settings VSCode itu sendiri. Tambahkan instruksi pemanggilan hook seperti di `dist/profiles/hooks/copilot.hooks.txt`:
 
 ```
 awlab-ai-assistant hook --agent copilot --event user-prompt-submit
@@ -135,7 +135,7 @@ awlab-ai-assistant hook --agent copilot --event stop
 
 ### 🔖 5) Google Antigravity & Antigravity IDE
 
-Gabungkan blok `AWLab-AI-Assistant` dari `dist/profiles/hooks/antigravity.hooks.json` ke `~/.gemini/config/hooks.json` (atau `.agents/hooks.json`). Ganti `awlab-ai-assistant` dengan path absolut executable Anda:
+Gabungkan blok `AWLab-AI-Assistant` dari file `dist/profiles/hooks/antigravity.hooks.json` ke file konfigurasi `~/.gemini/config/hooks.json` (atau `.agents/hooks.json`). Gantilah teks instruksi menjadi *path absolut executable*:
 
 ```json
 {
@@ -182,32 +182,31 @@ Gabungkan blok `AWLab-AI-Assistant` dari `dist/profiles/hooks/antigravity.hooks.
 
 ## 📌 Verifikasi hook berfungsi
 
-**Manual** (di Linux/macOS gunakan `printf`, di Windows gunakan `cmd /c "echo ... | exe hook ..."` atau
-skrip kustom — catatan: `|` PowerShell bisa tidak andal untuk stdin native):
+**Manual** (di Linux/macOS jalankan `printf` atau `echo`, di Windows gunakan `cmd /c "echo ... | exe hook ..."` — catatan: fitur *pipe* `|` PowerShell kadang tidak bekerja dengan stabil untuk aplikasi *native console*):
 
 ```bash
-# 📖 capture path (tool event with a command)
+# 📖 penangkapan tool yang menjalankan perintah
 echo '{"tool_name":"Bash","tool_input":{"command":"pnpm install"}}' | \
   awlab-ai-assistant hook --agent claude --event PostToolUse --project /path/to/project
-# → writes /path/to/project/.ai/memory-bank/observations.jsonl
+# → menyimpan ke /path/to/project/.ai/memory-bank/observations.jsonl
 # → stdout: {}
 
-# 📖 prompt path (READ)
+# 📖 penyuntikan context ke prompt (BACA)
 echo '{"prompt":"please run the tests"}' | \
   awlab-ai-assistant hook --agent claude --event UserPromptSubmit --project /path/to/project
 # → stdout: {"decision":"allow"}
 ```
 
-**Otomatis**: `python scripts/live_probe.py` (dari repositori ini) menyertakan pemeriksaan penangkapan hook — jika outputnya exit 0 / `35 passed` berarti hook berhasil menjalankan dan menyimpan observasi dari awal hingga akhir dalam 35 sesi percobaan.
+**Otomatis**: Anda dapat menjalankan `python scripts/live_probe.py` dari repository ini, yang sudah mencakup simulasi penangkapan hook. Jika script mengeluarkan exit 0 / `35 passed`, maka konfigurasi hook bekerja dengan baik dari awal sampai akhir sesi.
 
 ---
 
 ## 📌 Pemecahan masalah
 
-| Masalah | Penyebab / solusi |
+| Kendala | Penyebab / Solusi |
 |---------|-------------|
-| Hook berjalan (exit 0) tapi tidak ada observasi | Event-nya berupa prompt, pembacaan file (file read), atau tool yang tidak memiliki perintah (memang di desain demikian). Gunakan event tool yang membawa perintah (*comman-carrying*), atau event `Stop` untuk memproses (*bake*) data. |
-| Tidak ada observasi dan `.ai/project-id` tidak dibuat | Payload tidak pernah sampai ke proses — periksa hasil output stdin (jika menggunakan PowerShell karakter `\|` tidak stabil, jika tetap ingin menggunakan PowerShell gunakan redireksi via `subprocess`/`cmd`) serta periksa kembali lokasi file exe atau binary apakah sudah benar path atau lokasi file nya. |
-| Project tidak terdeteksi | Tambahkan argumen `--project <path>`, atau pastikan payload dari agent punya `cwd` / `CLAUDE_PROJECT_DIR`. |
-| Hook tidak merespon apapun | Lokasi file exe atau binary berubah sehingga tidak sama dengan yang didaftarkan — konfigurasi ulang dan arahkan kembali ke lokasi dimana file exe atau binary berada, contoh: `dist/bin/awlab-ai-assistant{.exe}`. |
-| Observasi duplikat tidak bertambah | Proteksi duplikasi (dedup/delta) sedang berjalan atau belum selesai — input yang identik tidak akan terhitung dua kali (double-counted). |
+| Hook berjalan (exit 0) tapi tidak ada data observasi | Event-nya mungkin adalah prompt biasa, pembacaan file, atau penggunaan tool yang tak membawa argumen perintah (ini desain yang disengaja). Cobalah event tool yang memuat perintah aktual (*command*), atau picu event `Stop` untuk melakukan *bake*. |
+| Tidak ada observasi dan `.ai/project-id` tidak pernah dibuat | Payload (data) tidak pernah berhasil masuk ke *bridge* — periksa ulang mekanisme `stdin` OS Anda (karakter `\|` pada PowerShell bermasalah; gunakan PowerShell dengan operator spesifik atau alihkan eksekusinya via bash/cmd). Juga, pastikan *path binary executable* benar. |
+| Project tidak dikenali atau terdeteksi | Sertakan argumen `--project <path>`, atau pastikan format payload agent Anda mengirim field direktori kerja `cwd` atau environment variabel `$CLAUDE_PROJECT_DIR`. |
+| Hook seolah tidak bereaksi (diam saja) | *Path* ke file *binary* mungkin tidak akurat atau rusak. Cek apakah alamat di dalam file `.json` mengarah langsung ke `~/.awlab-id/agent-memory/bin/awlab-ai-assistant`. |
+| Data observasi tidak bertambah biarpun event terjadi | Fitur proteksi duplikat (deduplikasi data delta) mungkin menolaknya — dua perintah identik beruntun tidak akan dihitung dua kali secara redundan (*double-counted*). |
