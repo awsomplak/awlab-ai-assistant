@@ -3,7 +3,7 @@
 > [🏠 README](../../README.md) · [📚 Docs](../../README.md#documentation) · **Hook Registration**
 
 Hooks are an **optional** zero-LLM automation layer on top of the MCP server. They let the
-host fire the built **bridge** executable (`dist/bin/awlab-ai-assistant`) on lifecycle events
+host fire the built **bridge** executable (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant`) on lifecycle events
 (tool use, prompt, session, stop) so user-pattern observations are captured automatically —
 with no agent involvement and no LLM cost. For `hook` mode the bridge `exec`s the worker
 (`awlab-ai-worker`) with the same argv, so each fire is a single short-lived process.
@@ -37,7 +37,7 @@ MCP-only and add hooks later without any migration.
 
 ## 📌 Prerequisites
 
-1. A built executable pair: `python scripts/run.py build` → `dist/bin/awlab-ai-assistant` (bridge) + `dist/bin/awlab-ai-worker` (worker).
+1. A published executable pair: `python scripts/run.py publish --target=binary` → `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` (bridge) + `~/.awlab-id/agent-memory/bin/awlab-ai-worker` (worker).
 2. Ready-made registration configs (written by every build) in `dist/profiles/hooks/`:
    `claude.hooks.json`, `hermes.hooks.yaml`, `copilot.hooks.txt`, `cline.hooks.txt`.
 
@@ -223,5 +223,5 @@ echo '{"prompt":"please run the tests"}' | \
 | Hook runs (exit 0) but no observation | Event was a prompt/read/no-command tool (by design). Use a command-carrying tool event, or the `Stop` event to bake. |
 | No observation and no `.ai/project-id` created | The payload never reached the process — check stdin piping (PowerShell `\|` is unreliable; use `subprocess`/`cmd` redirection) and the exe path. |
 | Project not resolved | Pass `--project <path>`, or ensure the payload has `cwd` / `CLAUDE_PROJECT_DIR`. |
-| Hook silently does nothing | Exe path changed since registration — point the config at the current `dist/bin/awlab-ai-assistant`. |
+| Hook silently does nothing | Exe path changed since registration — point the config at the current `~/.awlab-id/agent-memory/bin/awlab-ai-assistant`. |
 | Duplicate observations not growing | The dedup/delta guard is working — identical signals aren't double-counted. |

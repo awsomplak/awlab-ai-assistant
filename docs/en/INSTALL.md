@@ -125,7 +125,25 @@ Every live bridge then respawns the fresh worker and resumes traffic — the IDE
 
 The `action_call` dispatcher routes to all operations (plan, task, memory, graph, context, util, workflow). Binaries are fully standalone — no Python or source files needed.
 
-> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `AWLab-AI-Assistant`) — the executable build is only required for production deployment. To hot-reload a live deploy, just re-run `python scripts/run.py publish --target=binary`.
+> **Tip:** for local development you can run the server straight from source (`pip install -e .` + the console script `AWLab-AI-Assistant`) — the executable build is only required for production deployment.
+
+### 🔖 Publish the binary (production)
+
+`build` writes the pair to `dist/bin/` — that's **build output**. To deploy it to the **published location** that every IDE/hook config references, run:
+
+```bash
+python scripts/run.py publish --target=binary
+```
+
+This hot-reloads the live deployment at `~/.awlab-id/agent-memory/bin/`:
+
+| Published path (macOS/Linux)                      | Windows equivalent                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------ |
+| `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` | `%USERPROFILE%\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`        |
+
+> 💡 On Windows, `%USERPROFILE%` expands only in PowerShell/cmd. In JSON/YAML config files you must write the literal path, e.g. `C:\Users\<you>\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`.
+
+The publish is **hot-reload aware**: it writes `.update_lock`, stops only `awlab-ai-worker` processes (bridges stay up), swaps both binaries, then releases the lock — running IDEs see a brief pause, **no** `context canceled`. Point every MCP/hook config at the **published** path above, never at `dist/bin/` (build output).
 
 ---
 
@@ -134,6 +152,9 @@ The `action_call` dispatcher routes to all operations (plan, task, memory, graph
 AWLab-AI-Assistant ships **14 rules** and **5 skills** as sources under `assets/`. Assuming you've already built in [§2](#2-build-the-standalone-executable), `publish` installs the compiled profiles into your agent's home directory — a **one-time setup** per machine.
 
 ```bash
+# 📖 Publish the core binary (bridge + worker) → ~/.awlab-id/agent-memory/bin/
+python scripts/run.py publish --target=binary
+
 # 📖 Publish to specific assistant(s)
 python scripts/run.py publish --target=cline        # Cline
 python scripts/run.py publish --target=copilot      # VS Code Copilot
@@ -150,8 +171,9 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ### 🔖 Publish targets
 
-| Target        | Rules                          | Skills                       |
-| ------------- | ------------------------------ | ---------------------------- |
+| Target        | Rules                          | Skills / Output               |
+| ------------- | ------------------------------ | ----------------------------- |
+| `binary`      | — (bridge + worker executables) | `~/.awlab-id/agent-memory/bin/` |
 | `cline`       | `~/Documents/Cline/Rules/`     | `~/.agents/skills/`          |
 | `copilot`     | `~/.copilot/instructions/`     | `~/.agents/skills/` (shared) |
 | `claude`      | `~/.claude/CLAUDE.md`          | `~/.claude/skills/`          |
@@ -166,14 +188,14 @@ python scripts/run.py publish --uninstall --target=copilot
 
 ## 📌 4. Wire the MCP server
 
-The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `action_help` (see [Available MCP Tools](AVAILABLE_TOOLS.md)). Wiring it means adding **one MCP-server entry** to your agent's config, pointing at the executable you built in [§2](#2-build-the-standalone-executable):
+The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `action_help` (see [Available MCP Tools](AVAILABLE_TOOLS.md)). Wiring it means adding **one MCP-server entry** to your agent's config, pointing at the **published** executable from [§2](#2-build-the-standalone-executable) (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant`):
 
 ```json
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
       "type": "stdio",
-      "command": "dist/bin/awlab-ai-assistant",
+      "command": "~/.awlab-id/agent-memory/bin/awlab-ai-assistant",
       "args": [],
       "env": {
         "LOG_ENABLED": "true",
@@ -183,6 +205,8 @@ The `AWLab-AI-Assistant` server exposes **2 MCP tools** — `action_call` and `a
   }
 }
 ```
+
+> ⚠️ **Windows users:** `~` is a shell shortcut — it is **not** expanded inside JSON/YAML config files. Replace `~` with your full user-profile path, e.g. `C:\Users\<you>\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`. (`%USERPROFILE%` expands in PowerShell/cmd, but not in config files.)
 
 > **Hooks are optional.** The MCP server above is the complete core — pattern baking runs on
 > every `action_call` regardless. To add **zero-LLM automatic capture** on lifecycle events
@@ -204,7 +228,7 @@ Add the block to `.vscode/mcp.json` (workspace) or via Command Palette → **MCP
 Register the server from the terminal:
 
 ```bash
-claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant
+claude mcp add AWLab-AI-Assistant -- ~/.awlab-id/agent-memory/bin/awlab-ai-assistant
 ```
 
 ### 🔖 Hermes Agent
@@ -214,7 +238,7 @@ Add the entry under `mcp_servers:` in `~/.hermes/config.yaml`:
 ```yaml
 mcp_servers:
   AWLab-AI-Assistant:
-    command: dist/bin/awlab-ai-assistant
+    command: ~/.awlab-id/agent-memory/bin/awlab-ai-assistant
     args: []
     env:
       LOG_ENABLED: "true"
@@ -230,7 +254,7 @@ Merge the `mcp` key into `~/.config/opencode/opencode.json` (OpenCode uses the `
   "mcp": {
     "AWLab-AI-Assistant": {
       "type": "local",
-      "command": ["dist/bin/awlab-ai-assistant"],
+      "command": ["~/.awlab-id/agent-memory/bin/awlab-ai-assistant"],
       "enabled": true
     }
   }
@@ -245,7 +269,7 @@ Merge the `AWLab-AI-Assistant` entry into `~/.gemini/config/mcp_config.json`:
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
-      "command": "dist/bin/awlab-ai-assistant",
+      "command": "~/.awlab-id/agent-memory/bin/awlab-ai-assistant",
       "args": []
     }
   }
@@ -399,7 +423,7 @@ python scripts/run.py publish --uninstall
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pip install -e .` fails              | Confirm Python 3.10+ and that you're in the project root.                                                                                          |
 | Build fails / `dist/bin` is locked    | A running **worker** locks the executable (the bridge hot-swaps and must stay up). Stop running `awlab-ai-worker` processes first — see `scripts/stop-mcp-servers.ps1` (Windows PowerShell).             |
-| Agent doesn't see MCP tools           | Register the server (`dist/bin/awlab-ai-assistant` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
+| Agent doesn't see MCP tools           | Register the server (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant` or the source entry point) in your agent's MCP config, then restart the agent / chat.       |
 | Graph queries are slow on first run   | First build is a full extraction and runs in a background thread — re-read after it finishes (`graph_rebuilding: true` means it's still building). |
 | Parallel graph build hangs in the exe | `ProcessPoolExecutor` hangs in frozen onefile builds — keep `GRAPH_PARALLEL` off in production.                                                    |
 | Memory writes silently lost           | Mutations queue to `.ai/memory-bank/pending.jsonl` when the store is down — run `mem_replay` after recovery to re-apply them.                      |

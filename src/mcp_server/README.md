@@ -111,7 +111,7 @@ Built executable pair at `dist/bin/`:
 | `awlab-ai-assistant`      | **Bridge** — thin stdio proxy (ONE-FILE). The single entrypoint every IDE/hook config points at. |
 | `awlab-ai-worker`         | **Worker** — this heavy MCP server (ONEDIR); spawned by the bridge, hot-swapped on publish.      |
 
-Point your agent at `dist/bin/awlab-ai-assistant` (the bridge) — unchanged name, so no IDE/hook
+Point your agent at the **published** `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` (the bridge) — unchanged name, so no IDE/hook
 config changes. To hot-reload a live deployment, just re-run `python scripts/run.py publish
 --target=binary`: bridges stay up, workers are swapped, and the IDE sees a brief pause — never
 a `context canceled`.
@@ -123,7 +123,7 @@ a `context canceled`.
   "mcpServers": {
     "AWLab-AI-Assistant": {
       "type": "stdio",
-      "command": "path_to/dist/awlab-ai-assistant.exe",
+      "command": "~/.awlab-id/agent-memory/bin/awlab-ai-assistant",
       "env": {
         "LOG_ENABLED": "true",
         "LOG_LEVEL": "INFO"
@@ -133,13 +133,15 @@ a `context canceled`.
 }
 ```
 
+> ⚠️ **Windows users:** `~` is not expanded in JSON/YAML config files — use the literal path, e.g. `C:\Users\<you>\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`.
+
 **Alternative entry points** (use any one):
 
 | Server               | Entry Point      | `command`                              | `args`                 |
 | -------------------- | ---------------- | -------------------------------------- | ---------------------- |
 | `AWLab-AI-Assistant` | Installed CLI    | `.venv\Scripts\awlab-ai-assistant.exe` | _(none)_               |
 | `AWLab-AI-Assistant` | Python module    | `.venv\Scripts\python.exe`             | `["-m", "mcp_server"]` |
-| `AWLab-AI-Assistant` | Built executable | `dist/bin/awlab-ai-assistant.exe`      | _(none)_               |
+| `AWLab-AI-Assistant` | Published binary | `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` | _(none)_               |
 
 ---
 
