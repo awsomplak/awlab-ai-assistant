@@ -2,14 +2,14 @@
 
 > [🏠 BERANDA](../../README_ID.md) · [📚 Dokumen](../../README_ID.md#dokumentasi) · **Instal & Terapkan**
 
-Panduan ini mencakup semua yang Anda butuhkan untuk menjalankan AWLab-AI-Assistant di project Anda dan menyambungkannya ke agent AI:
+Panduan ini mencakup semua hal yang Anda butuhkan untuk menjalankan AWLab-AI-Assistant di project Anda dan menghubungkannya ke AI agent:
 
 1. [Melakukan clone repositori](#1-clone-repositori)
-2. [Instalasi python-env dan dependensi server MCP](#2-instalasi-python-venv-dan-dependensi-server-mcp)
+2. [Instalasi virtual environment Python dan dependensi server MCP](#2-instalasi-python-venv-dan-dependensi-server-mcp)
 3. [Build binary executable](#3-build-binary-executable)
 4. [Publikasikan rules & skill ke agent Anda](#4-publikasikan-rules--skill-ke-agent-anda)
 5. [Menyambungkan MCP](#5-sambungkan-server-mcp)
-6. [Gunakan di Agent Anda](#6-gunakan-di-agent-anda)
+6. [Gunakan di AI Agent Anda](#6-gunakan-di-agent-anda)
 7. [Verifikasi pemasangan](#7-verifikasi-pemasangan)
 8. [Environment variabel & konfigurasi](#8-environment-variabel--konfigurasi)
 9. [Referensi CLI](#9-referensi-cli)
@@ -19,22 +19,22 @@ Panduan ini mencakup semua yang Anda butuhkan untuk menjalankan AWLab-AI-Assista
 
 ## 📌 Struktur Project
 
-Tata letak repositori:
+Tata letak repository:
 
 ```
 {root-project}/
 ├── assets/
 │   ├── agents/                  # 1 sub-agent
 │   ├── rules/                   # 14 file rules (sumber)
-│   ├── skills/                  # 5 sumber skill
-│   └── workflows/               # taruh workflow kustom Anda disini (1 default bawaan)
+│   ├── skills/                  # 5 file skill (sumber)
+│   └── workflows/               # tempat custom workflow Anda (1 default bawaan)
 ├── dist/
-│   └── profiles/                # Output terkompilasi per-agent (dihasilkan oleh compile-rules)
-├── src/mcp_server/              # Source code server MCP berbasis python
+│   └── profiles/                # Output profil yang telah dikompilasi per-agent
+├── src/mcp_server/              # Source code server MCP berbasis Python
 ├── scripts/
-│   ├── run.py                   # CLI untuk build & pengembangan
-│   └── stop-mcp-servers.ps1     # Helper untuk menghentikan paksa semua server MCP `awlab-*` yang berjalan (Khusus Windows PowerShell)
-├── tests/                       # Suite pytest (360 tes)
+│   ├── run.py                   # CLI utama untuk proses build & development
+│   └── stop-mcp-servers.ps1     # Script helper untuk menghentikan paksa semua server MCP `awlab-*` (khusus Windows PowerShell)
+├── tests/                       # Pytest suite (360 tes)
 ├── docs/                        # Halaman dokumentasi lainnya
 ├── CHANGELOG.md
 └── pyproject.toml
@@ -44,11 +44,11 @@ Tata letak repositori:
 
 ## 📌 Kebutuhan Instalasi
 
-- **Python 3.10+** (untuk build server MCP dan wajib sudah terinstall sebelumnya)
-- **agent-recall** (sebagai backend memori / knowledge-graph)
-- **graphify** (melakukan indeks code / code-graph)
-- **Model AI** yang mendukung penggunaan tool
-- Salah satu dari: **Cline**, **VSCode Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, atau **Google Antigravity / Antigravity IDE**
+- **Python 3.10+** (dibutuhkan untuk build server MCP dan wajib sudah terinstal sebelumnya)
+- **agent-recall** (sebagai backend _Memory Bank_ / _Code Graph_)
+- **graphify** (untuk mengindeks code base ke dalam _Code Graph_)
+- **AI Model** yang sudah mendukung _tool use_
+- Salah satu dari: **Cline**, **VS Code Copilot**, **Claude Code**, **Hermes Agent**, **OpenCode**, atau **Google Antigravity / Antigravity IDE**
 
 **Saran kebutuhan LLM model:** 🟢 Sederhana → lokal 1.5B–3B · 🟡 Menengah → lokal 14B–32B · 🔴 Kompleks → frontier (Claude, GPT)
 
@@ -57,18 +57,18 @@ Tata letak repositori:
 ## 📌 1. Clone repositori
 
 ```bash
-# 📖 Clone
+# 📖 Clone repository
 git clone https://github.com/awsomplak/awlab-ai-assistant.git
 
-# 📖 Masuk ke dalam folder repositori hasil clone
+# 📖 Masuk ke dalam direktori hasil clone
 cd AWLab-AI-Assistant
 ```
 
 ## 📌 2. Instalasi python-venv dan dependensi server MCP
 
-> ⚠️ **Sesuaikan dengan OS Anda.** Perintah aktivasi virtual environment python berbeda antara Windows dan Linux/macOS — melakukan copy paste command yang salah akan menyebabkan kegagalan.
+> ⚠️ **Sesuaikan dengan sistem operasi (OS) Anda.** Perintah aktivasi _virtual environment_ Python berbeda antara Windows dan Linux/macOS — menyalin perintah yang salah akan menyebabkan error.
 
-### 🔖 Aktivasi python virtual-env
+### 🔖 Aktivasi virtual environment Python
 
 #### Windows (PowerShell)
 
@@ -76,12 +76,10 @@ cd AWLab-AI-Assistant
 # 📖 Buat virtual environment
 python -m venv .venv
 
-# 📖 Aktifkan python virtual-env di powershell
+# 📖 Aktifkan virtual environment di PowerShell
 .venv\Scripts\Activate.ps1
 
-# 📖 Jika menggunakan cmd bisa menggunakan command berikut
-#
-# 📖 Aktifkan python virtual-env di cmd
+# 📖 Jika menggunakan CMD, gunakan perintah berikut
 .venv\Scripts\activate.bat
 ```
 
@@ -91,20 +89,20 @@ python -m venv .venv
 # 📖 Buat virtual environment
 python -m venv .venv
 
-# 📖 Aktifkan python virtual-env di terminal
+# 📖 Aktifkan virtual environment di terminal
 source .venv/bin/activate
 ```
 
-### 🔖 Instalasi dependensi python
+### 🔖 Instalasi dependensi Python
 
 ```bash
-# 📖 Dengan python virtual-venv yang sudah aktif sebelumnya
+# 📖 Pastikan virtual environment sudah aktif
 #
-# 📖 Instalasi dependensi standar (siap pakai)
+# 📖 Instalasi dependensi standar (untuk pemakaian langsung)
 pip install -e .
 
 # 📖 atau
-# 📖 Instalasi dependensi untuk development/test (opsional)
+# 📖 Instalasi dependensi tambahan untuk development/testing (opsional)
 pip install -e ".[dev]"
 ```
 
@@ -113,79 +111,101 @@ pip install -e ".[dev]"
 ## 📌 3. Build binary executable
 
 ```bash
-# 📖 Build untuk OS saat ini (menggunakan PyInstaller)
+# 📖 Build executable untuk sistem operasi Anda saat ini
 python scripts/run.py build
 
-# 📖 Build untuk target tertentu
+# 📖 Build executable untuk target platform tertentu
 python scripts/run.py build --target-os=linux
 python scripts/run.py build --target-os=all
 ```
 
-Hasil build ada di `dist/bin/`:
+Hasil build akan berada di folder `dist/bin/`:
 
-| Binary                    | Peran                                                                                                    | Tool yang Tersedia                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `awlab-ai-assistant`      | **Bridge** — proxy stdio tipis (ONE-FILE) yang menjaga pipa JSON-RPC IDE tetap hidup. Entrypoint tunggal yang dipakai semua konfigurasi IDE/hook. | `action_call` (dispatcher), `action_help` |
-| `awlab-ai-worker`         | **Worker** — server MCP yang berat (ONEDIR); dijalankan & dikelola oleh bridge, di-*hot-swap* saat publish. | *(2 tool yang sama, dilayani lewat bridge)* |
+| Binary               | Peran                                                                                                                                                     | Tool MCP yang Tersedia                      |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `awlab-ai-assistant` | **Bridge** — _proxy stdio_ yang menjaga _pipe_ JSON-RPC IDE tetap hidup. Berfungsi sebagai _entrypoint_ tunggal yang dipakai semua konfigurasi agent/IDE. | `action_call` (dispatcher), `action_help`   |
+| `awlab-ai-worker`    | **Worker** — Server MCP inti yang berat (ONEDIR); dijalankan & dikelola oleh _bridge_, mendukung fitur _hot-swap_ saat Anda melakukan `publish`.          | _(2 tool yang sama, dilayani lewat bridge)_ |
 
-Mengapa dipecah? Memperbarui satu binary mengharuskan proses MCP yang berjalan dihentikan, dan itu memutus pipa JSON-RPC IDE sehingga muncul `context canceled`. Dengan pasangan **bridge + worker**, proses `publish`:
+Mengapa arsitekturnya dipecah dua? Memperbarui _binary file_ yang sedang digunakan akan mengharuskan proses MCP dihentikan secara paksa, hal ini memutus koneksi JSON-RPC sehingga muncul _error_ `context canceled` di IDE. Dengan memisahkan **bridge + worker**, proses `publish` dapat bekerja sebagai berikut:
 
-1. menulis `.update_lock` di folder bin hasil publish,
-2. menghentikan hanya proses `awlab-ai-worker` (bridge tetap hidup),
-3. mengganti kedua binary,
+1. menulis file `.update_lock` di direktori bin hasil publish,
+2. mematikan hanya proses `awlab-ai-worker` (sementara _bridge_ tetap menyala),
+3. menimpa/mengganti kedua binary dengan yang baru,
 4. menghapus `.update_lock`.
 
-Setiap bridge yang aktif kemudian menyalakan worker baru dan melanjutkan lalu lintas — IDE hanya melihat jeda singkat, **tanpa** `context canceled`. Ini juga berlaku untuk banyak IDE sekaligus (setiap IDE mendapat bridge → worker sendiri, dikoordinasikan oleh satu lock bersama), dan nama entrypoint `awlab-ai-assistant` yang sama berarti **tidak ada perubahan konfigurasi IDE/hook**.
+Setelah proses itu, _bridge_ yang sedang aktif akan otomatis menyalakan _worker_ versi baru dan melanjutkan antrean _request_ — sehingga pengguna/IDE hanya merasakan sedikit jeda waktu tanpa terkena _error_ `context canceled`. Pendekatan ini aman untuk multiple IDE yang berjalan bersamaan (setiap IDE mendapat pasangan bridge → worker sendiri yang dikelola lewat satu `.update_lock`), dan karena nama aplikasinya tetap `awlab-ai-assistant`, maka **Anda tidak perlu memperbarui konfigurasi di sisi agent atau IDE**.
 
-> **Tips:** untuk pengembangan lokal, Anda bisa menjalankan server langsung dari source (`pip install -e .` + console script `AWLab-AI-Assistant`) — build executable hanya diperlukan untuk deployment produksi. Untuk hot-reload deployment yang sedang berjalan, jalankan ulang `python scripts/run.py publish --target=binary`.
+> **Tips:** Untuk pengembangan lokal (_local development_), Anda bisa menjalankan server ini langsung dari source code (cukup `pip install -e .` dan jalankan command `AWLab-AI-Assistant`) — membangun executable hanya diperlukan untuk keperluan _production_.
+
+### 🔖 Publikasikan binary (production)
+
+Perintah `build` di atas akan membuat binary di direktori `dist/bin/` — direktori tersebut hanyalah **lokasi output build sementara**. Untuk menyebarkannya (deploy) ke **lokasi publikasi utama** yang nantinya digunakan oleh IDE/agent Anda, jalankan:
+
+```bash
+python scripts/run.py publish --target=binary
+```
+
+Perintah ini memicu _hot-reload deployment_ ke direktori operasional `~/.awlab-id/agent-memory/bin/`:
+
+| Lokasi publikasi (macOS/Linux)                    | Padanan di Windows                                                |
+| ------------------------------------------------- | ----------------------------------------------------------------- |
+| `~/.awlab-id/agent-memory/bin/awlab-ai-assistant` | `%USERPROFILE%\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe` |
+
+> 💡 Khusus pengguna Windows: variabel `%USERPROFILE%` hanya bisa dibaca otomatis oleh Command Prompt (CMD) atau PowerShell. Dalam file konfigurasi berbasis JSON atau YAML (seperti pengaturan IDE), Anda wajib menggunakan _path absolut_ secara lengkap, contoh: `C:\Users\<nama-anda>\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`.
+
+Sistem _publish_ dirancang dengan fitur **hot-reload aware**: ia akan mengaktifkan lock, mematikan proses `awlab-ai-worker`, menimpa executable dengan yang baru, dan langsung mencabut lock. Hal ini membuat pembaruan berlangsung sangat mulus. Pastikan konfigurasi agent/IDE Anda selalu menunjuk ke lokasi publikasi utama (`~/.awlab-id/...`), **bukan** ke folder output build `dist/bin/`.
 
 ---
 
 ## 📌 4. Publikasikan rules & skill ke agent Anda
 
-AWLab-AI-Assistant — **AI-Assisted Development System** menyediakan **14 rules** dan **5 skill** bawaan yang berada di folder `assets/`. Ketika Anda sudah melakukan build dari project ini fungsi `publish` akan otomatis mempublikasikan profil yang sudah terkompilasi ke direktori agent masing-masing (sesuai target) — fungsi ini cukup dipanggil / dilakukan **sekali saja** per-agent. **SANGAT DISARANKAN** untuk melakukan **BACKUP** jika Anda memiliki pengaturan milik Anda sendiri, cek [target publikasi](#target-publikasi).
+AWLab-AI-Assistant memiliki **14 buah rules** dan **5 buah skills** bawaan di folder `assets/`. Melalui fungsi `publish`, Anda dapat menyalin profil terkompilasi ini secara otomatis ke dalam direktori spesifik dari AI agent yang Anda gunakan — fungsi ini hanya perlu dijalankan **satu kali saja** per agent. **SANGAT DISARANKAN** untuk mencadangkan (backup) konfigurasi lama Anda jika Anda memilikinya, lihat [Target publikasi](#target-publikasi).
 
 ```bash
-# 📖 Publikasikan ke asisten tertentu
+# 📖 Publikasikan executable utama (bridge + worker) → ~/.awlab-id/agent-memory/bin/
+python scripts/run.py publish --target=binary
+
+# 📖 Publikasikan konfigurasi profil ke AI agent spesifik
 python scripts/run.py publish --target=cline        # Cline
-python scripts/run.py publish --target=copilot      # VSCode Copilot
+python scripts/run.py publish --target=copilot      # VS Code Copilot
 python scripts/run.py publish --target=claude       # Claude Code
 python scripts/run.py publish --target=hermes       # Hermes Agent
 python scripts/run.py publish --target=opencode     # OpenCode
-python scripts/run.py publish --target=antigravity  # Google Antigravity & Antigravity IDE
-python scripts/run.py publish --target=all          # Semua asisten
+python scripts/run.py publish --target=antigravity  # Google Antigravity / Antigravity IDE
+python scripts/run.py publish --target=all          # Publikasikan ke semua agent yang terdeteksi
 
-# 📖 Copot pemasangan
+# 📖 Hapus profil yang telah terpasang (Uninstall)
 python scripts/run.py publish --uninstall
 python scripts/run.py publish --uninstall --target=copilot
 ```
 
 ### 🔖 Target publikasi
 
-| Target        | Rules                          | Skill                                 |
-| ------------- | ------------------------------ | ------------------------------------- |
-| `cline`       | `~/Documents/Cline/Rules/`     | `~/.agents/skills/`                   |
-| `copilot`     | `~/.copilot/instructions/`     | `~/.agents/skills/` (dipakai bersama) |
-| `claude`      | `~/.claude/CLAUDE.md`          | `~/.claude/skills/`                   |
-| `hermes`      | — (dikemas sebagai skill)      | `~/.hermes/skills/`                   |
-| `opencode`    | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills/`          |
-| `antigravity` | `~/.gemini/config/rules/`      | `~/.gemini/config/skills/`            |
+| Target        | Profil Rules                     | Output Lokasi Skills            |
+| ------------- | -------------------------------- | ------------------------------- |
+| `binary`      | — (executable bridge + worker)   | `~/.awlab-id/agent-memory/bin/` |
+| `cline`       | `~/Documents/Cline/Rules/`       | `~/.agents/skills/`             |
+| `copilot`     | `~/.copilot/instructions/`       | `~/.agents/skills/`             |
+| `claude`      | `~/.claude/CLAUDE.md`            | `~/.claude/skills/`             |
+| `hermes`      | — (tergabung dalam bentuk skill) | `~/.hermes/skills/`             |
+| `opencode`    | `~/.config/opencode/AGENTS.md`   | `~/.config/opencode/skills/`    |
+| `antigravity` | `~/.gemini/config/rules/`        | `~/.gemini/config/skills/`      |
 
-> 💡 Jika Anda melewati panduan §3 - [build binary executable](#3-build-binary-executable), fungsi `publish` akan otomatis melakukan kompilasi profil agent saat folder `dist/` tidak tersedia sebelumnya.
-> Selesai — publikasi hanya perlu dilakukan sekali saja. Berikutnya, sambungkan server MCP untuk agent Anda (panduan §5 - [sambungkan server mcp](#5-sambungkan-server-mcp)).
+> 💡 Jika Anda melewatkan langkah ke-3 ([Build binary executable](#3-build-binary-executable)), perintah `publish` akan tetap secara otomatis melakukan kompilasi rules/skill ke folder `dist/` sebelum menyebarkannya.
+> Langkah publikasi profil ini cukup dilakukan sekali. Setelah profil agen siap, sambungkan server MCP seperti yang dijelaskan pada poin berikutnya (§5 - [Sambungkan server MCP](#5-sambungkan-server-mcp)).
 
 ---
 
 ## 📌 5. Sambungkan server MCP
 
-MCP server `AWLab-AI-Assistant` menyediakan **2 tool MCP** — `action_call` dan `action_help` (lihat [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md) untuk detailnya). Menyambungkannya berarti menambahkan **satu entri server MCP** ke konfigurasi agent Anda, arahkan konfigurati MCP-nya ke executable yang Anda build pada panduan [§3](#3-build-binary-executable):
+Server MCP `AWLab-AI-Assistant` mengekspos **2 buah tool**: `action_call` dan `action_help` (lihat rinciannya di [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md)). Untuk menghubungkan server ini, Anda cukup membuat **satu entri MCP Server baru** pada konfigurasi AI agent yang Anda pakai. Arahkan entri _command_ (perintah eksekusi)-nya menuju _path publikasi utama_ (`~/.awlab-id/agent-memory/bin/awlab-ai-assistant`):
 
 ```json
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
       "type": "stdio",
-      "command": "dist/bin/awlab-ai-assistant",
+      "command": "~/.awlab-id/agent-memory/bin/awlab-ai-assistant",
       "args": [],
       "env": {
         "LOG_ENABLED": "true",
@@ -196,38 +216,37 @@ MCP server `AWLab-AI-Assistant` menyediakan **2 tool MCP** — `action_call` dan
 }
 ```
 
-> Dengan konfigurasi MCP server di atas Anda sudah dapat menggunakan tool `action_call`.
-> Untuk menambahkan fitur **perekaman pola kebiasaan otomatis Tanpa Token (_zero-LLM_)**
-> pada event lifecycle (_tool use_, _prompt_, _session_, _stop_), Anda dapat mengkonfigurasi **Hook** (opsional)
-> pada masing-masing agent atau IDE. Penggunaan **Hook** bersifat opsional dan tidak wajib untuk dilakukan.
-> Silahkan baca [Registrasi Hook](HOOKS.md) untuk detail selengkapnya.
+> ⚠️ **Catatan penting untuk pengguna Windows:** Karakter tilde (`~`) merupakan _shortcut shell bash_ dan **tidak** akan dikenali atau dikembangkan secara otomatis di dalam konfigurasi berformat JSON/YAML. Anda wajib menulis seluruh lokasi path profil user secara literal. Contoh: `C:\Users\<nama-anda>\.awlab-id\agent-memory\bin\awlab-ai-assistant.exe`.
 
-Gabungkan entri konfigurasi `AWLab-AI-Assistant` ke server MCP yang sudah ada di agent Anda — jangan mengganti seluruh file konfigurasi — lalu mulai ulang agent/chat. Berikut di bawah ini adalah lokasi konfigurasi masing-masing agent.
+> Jika konfigurasi di atas sudah berhasil, AI agent kini dapat memanfaatkan tool `action_call`.
+> Untuk menambahkan kapabilitas ekstra berupa **perekaman data pola pengguna otomatis secara Zero-Token (_zero-LLM_)** pada setiap event siklus (contoh: _tool use_, _prompt_, _stop_), Anda bisa mengonfigurasi fitur **Hook**. Penggunaan Hook ini **tidak wajib** dan sepenuhnya opsional. Silakan baca dokumen [Registrasi Hook](HOOKS.md) jika tertarik memasangnya.
+
+Untuk pemasangannya, salinlah konfigurasi JSON/YAML di atas ke pengaturan `mcpServers` dari masing-masing agent, kemudian _restart_ agent IDE/chat-nya:
 
 ### 🔖 Cline
 
-Tempel bloknya lewat **Cline Settings → MCP Servers → Edit JSON**.
+Tambahkan block konfigurasi tadi melalui menu: **Cline Settings → MCP Servers → Edit JSON**.
 
-### 🔖 VSCode Copilot
+### 🔖 VS Code Copilot
 
-Tambahkan blok ke `.vscode/mcp.json` (workspace) atau lewat Command Palette → **MCP**.
+Sisipkan konfigurasinya ke dalam file `.vscode/mcp.json` di dalam folder project Anda, atau gunakan menu **Command Palette → MCP**.
 
 ### 🔖 Claude Code
 
-Daftarkan server dari terminal:
+Jalankan perintah penambahan di terminal secara langsung:
 
 ```bash
-claude mcp add AWLab-AI-Assistant -- dist/bin/awlab-ai-assistant
+claude mcp add AWLab-AI-Assistant -- ~/.awlab-id/agent-memory/bin/awlab-ai-assistant
 ```
 
 ### 🔖 Hermes Agent
 
-Tambahkan entri di key `mcp_servers:` pada `~/.hermes/config.yaml`:
+Tambahkan di dalam blok `mcp_servers:` pada file konfigurasi `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
   AWLab-AI-Assistant:
-    command: dist/bin/awlab-ai-assistant
+    command: ~/.awlab-id/agent-memory/bin/awlab-ai-assistant
     args: []
     env:
       LOG_ENABLED: "true"
@@ -236,14 +255,14 @@ mcp_servers:
 
 ### 🔖 OpenCode
 
-Tambahkan entri di key `mcp` ke `~/.config/opencode/opencode.json` (OpenCode memakai objek key `mcp`, bukan `mcpServers`):
+Sisipkan konfigurasinya ke dalam blok `mcp` di dalam file `~/.config/opencode/opencode.json` (Perhatikan bahwa OpenCode menggunakan root key bernama `mcp`, bukan `mcpServers`):
 
 ```json
 {
   "mcp": {
     "AWLab-AI-Assistant": {
       "type": "local",
-      "command": ["dist/bin/awlab-ai-assistant"],
+      "command": ["~/.awlab-id/agent-memory/bin/awlab-ai-assistant"],
       "enabled": true
     }
   }
@@ -252,13 +271,13 @@ Tambahkan entri di key `mcp` ke `~/.config/opencode/opencode.json` (OpenCode mem
 
 ### 🔖 Google Antigravity & Antigravity IDE
 
-Tambahkan entri `AWLab-AI-Assistant` ke `~/.gemini/config/mcp_config.json`:
+Tambahkan key _object_ `AWLab-AI-Assistant` ke file `~/.gemini/config/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "AWLab-AI-Assistant": {
-      "command": "dist/bin/awlab-ai-assistant",
+      "command": "~/.awlab-id/agent-memory/bin/awlab-ai-assistant",
       "args": []
     }
   }
@@ -267,79 +286,73 @@ Tambahkan entri `AWLab-AI-Assistant` ke `~/.gemini/config/mcp_config.json`:
 
 ---
 
-## 📌 6. Gunakan di agent Anda
+## 📌 6. Gunakan di AI Agent Anda
 
-Setelah tersambung, Anda dapat melakukan prompt seperti biasa atau menggunakan slash command:
+Setelah server tersambung, Anda bisa memberi perintah seperti biasa atau menggunakan fitur _slash command_ bawaan:
 
-### 🔖 Penggunaan skill dalam propt biasa
+### 🔖 Penggunaan instruksi dalam prompt biasa
 
-- _"follow rules"_ → memuat registry & plan serta melakukan instruksi kepada agent untuk mengikuti aturan yang ada
-- _"create plan"_ → membuat rencana implementasi baru dan menulisnya ke dalam `plan.md` serta tugas-tugas yang diperlukan ke dalam `tasks.md`.
-- _"start phase 1"_ → menjalankan fase pertama dari tugas pada `tasks.md` yang sudah dibuat.
+- _"follow rules"_ → memerintahkan AI agent untuk memuat data _Memory Bank_ dan daftar instruksi agar senantiasa dipatuhi.
+- _"create plan"_ → meminta AI untuk membuat _plan_ rancangan implementasi baru. AI akan menuliskannya di file `plan.md` dan memecahnya menjadi daftar cek (checklist) tugas ke file `tasks.md`.
+- _"start phase 1"_ → menyuruh AI agent untuk segera mengeksekusi tugas pertama yang tertulis di `tasks.md`.
 
-### 🔖 Penggunaan menggunakan slash command
+### 🔖 Penggunaan slash command
 
-- `/create plan` → membuat rencana implementasi baru dan menulisnya ke dalam `plan.md` serta tugas-tugas yang diperlukan ke dalam `tasks.md`.
-- `/plan-status` → memeriksa status dari plan saat ini akah sedang berjalan, dijeda (paused), atau sudah selesai.
-- `/retrospective` → membuat ringkasan serta hasil dari pengerjaan plan yang sedang aktif untuk disimpan ke dalam memori.
+- `/create plan` → cara ringkas untuk membuat rencana (plan) dan _checklist_ implementasi.
+- `/plan-status` → memeriksa apakah status implementasi project sedang berjalan, dihentikan sementara (paused), atau telah selesai sepenuhnya.
+- `/retrospective` → membuat dokumen ringkasan (review) atas pekerjaan implementasi fitur yang telah diselesaikan untuk disimpan di memori jangka panjang.
 
 ---
 
 ## 📌 7. Verifikasi pemasangan
 
-1. **Server aktif** — pastikan `util_info` mengembalikan versi + build tag:
+1. **Server aktif** — panggil aksi `util_info` untuk memastikan apakah versi build dan agent membalas dengan akurat:
 
    ```
    action_call(action="util_info")
    ```
 
-2. **Project-ID terpasang** — pada respons pertama, agent harus memanggil `project_id` untuk melakukan isolasi memori. Anda bisa memeriksa apakah `.ai/project-id` ada atau sudah dibuat oleh agent. Jika tidak Anda bisa membuatnya sendiri di `.ai/project-id` yang berisikan id dari project saat ini.
-
-3. **MCP aktif** — minta agent Anda menjalankan `action_help` untuk melihat ringkasan perintah masing-masing grup (23 perintah).
+2. **Project-ID terpasang** — pada balasan awal, AI agent secara spesifik akan mencari ID project untuk memastikan pembatasan cakupan memori (_memory isolation_). Pastikan file identifikasi di `.ai/project-id` sudah tersedia. Jika belum terbuat otomatis, buat manual file teks biasa di `.ai/project-id` dan tuliskan ID nama project Anda di dalamnya.
+3. **MCP aktif** — minta AI agent menjalankan instruksi aksi `action_help` untuk membaca ke-23 opsi perintah yang dibawanya.
 
 ---
 
 ## 📌 8. Environment variabel & konfigurasi
 
-Pengaturan runtime yang berjalan memiliki prioritas urutan dalam menentukan mana yang harus diambil untuk sumber pengaturan sebagai berikut: **environment variable → `config.json` → pengaturan nilai (value) default**.
+Sistem runtime berjalan secara berurutan dalam prioritas: **Environment Variable OS → file konfigurasi lokal `config.json` → Nilai _default_ kode**.
 
-- **Development** (ketika dijalankan dari source code): `.env` + `config.json` dibaca dari project root (CWD). Untuk log defaultnya akan ditulis ke `{project_root}/logs`.
-- **Production** (binary executable yang sudah dibuild): `.env` + `config.json` dibaca dari lokasi user home `~/.awlab-id/agent-memory/`. Untuk log defaultnya ditulis ke `~/.awlab-id/agent-memory/logs/`.
+- **Development Mode** (menjalankan server tanpa dicompile): `.env` beserta file `config.json` dibaca secara _relative_ pada CWD project. _Output_ log-nya secara bawaan ditulis di `{project_root}/logs`.
+- **Production Mode** (menjalankan versi binary _compiled_): `.env` dan `config.json` diambil dari lokasi publikasi pusat `~/.awlab-id/agent-memory/`. Demikian juga log-nya akan menumpuk di `~/.awlab-id/agent-memory/logs/`.
 
-| Variabel           | Default        | Deskripsi                                                                                                                                                                                                                                        |
-| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AWLAB_ENV`        | auto           | Penentuan mode saat MCP server berjalan. `production`/`prod` atau `development`/`dev`. Jika kosong, mode akan dideteksi secara otomatis (binary executable yang dibuild dari PyInstaller akan selalu berisi production, selain itu development). |
-| `LOG_ENABLED`      | `true`         | Mengaktifkan/menonaktifkan fitur log (`true`/`1`/`yes`, selain itu maka non-aktif).                                                                                                                                                              |
-| `LOG_LEVEL`        | `info`         | Tingkat level log untuk melakukan pencatatan ke file log (contoh: `info`, `debug`, `warning`).                                                                                                                                                   |
-| `DB_PATH`          | (kosong)       | Penggantian opsional untuk lokasi database agent-recall.                                                                                                                                                                                         |
-| `GRAPH_PARALLEL`   | `false`        | Ekstraksi code-graph secara paralel dan bersifat opsional (`true`/`1`/`yes`). Lihat di bawah untuk detailnya.                                                                                                                                    |
-| `GRAPH_CHUNK_SIZE` | `200`          | Jumlah maksimal file yang diproses dalam satu kali `graph_build` (pembuatan bertahap/chunk). Menjaga RAM/CPU tetap stabil pada project besar; nilai `0`/kosong menonaktifkan chunking. Lihat penjelasan di bawah.                                |
-| `GRAPH_MAX_FILES`  | (tidak diatur) | Membatasi jumlah file pada build pertama (chunk awal).                                                                                                                                                                                           |
+| Variabel           | Nilai Bawaan   | Deskripsi                                                                                                                                                              |
+| ------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AWLAB_ENV`        | auto           | Memicu status mode _production_ atau _development_ server. (`prod`/`dev`). Secara normal akan terdeteksi otomatis. Saat dibuild via Pyinstaller menjadi mode produksi. |
+| `LOG_ENABLED`      | `true`         | Opsi logging _toggle switch_ (`true`/`1`/`yes`, di luar itu akan mematikan log).                                                                                       |
+| `LOG_LEVEL`        | `info`         | Ambang batas rincian log (_log verbosity level_): contohnya `info`, `debug`, atau `warning`.                                                                           |
+| `DB_PATH`          | (kosong)       | Override absolut ke _custom path_ file SQLite agent-recall jika dikehendaki.                                                                                           |
+| `GRAPH_PARALLEL`   | `false`        | Membuka jalan pembuatan code-graph menggunakan multi proses (paralel) / (`true`/`1`/`yes`). (Rincian lebih dalam ada di bawah).                                        |
+| `GRAPH_CHUNK_SIZE` | `200`          | Membatasi beban pembuatan _Code Graph_ per _step_ ekstraksi (chunking logic). Memelihara agar beban komputasi CPU dan memori tetap stabil. Diatur `0` untuk skip.      |
+| `GRAPH_MAX_FILES`  | (tidak diatur) | Pembatasan keras batas indeks ekstraksi file code pertama.                                                                                                             |
 
-Pengaturan dapat berupa file `config.json` atau `.env` untuk diterapkan secara global, atau bisa juga diterapkan sebagai environment variable saat mendaftarkan MCP server atau juga dapat diatur langsung dari OS.
+### 🔖 Kapan harus mengaktifkan `GRAPH_PARALLEL`?
 
-### 🔖 Kapan harus menggunakan `GRAPH_PARALLEL` ?
+Proses pembedahan kode (ekstraksi) saat `graph_build` dipanggil **berjalan urut secara sekuensial secara default**. Bagi hampir seluruh pengguna ini merupakan cara yang paling optimal:
 
-Proses ekstraksi code-graph saat menjalankan perintah `graph_build` **berjalan berurutan (sekuensial) secara bawaan**, dan ini adalah pilihan terbaik untuk sebagian besar project karena dua alasan utama:
+- **Urutan Sekuensial Seringkali Lebih Cepat**
+  Waktu ekstraksi dasar AST tiap file cukup singkat. Penguraian _namespace/imports/linking_ justru memakan proses di ujung, dan semua referensi tersebut saling menumpang tumpang-tindih (tethering cross-link) dalam _single-threaded space_. Mengaktifkan multi proses kadang hanya buang-buang waktu _overhead spawn process_, khususnya pada Windows.
+- **Dapat menyebabkan Aplikasi (Crash/Hang)**
+  Submodul library multi proses (_ProcessPoolExecutor_) dari python seringkali terkunci dan mati bila terperangkap pada aplikasi tipe eksekutor _single one-file_. Jangan menyalakan parameter ini pada aplikasi _production build_.
 
-- **Sekuensial Terbukti Lebih Cepat**
+**Kesimpulan**
 
-  Pada skala proyek biasa, proses awal setiap berkas tergolong sangat cepat, sementara proses penggabungan antarberkas jauh lebih dominan dan hanya bisa berjalan pada satu thread. Mengaktifkan proses paralel justru membuat sistem membuang waktu untuk membuat proses baru (terutama di sistem operasi Windows).
+Gunakan flag `GRAPH_PARALLEL=1` khusus bila:
 
-- **Bisa Menyebabkan Crash / Berhenti Berjalan**
+1. Code base sistem berjumlah di atas > 5,000 baris ke atas.
+2. Sedang merakit dan menjalankan _run instance_ Python di local development via Virtual Environment (`venv`), dan BUKAN eksekusi hasil binary _Pyinstaller build_.
 
-  Fitur paralel menggunakan `ProcessPoolExecutor`, yang akan berhenti **secara permanen (_hang_)** jika dijalankan dari binary executable (.exe) berbasis _onefile_. Jangan pernah mengaktifkan fitur ini pada build production.
+### `GRAPH_CHUNK_SIZE` — strategi ekstraksi graph pada code base besar
 
-**Ringkasan**
-
-Gunakan `GRAPH_PARALLEL=1` hanya jika:
-
-1. Anda memiliki source code dalam jumlah yang sangat besar.
-2. Anda menjalankan MCP server-nya langsung dari source code (menggunakan .venv), bukan dari binary executable yang sudah dibuild.
-
-### `GRAPH_CHUNK_SIZE` — pembuatan graph secara bertahap untuk project besar
-
-`graph_build` memproses file secara **bertahap dalam potongan (chunk) yang dibatasi** — mengikuti pola antrean (queue): setiap proses (run) mengekstrak maksimal `chunk_size` file, Manifest hanya diperbarui untuk file yang sudah diproses, dan hasilnya mengembalikan `processed_files` / `remaining_files` / `chunked`. Dengan `background=true` (atau melalui precondition `graph_fresh` saat pembacaan graph → `ensure_fresh(background=True)`), proses latar belakang (worker) terus memproses chunk berikutnya hingga `remaining_files == 0`. Dengan begitu, penggunaan RAM/CPU tetap stabil — ideal untuk project yang sangat besar. `max_files` (env `GRAPH_MAX_FILES`) juga membatasi jumlah file pada build pertama. `graph_status` melaporkan `remaining_files` sehingga perkembangannya dapat dipantau.
+Fitur aksi fungsi `graph_build` mampu membungkus dan mengekstraksi kode dalam potongan-potongan terukur (_chunks_). Proses akan memindai deretan batch ukuran (maks `chunk_size` tiap iterasi). File manifes (manifest list file) akan ditandai sukses (checklist) per tahap penyelesaian. Dengan menginisiasi variabel argument opsi `background=true`, komponen _worker background daemon_ MCP akan menyelesaikan file sisa yang menumpuk. Mekanisme ini cocok dan sangat ampuh melindungi _memory spike_ (CPU 100%) dan melahap antrean panjang sisa pemrosesan (queue limit) file di belakang layar saat mengerjakan _repository project_ yang lumayan masif.
 
 ---
 
@@ -349,14 +362,14 @@ Gunakan `GRAPH_PARALLEL=1` hanya jika:
 python scripts/run.py <command> [options]
 ```
 
-| Perintah        | Deskripsi                                                                                                      |
-| --------------- | -------------------------------------------------------------------------------------------------------------- |
-| `compile-rules` | Mengompilasi rules dan skill menjadi profil untuk masing-masing agent dan outputnya berada di `dist/profiles/` |
-| `build`         | Mengompilasi profil agent dan melakukan build binary executable → `dist/`                                      |
-| `publish`       | Mempublikasikan isi `dist/` ke lokasi masing-masing AI agent                                                   |
-| `test`          | Menjalankan tes python                                                                                         |
-| `help`          | Menampilkan bantuan terperinci untuk masing-masing perintah                                                    |
-| `--version`     | Menampilkan versi dan build tag                                                                                |
+| Perintah        | Deskripsi                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `compile-rules` | Mem-parsing file rules/skills `.md` menjadi format spesifik untuk masing-masing agent di direktori `dist/profiles/` |
+| `build`         | Melakukan _bundle_ binary executable (bridge dan worker) dan profil agent lalu mengeluarkan ke direktori `dist/`    |
+| `publish`       | Mengedarkan (deploy) folder publikasi `dist/` ke lokasi registrasi pusat setiap AI agent                            |
+| `test`          | Mengeksekusi suite unit test python (`pytest`)                                                                      |
+| `help`          | Dokumentasi bantuan untuk penggunaan berbagai command CLI                                                           |
+| `--version`     | Menampilkan identitas string rilis versi _build tag_                                                                |
 
 ### 🔖 compile-rules
 
@@ -364,46 +377,46 @@ python scripts/run.py <command> [options]
 python scripts/run.py compile-rules
 ```
 
-Mengompilasi `assets/rules/` (14 file rules) dan `assets/skills/` (5 skill) menjadi profil per-agent:
+Menguraikan dan mengonversi koleksi aset instruksi AI (`assets/rules/` yang berisi 14 module aturan, serta `assets/skills/` berisi 5 module skill) menjadi dokumen tunggal profil agent spesifik (menurut kompatibilitas prompt-nya).
 
 ```
 dist/profiles/
-├── cline/             # File .md individual + skills
-├── copilot/           # .instructions.md dengan frontmatter YAML + skills
-├── claude/            # Monolit CLAUDE.md + skills
-├── hermes/            # Skills sebagai subdirektori SKILL.md
-└── .clinerules        # Monolit tingkat-project (tidak dipublikasikan)
+├── cline/             # File instruksi terpisah dan sub folder skill (untuk format prompt markdown)
+├── copilot/           # File `.instructions.md` ber-metadara (frontmatter YAML) ditambah folder skills
+├── claude/            # Satu buah dokumen makro raksasa `CLAUDE.md` beserta skills opsional
+├── hermes/            # Terhimpun (packaged) sepenuhnya dalam wujud hierarki subfolder SKILL.md
+└── .clinerules        # Salinan instruksi dasar makro project root (hanya output statis)
 ```
 
 ### 🔖 build
 
 ```bash
-# 📖 Build penuh (profil + binary executable)
+# 📖 Eksekusi build secara utuh penuh (memaketkan profil agent + bundle binary)
 python scripts/run.py build
 
-# 📖 Lewati build binary executable
+# 📖 Lewati proses pembentukan / bundle executable (build profile agent only)
 python scripts/run.py build --no-bin
 
-# 📖 Lewati kompilasi profil hanya melakukan build binary executable
+# 📖 Lewati konversi profil (build bundle executable binary only)
 python scripts/run.py build --no-rules
 ```
 
 ### 🔖 publish
 
 ```bash
-# 📖 Publikasikan semua target (build dulu jika /dist tidak ada)
+# 📖 Melakukan instalasi global deployment pusat aplikasi (Otomatis mem-build `dist/` bila hilang/kosong)
 python scripts/run.py publish
 
-# 📖 Publikasikan ke satu target
+# 📖 Mendistribusikan khusus (cherry-pick) pada satu aplikasi
 python scripts/run.py publish --target=claude
 
-# 📖 Lewati build otomatis
+# 📖 Mencegah dan melewatkan build bila tidak menginginkan rebuild binary
 python scripts/run.py publish --target=all --skip-build
 
-# 📖 Paksa (lewati prompt konfirmasi)
+# 📖 Melewatkan segala macam opsi/prompt (skip human intervention)
 python scripts/run.py publish --force
 
-# 📖 Hapus file yang sudah dipublikasi
+# 📖 Hapus atau Un-Install dari daftar profil agen IDE / hapus path sistem lokasi deployment
 python scripts/run.py publish --uninstall
 ```
 
@@ -411,18 +424,18 @@ python scripts/run.py publish --uninstall
 
 ## 📌 10. Pemecahan masalah
 
-| Masalah                                                                                   | Solusi                                                                                                                                                                                                 |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pip install -e .` gagal                                                                  | Pastikan Python 3.10+ sudah terinstall dan Anda berada di dalam root project.                                                                                                                          |
-| Build gagal / `dist/bin` terkunci                                                         | **Worker** yang sedang berjalan mengunci executable (bridge melakukan hot-swap dan harus tetap hidup). Hentikan dulu proses `awlab-ai-worker` — lihat `scripts/stop-mcp-servers.ps1` (Windows PowerShell).                                         |
-| Agent tidak melihat tool MCP                                                              | Daftarkan MCP server (`dist/bin/awlab-ai-assistant{.exe}`) di konfigurasi MCP agent Anda, lalu mulai ulang agent/chat.                                                                                 |
-| Kueri graph lambat saat pertama kali                                                      | Build pertama adalah ekstraksi penuh dan berjalan di latar belakang — baca ulang setelah selesai (`graph_rebuilding: true` artinya masih membangun).                                                   |
-| Penggunaan fitur paralel untuk membangun grafik menyebabkan aplikasi .exe tidak merespons | Komponen `ProcessPoolExecutor` mengalami masalah (hang) pada aplikasi hasil kompilasi tipe onefile. Pastikan fitur `GRAPH_PARALLEL` tidak diaktifkan pada versi rilis (production).                    |
-| Data memori yang ditulis hilang tanpa pemberitahuan                                       | Perubahan data akan ditampung di berkas `.ai/memory-bank/pending.jsonl` saat penyimpanan mati (down). Jalankan perintah `mem_replay` setelah sistem pulih untuk menerapkan kembali perubahan tersebut. |
+| Masalah / Kendala                                                                                  | Solusi Penanganan                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Error/Gagal memicu perintah `pip install -e .`                                                     | Lakukan pemeriksaan ulang versi Python (diwajibkan versi minimum versi 3.10) dan verifikasi ulang jika eksekusi sedang diketik pada jendela terminal CWD root project Anda.                                                                                                                                                                                                                                                          |
+| Operasi gagal kompilasi (Build failed) / `dist/bin` terkunci status (_locked_)                     | Ada sebuah proses berjalan (_running instance process_) dari `awlab-ai-worker` yang sedang memegang lock _executable write permission_ di dalam latar belakang. Matikan dahulu proses _worker_ (contoh: eksekusi `scripts/stop-mcp-servers.ps1` untuk Windows PowerShell).                                                                                                                                                           |
+| Agent tidak dapat menemukan dan menggunakan fungsi Tool (no MCP Server Available)                  | Anda harus menambah (atau mendaftarkan kembali) parameter konfigurasi _Command entrypoint execution path_ (dari `~/.awlab-id/agent-memory/bin/awlab-ai-assistant`) ke dalam konfigurasi pengaturan AI agent dan melakukan mulai ulang (_restart server IDE/chat app_).                                                                                                                                                               |
+| Perintah akses / ekstraksi code _knowledge graph_ terasa sangat memberatkan saat _pertama kali_    | Karena ini adalah inisialisasi awal, algoritma pengekstrak bekerja membuat daftar indeks (full mapping build logic extraction). AI agent dapat membacanya berulang-ulang seusai inisialisasi tersebut selesai (Kondisi status parameter info: `graph_rebuilding: true` mengartikan sesi index-build aktif).                                                                                                                          |
+| _Aplikasi ter-Hang/Crash/Macet (un-responsive)_ dengan indikator error terkait multithread paralel | Anda mengaktifkan _opsional command_ sub modul `ProcessPoolExecutor` di parameter variabel. Tolong non-aktifkan (hapus centang opsi / nilai `GRAPH_PARALLEL`) khususnya apabila server sedang menggunakan opsi rilis (executable one file format runtime module).                                                                                                                                                                    |
+| Hilangnya sebagian data histori _Memory Bank_ tanpa jejak log                                      | Fitur keamanan offline / fallback _pending changes loop pool logger_ secara reguler selalu merekam status saat database macet / down / bermasalah. AI harus memicu/menjalankan kembali eksekusi Tool command aksi `mem_replay` dengan data muatan _file record tracking offline pending path_ (berasal dari _pending.jsonl_ log history) untuk memunculkan (meng-apply) file perubahan yang tersembunyi/hilang saat kejadian krisis. |
 
 ---
 
 ## 📌 Langkah berikutnya
 
-- Pelajari seluruh fitur yang tersedia: [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md)
-- Kembali ke [Halaman utama dokumentasi](../../README_ID.md#dokumentasi)
+- Pelajari segala hal tentang seluruh fitur tool yang disajikan: [Tool MCP yang Tersedia](AVAILABLE_TOOLS.md)
+- Kembali menelusuri navigasi [Halaman utama dokumentasi](../../README_ID.md#dokumentasi)

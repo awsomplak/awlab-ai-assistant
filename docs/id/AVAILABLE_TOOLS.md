@@ -7,9 +7,9 @@
 **Di halaman ini:**
 
 - [Arsitektur server](#arsitektur-server)
-- [Tool yang tersedia](#tool-mcp-yang-tersedia)
+- [Tool yang tersedia](#tool-MCP-yang-tersedia)
 - [Daftar Action](#daftar-action)
-- [Pengolahaan User Pattern](#pengolahan-user-pattern)
+- [Pengolahan User Pattern](#pengolahan-user-pattern)
 - [Cache offline (`pending.jsonl`)](#cache-offline-pendingjsonl)
 - [Project Family](#project-family)
 
@@ -36,7 +36,7 @@ Pasangan bridge + worker tidak pernah meninggalkan proses *orphan* (di semua OS)
   — membatalkan background rebuild yang sedang berjalan lebih dulu — begitu parent (bridge)
   mati.
 - **Bridge parent watchdog** — `awlab-ai-assistant` adalah PyInstaller ONEFILE, jadi proses
-  yang dikelola host adalah *bootloader parent*-nya. Bridge asli memantau parent tersebut dan,
+  yang dikelola agent/IDE adalah *bootloader parent*-nya. Bridge asli memantau parent tersebut dan,
   saat mati, menutup pohon worker lalu keluar.
 - **Tree teardown di semua jalur keluar** — di Windows, worker dibungkus Job Object dengan
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (OS menutup worker + turunannya bahkan saat di-*force*
@@ -56,10 +56,10 @@ Pasangan bridge + worker tidak pernah meninggalkan proses *orphan* (di semua OS)
 
 ### `action_call(action, params=None)`
 
-Tool berikut berfungsi mengirim sebuah action ke MCP Server. Mcp Server akan menjalankan preconditions/pipeline secara otomatis. Setiap respon akan menyertakan `executed`/`skipped`. Contoh penggunaan:
+Tool berikut berfungsi mengirim sebuah action ke MCP Server. Server MCP akan menjalankan preconditions/pipeline secara otomatis. Setiap respon akan menyertakan `executed`/`skipped`. Contoh penggunaan:
 
 ```
-action_call(action="task_read", params={"plan_uuid": "mcptool1", "format": "structured"})
+action_call(action="task_read", params={"plan_uuid": "MCPtool1", "format": "structured"})
 ```
 
 ### `action_help(action=None)`
@@ -77,7 +77,7 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
 | Action       | Ringkasan                                                                                                                                                                                                            |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ctx_info`   | Membaca konteks project: snapshot, memory-bank, scan, saran, atau konteks orkestrasi.                                                                                                                                |
-| `project_id` | Memeriksa project-id; otomatis membuatnya jika belum ada (idempotent). Panggil ini pada respons pertama, sebelum operasi `mem_*`/plan, agar isolasi memori berjalan optimal dan terisolasi tidak masuk ke DB global. |
+| `project_id` | Memeriksa Project ID; otomatis membuatnya jika belum ada (idempotent). Panggil ini pada respons pertama, sebelum operasi `mem_*`/plan, agar isolasi memori berjalan optimal dan terisolasi tidak masuk ke DB global. |
 
 </details>
 
@@ -92,7 +92,7 @@ Tool berikut berfungsi menampilkan informasi bantuan penggunaan untuk setiap act
 | `mem_observe`       | Mencatat pola pengguna ke observation store (`.ai/memory-bank/observations.jsonl`) — input untuk pipeline lanjutan khusus user pattern.                                                                                                            |
 | `mem_read`          | Membaca detail node atau lingkungan graph.                                                                                                                                                                                                         |
 | `mem_remove`        | Mengarsipkan entitas atau menghapus observasi/relasi (type-safe — menolak nama yang ambigu).                                                                                                                                                       |
-| `mem_replay`        | Mengimpor cache offline (`.ai/memory-bank/pending.jsonl`) — menjalankan queue saat store/MCP tidak terjangkau sebelumnya. Entri yang gagal tetap disimpan untuk dicoba ulang. `dry_run` untuk melekukan pratinjau.                                 |
+| `mem_replay`        | Mengimpor cache offline (`.ai/memory-bank/pending.jsonl`) — menjalankan queue saat store/MCP tidak terjangkau sebelumnya. Entri yang gagal tetap disimpan untuk dicoba ulang. `dry_run` untuk melakukan pratinjau.                                 |
 | `mem_search`        | Pencarian hybrid BM25+dense di memori (opsional berdasarkan tipe entitas). store=patterns + scope/context untuk pola pengguna yang cakupannya sama ke dalam susunan yang terorganisir, store=family\_<slug> untuk memori project yang berkorelasi. |
 | `mem_write`         | Membuat/menandai entitas, menambah observasi, atau menghubungkan entitas.                                                                                                                                                                          |
 
@@ -111,7 +111,7 @@ Untuk `mem_observe` dan `mem_write`, Anda dapat mengirimkan teks tidak terstrukt
 | `plan_status` | Membaca status plan/registry: plan aktif, task berikutnya, status dari task (selesai, pending, belum dieksekusi/dijalankan), fase dari task (fase berisi beberapa task).                                                                                                                                                                                                                               |
 | `plan_update` | Mengubah plan/registry: dipindahkan ke plan aktif, menandai fase selesai, menyelesaikan task yang ditunda.                                                                                                                                                                                                                                                                                             |
 | `plan_doc`    | Membaca / membuat / memperbarui / menghapus `plan.md` atau `notes.md` suatu plan secara langsung.                                                                                                                                                                                                                                                                                                      |
-| `reg_update`  | Membaca / membuat / memperbarui `registry.md`, berikut detail singkatnya: <br> `create`: plan UUID artifact dibuat oleh mcp → plan baru ditandai sebagai plan yang Aktif ⏹️. <br> `update`: memperbarui status plan menjadi active\|paused\|complete → diletakkan ke tabel yang sesuai dengan status. <br> `delete`: Untuk menghapus plan dan butuh persetujuan ketat pengguna lewat `confirmed=true`. |
+| `reg_update`  | Membaca / membuat / memperbarui `registry.md`, berikut detail singkatnya: <br> `create`: plan UUID artifact dibuat oleh MCP → plan baru ditandai sebagai plan yang Aktif ⏹️. <br> `update`: memperbarui status plan menjadi active\|paused\|complete → diletakkan ke tabel yang sesuai dengan status. <br> `delete`: Untuk menghapus plan dan butuh persetujuan ketat pengguna lewat `confirmed=true`. |
 
 </details>
 
@@ -121,9 +121,9 @@ Untuk `mem_observe` dan `mem_write`, Anda dapat mengirimkan teks tidak terstrukt
 
 | Action          | Ringkasan                                                                                                                                                                                                                                                                                                                                       |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `graph_build`   | Membangun/memperbarui Code Knowledge Graph ke `.ai/codegraph/`. Sistem ini menggunakan **LanceDB** untuk vektor embedding (struktur AST + pencarian semantik). Untuk multi-project (`family=<slug>`) mcp akan membangun graph family GABUNGAN. Proses build inkremental berjalan sangat cepat karena hanya mengekstrak ulang file yang berubah. |
-| `graph_status`  | Melaporkan status code-graph (tersedia? kedaluwarsa? terdapat perubahan file?).                                                                                                                                                                                                                                                                 |
-| `graph_query`   | Mencari di dalam code-graph (label / file source / tipe). Otomatis diperbarui dulu.                                                                                                                                                                                                                                                             |
+| `graph_build`   | Membangun/memperbarui Code Knowledge Graph ke `.ai/codegraph/`. Sistem ini menggunakan **LanceDB** untuk vektor embedding (struktur AST + pencarian semantik). Untuk multi-project (`family=<slug>`) MCP akan membangun graph family GABUNGAN. Proses build inkremental berjalan sangat cepat karena hanya mengekstrak ulang file yang berubah. |
+| `graph_status`  | Melaporkan status Code Graph (tersedia? kedaluwarsa? terdapat perubahan file?).                                                                                                                                                                                                                                                                 |
+| `graph_query`   | Mencari di dalam Code Graph (label / file source / tipe). Otomatis diperbarui dulu.                                                                                                                                                                                                                                                             |
 | `graph_path`    | Jalur terpendek antara dua node graph. Otomatis diperbarui dulu.                                                                                                                                                                                                                                                                                |
 | `graph_explain` | Menjelaskan node graph (detail + korelasi). Otomatis diperbarui dulu.                                                                                                                                                                                                                                                                           |
 
@@ -174,9 +174,9 @@ Pada project yang besar, pembangunan graph secara penuh dapat menyebabkan lonjak
 - **Panel yang bisa diubah ukurannya** — seret pemisah antara **Node Info** dan **Communities** untuk memberi ruang lebih ke salah satu panel (klik dua kali untuk mengatur ulang); kotak Node Info menggulir ke dalam bila node punya daftar tetangga panjang, sehingga tidak menimpa atau mendorong legenda Communities.
 - **Drill-down komunitas** — saat graph melebihi `node_limit` (tampilan agregasi per komunitas), saat klik node komunitas membuka daftar anggota yang bisa dicari, lalu **Load members into graph** membangun ulang tampilan dari node + tepi anggota komunitas tersebut; **Reset** kembali ke tampilan ringkasan. Turunkan `node_limit` (mis. `1500`) untuk mendapatkan ringkasan agregasi + drill-down pada project besar.
 
-#### Alur pembentukan code-graph
+#### Alur pembentukan Code Graph
 
-Setiap pembacaan code-graph (`graph_query`, `graph_path`, `graph_explain`) mengembalikan field metadata ini agar agent selalu tahu apakah datanya masih baru dan apakah ada build ulang yang sedang berjalan:
+Setiap pembacaan Code Graph (`graph_query`, `graph_path`, `graph_explain`) mengembalikan field metadata ini agar agent selalu tahu apakah datanya masih baru dan apakah ada build ulang yang sedang berjalan:
 
 | Field              | Tipe   | Makna                                                                                        |
 | ------------------ | ------ | -------------------------------------------------------------------------------------------- |
@@ -210,7 +210,7 @@ Setiap pembacaan code-graph (`graph_query`, `graph_path`, `graph_explain`) menge
 
 | Action      | Ringkasan                                                                                   |
 | ----------- | ------------------------------------------------------------------------------------------- |
-| `util_info` | Menampilkan informasi versi mcp server / metadata project (atau pembuatan mermaid diagram). |
+| `util_info` | Menampilkan informasi versi server MCP / metadata project (atau pembuatan mermaid diagram). |
 
 </details>
 
@@ -228,9 +228,9 @@ Setiap pembacaan code-graph (`graph_query`, `graph_path`, `graph_explain`) menge
 
 ## 🧁 Pengolahan User Pattern
 
-Mcp server mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipakai ulang:
+Server MCP mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipakai ulang:
 
-1. **Observe** — `mem_observe` (yang dijalankan oleh agent saat live chat) atau dari `awlab-ai-assistant hook --agent <host> --event <event>` (event lifecycle host milik agent) menambahkan action ke `.ai/memory-bank/observations.jsonl` untuk melakukan penghapusan duplikat data berdasarkan _fingerprint_.
+1. **Observe** — `mem_observe` (yang dijalankan oleh agent saat live chat) atau dari `awlab-ai-assistant hook --agent <agent> --event <event>` (event lifecycle agent/IDE milik agent) menambahkan action ke `.ai/memory-bank/observations.jsonl` untuk melakukan penghapusan duplikat data berdasarkan _fingerprint_.
 2. **Bake / Proses Pengolahan** — setiap `action_call` menjalankan `bake_tick` dengan alur kerja `baca → key → hitung → consistency → confidence`. Pattern / pola yang sudah diolah kemudian ditulis ke `.ai/memory-bank/baked.json` hanya jika berubah. Confidence = `frequency(min(1,count/5)) × consistency × source_weight` (`explicit`/`corrected` 0.9, `behavioral` 0.6, `inferred` 0.4). Sebuah pattern / pola butuh `count ≥ 2 ∧ consistency ≥ 0.5 ∧ confidence ≥ 0.6`.
 3. **Deliver (tell-once)** — `ctx_info mode="context"` / `mem_search store="patterns"` mengembalikan atau menghasilkan `pattern_candidates` / `baked_patterns` (scoped ke stack). Penanda dalam sistem pengiriman mencatat pola kebiasaan yang telah disampaikan, sehingga pola tersebut TIDAK AKAN PERNAH disampaikan ulang sampai ada pola baru yang mematangkan pola tersebut (_baked_).
 
@@ -241,7 +241,7 @@ Mcp server mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipa
 3. sub-agent (`awlab-baker`, yang berjalan jika ada pola baru)
    ketiganya menggunakan `observations.jsonl` dan `baked.json` yang sama, sehingga pola yang dihasilkan identik apa pun tahapnya.
 
-**Mode hook (opsional)** — `awlab-ai-assistant hook --agent <host> --event <event>` menangkap observasi dari event lifecycle host (prompt pengguna, penggunaan tool, mulai/selesai-nya sesi, proses dari sub-agent). Registrasi hook wajib dilakukan per-host agent. Executable (mcp yang sudah dibuild contoh dalam bentuk .exe pada windows) menentukan project per event (lihat [`INSTALL.md`](INSTALL.md)).
+**Mode hook (opsional)** — `awlab-ai-assistant hook --agent <agent> --event <event>` menangkap observasi dari event lifecycle agent/IDE (prompt pengguna, penggunaan tool, mulai/selesai-nya sesi, proses dari sub-agent). Registrasi hook wajib dilakukan per-AI agent. Executable (MCP yang sudah dibuild contoh dalam bentuk .exe pada windows) menentukan project per event (lihat [`INSTALL.md`](INSTALL.md)).
 
 ## 💾 Cache offline (`pending.jsonl`)
 
@@ -249,12 +249,12 @@ Mcp server mengolah kebiasaan pengguna yang berulang menjadi opsi yang bisa dipa
 > Saat gagal menyimpan atau server MCP tidak bisa dijangkau, data akan disimpan dalam bentuk **> **antrian (queue)**** — ke `.ai/memory-bank/pending.jsonl`:
 
 - **Sisi server (otomatis):** `mem_write`/`mem_remove` saat store mati, atau `task_update` saat DB-sync mati → operasi diantrekan otomatis.
-- **Sisi agent (MCP mati):** ketika agent melakukan `mem_write` / `mem_remove` / `task_update` data akan ditulis ke dalam file JSONL memakai tool file Anda sendiri atau dari IDE atau menulisnya secara manual jika agent memiliki kapabilitas untuk melakukan edit pada perangkat Anda, namun jika dilakukan secara manual tidak menutup kemungkinan data tersebut tidak disimpan atau tidak ditulis oleh agent (sesuai aturan / rules [`14-mcp-offline-cache`](../../assets/rules/14-mcp-offline-cache.md)).
+- **Sisi agent (MCP mati):** ketika agent melakukan `mem_write` / `mem_remove` / `task_update` data akan ditulis ke dalam file JSONL memakai tool file Anda sendiri atau dari IDE atau menulisnya secara manual jika agent memiliki kapabilitas untuk melakukan edit pada perangkat Anda, namun jika dilakukan secara manual tidak menutup kemungkinan data tersebut tidak disimpan atau tidak ditulis oleh agent (sesuai aturan / rules [`14-MCP-offline-cache`](../../assets/rules/14-MCP-offline-cache.md)).
 > - **Proses Impor ulang:** `mem_replay` mengimpor antrean (queue) data dari cache yang tersimpan offline dari file JSONL (bila ada file atau datanya) — entri yang sukses dijalankan akan dihapus, dan >   yang gagal akan disimpan kembali untuk dicoba ulang. Fitur `dry_run` akan melakukan pratinjau terlebih dahulu sebelum benar-benar dijalankan atau dieksekusi.
 
 ## 👨‍👩‍👧‍👦 Project Family
 
-Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda dan berbagi code-graph gabungan serta penyimpanan memori khusus bernama `family_<slug>`. Untuk petunjuk penyiapan lengkap, lihat [Konfigurasi Project Families](PROJECT_FAMILIES.md). File `~/.awlab-id/agent-memory/project-families.json` mendaftarkan setiap project kedalam grup dengan bentuk seperti berikut:
+Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda dan berbagi Code Graph gabungan serta penyimpanan memori khusus bernama `family_<slug>`. Untuk petunjuk penyiapan lengkap, lihat [Konfigurasi Project Families](PROJECT_FAMILIES.md). File `~/.awlab-id/agent-memory/project-families.json` mendaftarkan setiap project kedalam grup dengan bentuk seperti berikut:
 
 ```json
 {
@@ -274,4 +274,4 @@ Project gabungan yang berkorelasi meski di lokasi (path atau drive) yang berbeda
 }
 ```
 
-Jika `project-id` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/project-id` dari project, maka akan lebih diutamakan menggunakan `project-id` dari project tersebut daripada `project-id` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **code-graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`. Setiap project anggota memiliki penanda `.ai/family-id` (kunci family **utama**, meniru `.ai/project-id`), dan `ctx_info`/`family_info` melaporkannya beserta semua family yang dimiliki project tersebut. `family_info` (hanya-baca) mendaftar dan me-resolve family; `family_config` memungkinkan agent membuat/mengubah/menghapus family beserta anggotanya — pengguna hanya memantau filenya.
+Jika `Project ID` yang terdaftar pada file `project-families.json` berbeda dengan `.ai/Project ID` dari project, maka akan lebih diutamakan menggunakan `Project ID` dari project tersebut daripada `Project ID` yang **dideklarasikan** manual di dalam file `project-families.json` (akan diperbarui otomatis saat build graph family berjalan) karena `project-families` berbasis path dari project sebagai acuan utama. Penambahan project baru ke dalam `project-families.json` akan otomatis diinisialisasi (**seeded**), dan perintah `graph_build` dengan parameter `family=<slug>` akan menghasilkan **Code Graph** gabungan yang memuat _node_ dengan prefix `<project_id>::`. Setiap project anggota memiliki penanda `.ai/family-id` (kunci family **utama**, meniru `.ai/Project ID`), dan `ctx_info`/`family_info` melaporkannya beserta semua family yang dimiliki project tersebut. `family_info` (hanya-baca) mendaftar dan me-resolve family; `family_config` memungkinkan agent membuat/mengubah/menghapus family beserta anggotanya — pengguna hanya memantau filenya.
