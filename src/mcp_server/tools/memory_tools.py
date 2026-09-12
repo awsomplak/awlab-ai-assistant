@@ -154,8 +154,11 @@ async def search_memory(
             if patterns:
                 result = _scope_patterns(result, workspace_path, scope=scope, context=context)
                 result = [_annotate_pattern(e) for e in result]
+            total = len(result)
             return ok_obj(
                 data=result[:limit],
+                total_matches=total,
+                truncated=total > limit,
                 filtered_by="entity_type",
                 store=store,
                 scope=scope if patterns else None,
@@ -186,6 +189,14 @@ async def search_memory(
         if patterns:
             result = _scope_patterns(result, workspace_path, scope=scope, context=context)
             result = [_annotate_pattern(e) for e in result]
-        return ok_obj(data=result[:limit], store=store, scope=scope if patterns else None, baked_patterns=baked)
+        total = len(result)
+        return ok_obj(
+            data=result[:limit],
+            total_matches=total,
+            truncated=total > limit,
+            store=store,
+            scope=scope if patterns else None,
+            baked_patterns=baked,
+        )
     except Exception as e:
         return fail_obj(error=str(e))

@@ -32,6 +32,7 @@ from .helpers.context_builder import materialize_context
 from .helpers.file_utils import read_file_safe, write_file_safe
 from .helpers.llm_extractor import extract_memory
 from .helpers.observation_store import append_observations
+from .helpers.session_state import session_call_count
 from .modules.graphify import (
     ensure_fresh as _graph_ensure_fresh,
 )
@@ -576,25 +577,67 @@ async def _ctx_info(
     ``mode="context"`` assembles the full orchestration context in one
     server-owned call: active plan + next task + relevant code nodes + relevant
     memory. An optional ``query`` scopes code/memory relevance.
+    ``mode="compact"`` returns a minimal post-compaction recovery snapshot
+    (active plan + next task + project/family stores + session counter).
+    Every mode carries ``session.tool_calls_this_session`` (per-worker counter).
     """
     if mode == "memory_bank":
-        return await file_tools.read_memory_bank(workspace_path=workspace_path, filename=filename)
-    if mode == "scan":
-        return await context_tools.scan_project(workspace_path=workspace_path, force_refresh=force_refresh)
-    if mode == "suggest":
-        return await context_tools.suggest_relevant_files(
+        result = await file_tools.read_memory_bank(workspace_path=workspace_path, filename=filename)
+    elif mode == "scan":
+        result = await context_tools.scan_project(workspace_path=workspace_path, force_refresh=force_refresh)
+    elif mode == "suggest":
+        result = await context_tools.suggest_relevant_files(
             workspace_path=workspace_path, task_description=task_description
         )
-    if mode == "context":
-        return await _context_composite(workspace_path, project_id=project_id, query=query)
-    snapshot = await context_tools.get_context_snapshot(workspace_path=workspace_path)
-    if mode == "snapshot":
-        # Keep .ai/memory-bank/context.md current even on a light read (auto-sync).
-        try:
-            snapshot["context_md"] = await refresh_context_md(workspace_path)
-        except _SAFE_ERRORS:
-            pass
-    return snapshot
+    elif mode == "context":
+        result = await _context_composite(workspace_path, project_id=project_id, query=query)
+    elif mode == "compact":
+        result = await _context_compact(workspace_path, project_id=project_id)
+    else:
+        result = await context_tools.get_context_snapshot(workspace_path=workspace_path)
+        if mode == "snapshot":
+            # Keep .ai/memory-bank/context.md current even on a light read (auto-sync).
+            try:
+                result["context_md"] = await refresh_context_md(workspace_path)
+            except _SAFE_ERRORS:
+                pass
+    if isinstance(result, dict):
+        result["session"] = {"tool_calls_this_session": session_call_count()}
+    return result
+
+
+async def _context_compact(
+    workspace_path: str,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Minimal post-compaction recovery snapshot.
+
+    Returns only what an agent needs to resume work after context compaction:
+    active plan + next task, project/family store ids, and the session counter.
+    Deliberately small — no code nodes, no memory dump, no pattern candidates.
+    """
+    payload: dict[str, Any] = {
+        "success": True,
+        "mode": "compact",
+        "session": {"tool_calls_this_session": session_call_count()},
+    }
+    try:
+        payload["plan"] = await _plan_status(workspace_path=workspace_path, project_id=project_id, format="minimal")
+    except _SAFE_ERRORS:
+        payload["plan"] = {"success": False, "error": "plan status unavailable"}
+    try:
+        finfo = helpers.resolve_family_info(workspace_path=workspace_path)
+        payload["family"] = {
+            "family_id": finfo.get("family_id"),
+            "workspace_family": finfo.get("workspace_family"),
+        }
+    except _SAFE_ERRORS:
+        payload["family"] = {"family_id": None, "workspace_family": None}
+    try:
+        payload["project_id"] = settings.get_project_id(workspace_path) or Path(workspace_path).name
+    except _SAFE_ERRORS:
+        payload["project_id"] = Path(workspace_path).name
+    return payload
 
 
 async def _memory_inventory(
@@ -1395,13 +1438,16 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "framework scan. mode=suggest → suggest files for a task. mode=context → full "
         "orchestration composite: {plan, next task, relevant code nodes, relevant memory, "
         "family} in one server-owned call, and atomically rewrites context.md "
-        "(optional query scopes code/memory relevance).",
+        "(optional query scopes code/memory relevance). mode=compact → minimal "
+        "post-compaction recovery snapshot: {plan, next_task, family, project_id, session} "
+        "only. EVERY mode returns session.tool_calls_this_session (per-worker counter; "
+        "resets on worker restart, e.g. bridge hot-swap).",
         "handler": _ctx_info,
         "params": {
             "workspace_path": {"type": "string", "required": True, "desc": "Absolute path to project root"},
             "mode": {
                 "type": "string",
-                "enum": ["snapshot", "memory_bank", "scan", "suggest", "context"],
+                "enum": ["snapshot", "memory_bank", "scan", "suggest", "context", "compact"],
                 "default": "snapshot",
             },
             "filename": {"type": "string", "default": "environment.md", "desc": "memory_bank file"},
@@ -1411,9 +1457,10 @@ REGISTRY: dict[str, dict[str, Any]] = {
             "query": {"type": "string", "desc": "Optional term (context mode) to scope code + memory relevance"},
         },
         "returns": (
-            "{success, plan, code, memory, family, query, context_md} for mode=context "
+            "{success, plan, code, memory, family, query, context_md, session} for mode=context "
             "(family = {family_id, workspace_family, workspace_families, families}); "
-            "snapshot returns {active_plan, patterns, project_id, family}; "
+            "snapshot returns {active_plan, patterns, project_id, family, session}; "
+            "compact returns {plan, family, project_id, session}; "
             "memory_bank/scan/suggest results otherwise"
         ),
         "example": 'action_call(action="ctx_info")',
@@ -1607,7 +1654,7 @@ REGISTRY: dict[str, dict[str, Any]] = {
                 "desc": "project memory (default), 'patterns' (user-patterns store), or family_<slug>",
             },
         },
-        "returns": "{success, data:[...], filtered_by?, store, scope}",
+        "returns": "{success, data:[...], total_matches, truncated, filtered_by?, store, scope}",
         "example": 'action_call(action="mem_search", params={"query": "registry schema"})',
         "preconditions": ["workspace_valid"],
         "see_also": [

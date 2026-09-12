@@ -22,6 +22,7 @@ from typing import Annotated, Any
 from pydantic import Field
 
 from ..helpers.logger import logger, set_request_id
+from ..helpers.session_state import bump_session_call_count
 from ..registry import (
     REGISTRY,
     _maybe_await,
@@ -119,6 +120,9 @@ async def _action_call_impl(
 ) -> str:
     """Implementation of action_call — split out so the request_id context
     can be set/cleared in `_action_call` without polluting every return path."""
+    # Per-process session counter: every dispatch (success or error) counts.
+    # Resets on worker restart (bridge hot-swap) → "fresh session" signal.
+    bump_session_call_count()
     if isinstance(params, str):
         try:
             params = json.loads(params)
